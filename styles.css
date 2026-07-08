@@ -114,6 +114,9 @@
   .dangerbtn{color:var(--danger);border-color:#E8C8C8}
   .dangerbtn:hover{background:#FBEFEF;border-color:var(--danger)}
   .rowbtns{display:flex;gap:6px}
+  .inline-editor{position:absolute;z-index:12;font-family:var(--ui);font-weight:700;
+                 color:var(--ink);background:#fff;border:2px solid var(--accent);
+                 border-radius:6px;padding:4px 8px;box-shadow:0 8px 24px rgba(10,20,30,.18)}
 
   /* ---------- Status bar ---------- */
   footer{display:flex;align-items:center;gap:18px;padding:6px 16px;background:var(--panel);
@@ -130,6 +133,17 @@
   .modal pre{font-family:var(--mono);font-size:12px;line-height:1.55;padding:16px 18px;overflow:auto;
              white-space:pre;color:var(--ink-2);flex:1}
   .modal .actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+  .palette-body{padding:14px 18px 18px;display:flex;flex-direction:column;gap:10px}
+  .palette-input{font-size:14px}
+  .palette-list{display:flex;flex-direction:column;gap:4px;max-height:360px;overflow:auto}
+  .palette-item{display:flex;justify-content:space-between;align-items:center;width:100%;
+                border:none;border-radius:6px;background:none;padding:8px 10px;text-align:left}
+  .palette-item.on,.palette-item:hover{background:var(--accent-soft)}
+  .palette-item small{font-family:var(--mono);font-size:10px;color:var(--muted);text-transform:uppercase}
+  .shortcut-list{padding:10px 18px 18px;display:grid;grid-template-columns:1fr;gap:6px;overflow:auto}
+  .shortcut-row{display:grid;grid-template-columns:170px 1fr;gap:14px;align-items:center;font-size:13px}
+  .shortcut-row kbd{font-family:var(--mono);font-size:11px;background:#F0F3F6;border:1px solid var(--line);
+                    border-bottom-width:2px;border-radius:4px;padding:3px 7px;width:max-content}
 
   /* ---------- Context menu ---------- */
   #ctxMenu{position:fixed;z-index:30;display:none;min-width:200px;background:var(--panel);

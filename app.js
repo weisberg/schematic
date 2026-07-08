@@ -26,11 +26,13 @@ const RECOVERY = (() => {
 /* ----------------------------- State ------------------------------ */
 let state = { nodes: [], edges: [], nextId: 1 };
 let view  = { x: 0, y: 0, k: 1 };            // pan / zoom
-let sel   = null;                             // {kind:'node'|'edge', id}
+let sel   = null;                             // {kind:'node'|'edge', ids:Set<string>}
 let doc   = { handle: null, name: "untitled.schematic.json", dirty: false };
 let undoStack = [], redoStack = [];
 const MAX_HISTORY = 100;
 let recoveryTimer = null;
+let clipboardData = null;
+let inlineEditor = null;
 
 const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"];
 const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B7683"];
@@ -38,6 +40,28 @@ const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const SQL_TYPES = ["INT","BIGINT","SERIAL","VARCHAR(255)","TEXT","BOOLEAN","DATE",
                    "TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSONB"];
+const SHORTCUTS = [
+  { id:"open", keys:"Ctrl/Cmd+O", title:"Open" },
+  { id:"save", keys:"Ctrl/Cmd+S", title:"Save" },
+  { id:"saveAs", keys:"Ctrl/Cmd+Shift+S", title:"Save As" },
+  { id:"undo", keys:"Ctrl/Cmd+Z", title:"Undo" },
+  { id:"redo", keys:"Ctrl/Cmd+Shift+Z", title:"Redo" },
+  { id:"redoAlt", keys:"Ctrl/Cmd+Y", title:"Redo" },
+  { id:"copy", keys:"Ctrl/Cmd+C", title:"Copy selection" },
+  { id:"cut", keys:"Ctrl/Cmd+X", title:"Cut selection" },
+  { id:"paste", keys:"Ctrl/Cmd+V", title:"Paste selection" },
+  { id:"duplicate", keys:"Ctrl/Cmd+D", title:"Duplicate selection" },
+  { id:"palette", keys:"Ctrl/Cmd+K", title:"Quick jump / command palette" },
+  { id:"help", keys:"?", title:"Shortcut cheat sheet" },
+  { id:"concept", keys:"C", title:"Add concept" },
+  { id:"table", keys:"T", title:"Add table" },
+  { id:"child", keys:"Tab", title:"Add linked child concept" },
+  { id:"delete", keys:"Delete/Backspace", title:"Delete selection" },
+  { id:"fit", keys:"F", title:"Fit diagram" },
+  { id:"escape", keys:"Esc", title:"Close menu or clear selection" },
+  { id:"nudge", keys:"Arrow keys", title:"Nudge selected nodes" },
+  { id:"nudgeLarge", keys:"Shift+Arrow keys", title:"Nudge selected nodes by 24px" }
+];
 
 /* recent custom colors (SCH-017): live in the document (meta.recentColors) and are
    mirrored to localStorage when available (RECOVERY doubles as the feature detect) */
@@ -84,6 +108,37 @@ let recentColors = loadStoredRecentColors();
 const uid = () => "n" + (state.nextId++);
 const nodeById = id => state.nodes.find(n => n.id === id);
 const edgeById = id => state.edges.find(e => e.id === id);
+
+function makeSelection(kind, ids){
+  const values = ids instanceof Set ? [...ids] : Array.isArray(ids) ? ids : [ids];
+  const set = new Set(values.filter(Boolean));
+  return set.size ? { kind, ids:set } : null;
+}
+function setSelection(kind, ids){ sel = makeSelection(kind, ids); return sel; }
+function clearSelection(){ sel = null; }
+function selectionIds(kind){
+  return sel && (!kind || sel.kind === kind) ? [...sel.ids] : [];
+}
+function selectionCount(kind){ return selectionIds(kind).length; }
+function firstSelectionId(kind){ return selectionIds(kind)[0] || null; }
+function isSelected(kind, id){ return !!(sel && sel.kind === kind && sel.ids.has(id)); }
+function selectedNodes(){ return selectionIds("node").map(nodeById).filter(Boolean); }
+function firstSelectedNode(){ const id = firstSelectionId("node"); return id ? nodeById(id) : null; }
+function singleSelectedNode(){ return selectionCount("node") === 1 ? firstSelectedNode() : null; }
+function singleSelectedEdge(){ const id = firstSelectionId("edge"); return selectionCount("edge") === 1 ? edgeById(id) : null; }
+function toggleNodeSelection(id){
+  if (!sel || sel.kind !== "node") return setSelection("node", id);
+  const next = new Set(sel.ids);
+  if (next.has(id)) next.delete(id); else next.add(id);
+  sel = next.size ? { kind:"node", ids:next } : null;
+  return sel;
+}
+function pruneSelection(){
+  if (!sel) return;
+  const exists = sel.kind === "node" ? nodeById : edgeById;
+  const ids = [...sel.ids].filter(id => exists(id));
+  sel = ids.length ? makeSelection(sel.kind, ids) : null;
+}
 
 /* field-level references: edges may carry fromField / toField (field ids) */
 function ensureFieldIds(){
@@ -138,8 +193,7 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
-  if (sel && sel.kind === "node" && !nodeById(sel.id)) sel = null;
-  if (sel && sel.kind === "edge" && !edgeById(sel.id)) sel = null;
+  pruneSelection();
   render();
 }
 function undo(){ if(!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
@@ -187,7 +241,7 @@ function applyDocument(d, opts = {}){
     recentColors = mergeRecentColors(migrated.meta.recentColors, recentColors);
     persistRecentColors();
   }
-  sel = null;
+  clearSelection();
   if (opts.resetHistory !== false){
     undoStack.length = 0;
     redoStack.length = 0;
@@ -324,6 +378,13 @@ function nodeSize(n){
   return { w, h };
 }
 function nodeRect(n){ const s = nodeSize(n); return { x:n.x, y:n.y, w:s.w, h:s.h, cx:n.x+s.w/2, cy:n.y+s.h/2 }; }
+function rectFromPoints(a, b){
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  return { x, y, w:Math.abs(a.x - b.x), h:Math.abs(a.y - b.y) };
+}
+function rectsIntersect(a, b){
+  return a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y;
+}
 
 /* point on rect boundary toward an external point */
 function anchorOnRect(r, px, py){
@@ -366,6 +427,7 @@ function buildScaffold(){
   applyView();
 }
 function applyView(){
+  if (inlineEditor) closeInlineEditor(false);
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
 }
@@ -429,7 +491,7 @@ function drawNotation(g, p, glyph, color){
 function drawEdge(e){
   const ep = edgeEndpoints(e);
   if (!ep) return;
-  const selected = sel && sel.kind === "edge" && sel.id === e.id;
+  const selected = isSelected("edge", e.id);
   const isLink = e.kind === "link";
   const color = selected ? "#2456E6" : (isLink ? "#98A5B3" : "#33475C");
   const g = el("g", {"data-edge": e.id, cursor:"pointer"}, edgeLayer);
@@ -461,7 +523,7 @@ function drawEdge(e){
 /* ---- nodes ---- */
 function drawNode(n){
   const r = nodeRect(n);
-  const selected = sel && sel.kind === "node" && sel.id === n.id;
+  const selected = isSelected("node", n.id);
   const g = el("g", {"data-node": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, nodeLayer);
 
   if (n.type === "concept"){
@@ -550,7 +612,7 @@ function addNode(type, x, y){
     : { id: uid(), type, x, y, title:"new_table", notes:"", color:"#16232F",
         fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
   state.nodes.push(n);
-  sel = { kind:"node", id:n.id };
+  setSelection("node", n.id);
   render();
   focusTitleInput();
   return n;
@@ -577,31 +639,140 @@ function addEdge(from, to){
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;
   state.edges.push(e);
-  sel = { kind:"edge", id:e.id };
+  setSelection("edge", e.id);
   render();
 }
 function deleteSelection(){
   if (!sel) return;
   pushHistory();
   if (sel.kind === "node"){
-    state.edges = state.edges.filter(e => e.from !== sel.id && e.to !== sel.id);
-    state.nodes = state.nodes.filter(n => n.id !== sel.id);
+    const ids = new Set(selectionIds("node"));
+    state.edges = state.edges.filter(e => !ids.has(e.from) && !ids.has(e.to));
+    state.nodes = state.nodes.filter(n => !ids.has(n.id));
   } else {
-    state.edges = state.edges.filter(e => e.id !== sel.id);
+    const ids = new Set(selectionIds("edge"));
+    state.edges = state.edges.filter(e => !ids.has(e.id));
   }
-  sel = null;
+  clearSelection();
   render();
 }
 function duplicateSelection(){
-  if (!sel || sel.kind !== "node") return;
-  const src = nodeById(sel.id);
+  const ids = selectionIds("node");
+  if (!ids.length) return;
   pushHistory();
-  const copy = JSON.parse(JSON.stringify(src));
-  copy.id = uid(); copy.x += 36; copy.y += 36;
-  if (copy.fields) for (const f of copy.fields) f.id = uid();
-  state.nodes.push(copy);
-  sel = { kind:"node", id:copy.id };
+  const result = pastePayload(cloneSelectionPayload(ids), 36, false);
+  setSelection("node", result.nodeIds);
   render();
+}
+function cloneSelectionPayload(ids){
+  const nodeIds = new Set(ids);
+  return {
+    nodes: state.nodes.filter(n => nodeIds.has(n.id)).map(n => JSON.parse(JSON.stringify(n))),
+    edges: state.edges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
+      .map(e => JSON.parse(JSON.stringify(e)))
+  };
+}
+function remapPayload(payload, offset = 36){
+  const nodeMap = new Map();
+  const fieldMap = new Map();
+  const edgeMap = new Map();
+  const nodes = payload.nodes.map(src => {
+    const n = JSON.parse(JSON.stringify(src));
+    nodeMap.set(src.id, uid());
+    n.id = nodeMap.get(src.id);
+    n.x += offset;
+    n.y += offset;
+    if (n.fields){
+      for (const f of n.fields){
+        const oldId = f.id;
+        f.id = uid();
+        fieldMap.set(oldId, f.id);
+      }
+    }
+    return n;
+  });
+  const edges = payload.edges.map(src => {
+    const e = JSON.parse(JSON.stringify(src));
+    edgeMap.set(src.id, uid());
+    e.id = edgeMap.get(src.id);
+    e.from = nodeMap.get(src.from);
+    e.to = nodeMap.get(src.to);
+    if (e.fromField) e.fromField = fieldMap.get(e.fromField) || e.fromField;
+    if (e.toField) e.toField = fieldMap.get(e.toField) || e.toField;
+    return e;
+  }).filter(e => e.from && e.to);
+  return { nodes, edges, nodeIds:nodes.map(n => n.id) };
+}
+function pastePayload(payload, offset = 36, mutate = true){
+  const remapped = remapPayload(payload, offset);
+  if (mutate) pushHistory();
+  state.nodes.push(...remapped.nodes);
+  state.edges.push(...remapped.edges);
+  return remapped;
+}
+function copySelection(cut = false){
+  const ids = selectionIds("node");
+  if (!ids.length) return false;
+  clipboardData = cloneSelectionPayload(ids);
+  const text = JSON.stringify(clipboardData);
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(text).catch(() => {});
+  } catch {}
+  if (cut) deleteSelection();
+  return true;
+}
+function pasteSelection(){
+  if (!clipboardData || !clipboardData.nodes || !clipboardData.nodes.length) return false;
+  const result = pastePayload(clipboardData, 36, true);
+  setSelection("node", result.nodeIds);
+  render();
+  return true;
+}
+function alignSelection(mode){
+  const nodes = selectedNodes();
+  if (nodes.length < 2) return false;
+  pushHistory();
+  const entries = nodes.map(n => ({ n, r:nodeRect(n) }));
+  if (mode === "left"){
+    const x = Math.min(...entries.map(e => e.r.x));
+    for (const e of entries) e.n.x = x;
+  } else if (mode === "right"){
+    const x = Math.max(...entries.map(e => e.r.x + e.r.w));
+    for (const e of entries) e.n.x = x - e.r.w;
+  } else if (mode === "top"){
+    const y = Math.min(...entries.map(e => e.r.y));
+    for (const e of entries) e.n.y = y;
+  } else if (mode === "bottom"){
+    const y = Math.max(...entries.map(e => e.r.y + e.r.h));
+    for (const e of entries) e.n.y = y - e.r.h;
+  } else if (mode === "centerX"){
+    const cx = entries.reduce((sum, e) => sum + e.r.cx, 0) / entries.length;
+    for (const e of entries) e.n.x = cx - e.r.w/2;
+  } else if (mode === "centerY"){
+    const cy = entries.reduce((sum, e) => sum + e.r.cy, 0) / entries.length;
+    for (const e of entries) e.n.y = cy - e.r.h/2;
+  } else if (mode === "distributeX"){
+    distribute(entries, "x");
+  } else if (mode === "distributeY"){
+    distribute(entries, "y");
+  }
+  render();
+  return true;
+}
+function distribute(entries, axis){
+  const isX = axis === "x";
+  entries.sort((a, b) => (isX ? a.r.x - b.r.x : a.r.y - b.r.y));
+  const start = isX ? entries[0].r.x : entries[0].r.y;
+  const endEntry = entries[entries.length - 1];
+  const end = isX ? endEntry.r.x + endEntry.r.w : endEntry.r.y + endEntry.r.h;
+  const total = entries.reduce((sum, e) => sum + (isX ? e.r.w : e.r.h), 0);
+  const gap = entries.length > 1 ? (end - start - total) / (entries.length - 1) : 0;
+  let cursor = start;
+  for (const e of entries){
+    if (isX) e.n.x = cursor; else e.n.y = cursor;
+    cursor += (isX ? e.r.w : e.r.h) + gap;
+  }
 }
 /* table-only: spawn a child table wired up with an FK field and a bound 1:N edge */
 function addRelatedTable(parentId){
@@ -620,7 +791,7 @@ function addRelatedTable(parentId){
   const e = { id: uid(), from: p.id, to: n.id, kind:"1:N", label:"", toField: fk.id };
   if (ppk) e.fromField = ppk.id;
   state.edges.push(e);
-  sel = { kind:"node", id:n.id };
+  setSelection("node", n.id);
   render();
   focusTitleInput();
 }
@@ -634,8 +805,9 @@ function reorderNode(id, toFront){
   render();
 }
 function addChildConcept(){
-  if (!sel || sel.kind !== "node") return;
-  const p = nodeById(sel.id), r = nodeRect(p);
+  const p = firstSelectedNode();
+  if (!p) return;
+  const r = nodeRect(p);
   pushHistory();
   const siblings = state.edges.filter(e => e.from === p.id).length;
   const n = { id: uid(), type:"concept", x: r.x + r.w + 90,
@@ -643,7 +815,7 @@ function addChildConcept(){
               color: p.type === "concept" ? p.color : CONCEPT_COLORS[0] };
   state.nodes.push(n);
   state.edges.push({ id: uid(), from: p.id, to: n.id, kind:"link", label:"" });
-  sel = { kind:"node", id:n.id };
+  setSelection("node", n.id);
   render();
   focusTitleInput();
 }
@@ -654,13 +826,14 @@ let drag = null; // {mode:'pan'|'node'|'connect', ...}
 board.addEventListener("pointerdown", ev => {
   if (ev.button === 2) return;
   ev.preventDefault();                       // stop native text-selection drags
+  closeInlineEditor(false);
   if (window.getSelection) window.getSelection().removeAllRanges();
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   const fieldHandleEl = ev.target.closest("[data-fieldhandle]");
   const handleEl = ev.target.closest("[data-handle]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
-  board.setPointerCapture(ev.pointerId);
+  if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
 
   if (fieldHandleEl){
     drag = { mode:"connect", from: { id: fieldHandleEl.getAttribute("data-fieldnode"),
@@ -677,20 +850,35 @@ board.addEventListener("pointerdown", ev => {
     const id = nodeEl.getAttribute("data-node");
     const n = nodeById(id);
     const w = clientToWorld(ev.clientX, ev.clientY);
-    sel = { kind:"node", id };
-    drag = { mode:"node", id, ox: w.x - n.x, oy: w.y - n.y, moved:false };
+    if (ev.shiftKey){
+      toggleNodeSelection(id);
+      drag = null;
+      render();
+      return;
+    }
+    if (!isSelected("node", id)) setSelection("node", id);
+    const ids = selectionIds("node");
+    drag = { mode:"node", id, start:w, starts: ids.map(nodeId => {
+      const dn = nodeById(nodeId);
+      return { id:nodeId, x:dn.x, y:dn.y };
+    }), moved:false };
     render();
     return;
   }
   if (edgeEl){
-    sel = { kind:"edge", id: edgeEl.getAttribute("data-edge") };
+    setSelection("edge", edgeEl.getAttribute("data-edge"));
     drag = null;
     render();
     return;
   }
-  // empty canvas: pan + deselect
-  drag = { mode:"pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved:false };
-  board.classList.add("panning");
+  // empty canvas: drag marquee; Alt/middle-drag pans.
+  if (ev.altKey || ev.button === 1){
+    drag = { mode:"pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved:false };
+    board.classList.add("panning");
+  } else {
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    drag = { mode:"marquee", sx: ev.clientX, sy: ev.clientY, start:w, current:w, moved:false };
+  }
 });
 
 board.addEventListener("pointermove", ev => {
@@ -701,12 +889,24 @@ board.addEventListener("pointermove", ev => {
     if (Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) > 3) drag.moved = true;
     applyView();
   } else if (drag.mode === "node"){
-    const n = nodeById(drag.id);
     const w = clientToWorld(ev.clientX, ev.clientY);
     if (!drag.moved){ pushHistory(); drag.moved = true; }
-    n.x = Math.round((w.x - drag.ox)/4)*4;
-    n.y = Math.round((w.y - drag.oy)/4)*4;
+    const dx = w.x - drag.start.x, dy = w.y - drag.start.y;
+    for (const start of drag.starts){
+      const n = nodeById(start.id);
+      if (!n) continue;
+      n.x = Math.round((start.x + dx)/4)*4;
+      n.y = Math.round((start.y + dy)/4)*4;
+    }
     render();
+  } else if (drag.mode === "marquee"){
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    drag.current = w;
+    if (Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) > 3) drag.moved = true;
+    draftLayer.innerHTML = "";
+    const r = rectFromPoints(drag.start, drag.current);
+    el("rect", {x:r.x, y:r.y, width:r.w, height:r.h, fill:"#2456E6", opacity:.10,
+                stroke:"#2456E6", "stroke-width":1.3, "stroke-dasharray":"5 4"}, draftLayer);
   } else if (drag.mode === "connect"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     draftLayer.innerHTML = "";
@@ -741,7 +941,17 @@ board.addEventListener("pointermove", ev => {
 board.addEventListener("pointerup", ev => {
   if (!drag) return;
   if (drag.mode === "pan" && !drag.moved){
-    sel = null; render();
+    clearSelection(); render();
+  } else if (drag.mode === "marquee"){
+    draftLayer.innerHTML = "";
+    if (drag.moved){
+      const r = rectFromPoints(drag.start, drag.current);
+      const ids = state.nodes.filter(n => rectsIntersect(r, nodeRect(n))).map(n => n.id);
+      setSelection("node", ids);
+    } else {
+      clearSelection();
+    }
+    render();
   } else if (drag.mode === "connect"){
     draftLayer.innerHTML = "";
     const w = clientToWorld(ev.clientX, ev.clientY);
@@ -754,10 +964,17 @@ board.addEventListener("pointerup", ev => {
 
 board.addEventListener("dblclick", ev => {
   const nodeEl = ev.target.closest("[data-node]");
+  const edgeEl = ev.target.closest("[data-edge]");
   if (nodeEl){
-    sel = { kind:"node", id: nodeEl.getAttribute("data-node") };
+    const id = nodeEl.getAttribute("data-node");
+    setSelection("node", id);
     render();
-    focusTitleInput();
+    startInlineEditor("node", id);
+  } else if (edgeEl){
+    const id = edgeEl.getAttribute("data-edge");
+    setSelection("edge", id);
+    render();
+    startInlineEditor("edge", id);
   } else {
     const w = clientToWorld(ev.clientX, ev.clientY);
     addNode("concept", w.x - 65, w.y - 24);
@@ -766,6 +983,7 @@ board.addEventListener("dblclick", ev => {
 
 board.addEventListener("wheel", ev => {
   ev.preventDefault();
+  closeInlineEditor(false);
   const factor = ev.deltaY < 0 ? 1.1 : 1/1.1;
   const nk = Math.min(3, Math.max(0.2, view.k * factor));
   const b = board.getBoundingClientRect();
@@ -777,35 +995,71 @@ board.addEventListener("wheel", ev => {
 }, { passive:false });
 
 /* -------------------------- Keyboard ------------------------------ */
+function matchShortcut(ev, typing){
+  if (typing) return null;
+  const key = ev.key.toLowerCase();
+  const mod = ev.ctrlKey || ev.metaKey;
+  if (mod && ev.shiftKey && key === "s") return "saveAs";
+  if (mod && ev.shiftKey && key === "z") return "redo";
+  if (mod && key === "o") return "open";
+  if (mod && key === "s") return "save";
+  if (mod && key === "z") return "undo";
+  if (mod && key === "y") return "redoAlt";
+  if (mod && key === "c") return "copy";
+  if (mod && key === "x") return "cut";
+  if (mod && key === "v") return "paste";
+  if (mod && key === "d") return "duplicate";
+  if (mod && key === "k") return "palette";
+  if (ev.key === "?") return "help";
+  if (ev.key === "Delete" || ev.key === "Backspace") return "delete";
+  if (ev.key === "Tab") return "child";
+  if (ev.key === "Escape") return "escape";
+  if (!mod && key === "c") return "concept";
+  if (!mod && key === "t") return "table";
+  if (!mod && key === "f") return "fit";
+  if (ev.key.startsWith("Arrow")) return "nudge";
+  return null;
+}
+function runShortcut(id, ev){
+  if (id === "open") return openDoc();
+  if (id === "save") return saveDoc();
+  if (id === "saveAs") return saveAsDoc();
+  if (id === "undo") return undo();
+  if (id === "redo" || id === "redoAlt") return redo();
+  if (id === "copy") return copySelection(false);
+  if (id === "cut") return copySelection(true);
+  if (id === "paste") return pasteSelection();
+  if (id === "duplicate") return duplicateSelection();
+  if (id === "palette") return openCommandPalette();
+  if (id === "help") return openShortcutModal();
+  if (id === "delete") return deleteSelection();
+  if (id === "child") return addChildConcept();
+  if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
+  if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
+  if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
+  if (id === "fit") return fitView();
+  if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
+}
+function nudgeSelection(key, step){
+  const nodes = selectedNodes();
+  if (!nodes.length) return;
+  pushHistory();
+  for (const n of nodes){
+    if (key === "ArrowLeft") n.x -= step;
+    if (key === "ArrowRight") n.x += step;
+    if (key === "ArrowUp") n.y -= step;
+    if (key === "ArrowDown") n.y += step;
+  }
+  render();
+}
 window.addEventListener("keydown", ev => {
   const tag = document.activeElement && document.activeElement.tagName;
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  const mod = ev.ctrlKey || ev.metaKey;
-  if (mod && ev.key.toLowerCase() === "z"){ ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
-  if (mod && ev.key.toLowerCase() === "y"){ ev.preventDefault(); redo(); return; }
-  if (typing) return;
-  if (mod && ev.key.toLowerCase() === "o"){ ev.preventDefault(); openDoc(); return; }
-  if (mod && ev.key.toLowerCase() === "s"){
+  const shortcut = matchShortcut(ev, typing);
+  if (shortcut){
     ev.preventDefault();
-    ev.shiftKey ? saveAsDoc() : saveDoc();
+    runShortcut(shortcut, ev);
     return;
-  }
-  if (ev.key === "Delete" || ev.key === "Backspace"){ ev.preventDefault(); deleteSelection(); }
-  else if (ev.key === "Tab"){ ev.preventDefault(); addChildConcept(); }
-  else if (mod && ev.key.toLowerCase() === "d"){ ev.preventDefault(); duplicateSelection(); }
-  else if (ev.key === "Escape"){ hideCtx(); sel = null; render(); }
-  else if (ev.key.toLowerCase() === "c" && !mod){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); }
-  else if (ev.key.toLowerCase() === "t" && !mod){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); }
-  else if (ev.key.toLowerCase() === "f" && !mod){ fitView(); }
-  else if (sel && sel.kind === "node" && ev.key.startsWith("Arrow")){
-    ev.preventDefault();
-    const n = nodeById(sel.id), step = ev.shiftKey ? 24 : 4;
-    pushHistory();
-    if (ev.key === "ArrowLeft") n.x -= step;
-    if (ev.key === "ArrowRight") n.x += step;
-    if (ev.key === "ArrowUp") n.y -= step;
-    if (ev.key === "ArrowDown") n.y += step;
-    render();
   }
 });
 function viewCenter(){
@@ -828,6 +1082,198 @@ function fitView(){
   applyView();
 }
 
+function worldToWrap(x, y){
+  const br = board.getBoundingClientRect();
+  const wr = wrap.getBoundingClientRect();
+  return { x: br.left - wr.left + view.x + x*view.k, y: br.top - wr.top + view.y + y*view.k };
+}
+function inlineEditorBox(kind, id){
+  if (kind === "node"){
+    const n = nodeById(id);
+    if (!n) return null;
+    const r = nodeRect(n);
+    if (n.type === "concept"){
+      const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
+      return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:32, fontSize:Math.max(12, conceptFont(n)*view.k) };
+    }
+    const p = worldToWrap(r.x + 8, r.y + 4);
+    return { x:p.x, y:p.y, w:Math.max(140, r.w*view.k - 16), h:Math.max(28, tableMetrics(n).headerH*view.k - 8),
+             fontSize:Math.max(12, tableMetrics(n).headerSize*view.k) };
+  }
+  const e = edgeById(id), ep = e && edgeEndpoints(e);
+  if (!e || !ep) return null;
+  const p = worldToWrap((ep.pa.x + ep.pb.x)/2 - 70, (ep.pa.y + ep.pb.y)/2 - 16);
+  return { x:p.x, y:p.y, w:140, h:30, fontSize:13 };
+}
+function startInlineEditor(kind, id){
+  closeInlineEditor(false);
+  const box = inlineEditorBox(kind, id);
+  if (!box) return;
+  const target = kind === "node" ? nodeById(id) : edgeById(id);
+  if (!target) return;
+  const original = kind === "node" ? target.title || "" : target.label || "";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "inline-editor";
+  input.value = original;
+  input.style.left = box.x + "px";
+  input.style.top = box.y + "px";
+  input.style.width = box.w + "px";
+  input.style.height = box.h + "px";
+  input.style.fontSize = box.fontSize + "px";
+  input.addEventListener("pointerdown", ev => ev.stopPropagation());
+  input.addEventListener("keydown", ev => {
+    if (ev.key === "Enter"){ ev.preventDefault(); closeInlineEditor(true); }
+    if (ev.key === "Escape"){ ev.preventDefault(); closeInlineEditor(false); }
+  });
+  input.addEventListener("blur", () => closeInlineEditor(true));
+  wrap.appendChild(input);
+  inlineEditor = { kind, id, input, original, closing:false };
+  input.focus();
+  input.select();
+}
+function closeInlineEditor(commit){
+  if (!inlineEditor || inlineEditor.closing) return;
+  const editor = inlineEditor;
+  editor.closing = true;
+  inlineEditor = null;
+  const value = editor.input.value;
+  if (editor.input.parentNode) editor.input.parentNode.removeChild(editor.input);
+  if (commit && value !== editor.original){
+    const target = editor.kind === "node" ? nodeById(editor.id) : edgeById(editor.id);
+    if (target){
+      pushHistory();
+      if (editor.kind === "node") target.title = value;
+      else target.label = value;
+      render();
+    }
+  }
+}
+
+let paletteModal = null;
+let shortcutModal = null;
+
+function fuzzyMatch(text, query){
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const t = text.toLowerCase();
+  if (t.includes(q)) return true;
+  let i = 0;
+  for (const ch of t) if (ch === q[i]) i++;
+  return i === q.length;
+}
+function paletteItems(){
+  const items = [];
+  for (const n of state.nodes){
+    items.push({ type:"node", label:n.title || "(untitled)", nodeId:n.id });
+    if (n.type === "table"){
+      for (const f of n.fields)
+        items.push({ type:"field", label:`${n.title || "table"}.${f.name}`, nodeId:n.id, fieldId:f.id });
+    }
+  }
+  for (const c of [
+    ["addConcept", "Add concept"],
+    ["addTable", "Add table"],
+    ["exportSQL", "Export SQL"],
+    ["fit", "Fit diagram"],
+    ["open", "Open"],
+    ["save", "Save"]
+  ]) items.push({ type:"command", command:c[0], label:c[1] });
+  return items;
+}
+function paletteMatches(query, items){
+  const raw = query.trim();
+  const commandOnly = raw.startsWith(">");
+  const q = commandOnly ? raw.slice(1).trim() : raw;
+  return items.filter(item => (!commandOnly ? item.type !== "command" : item.type === "command") &&
+    fuzzyMatch(item.label, q));
+}
+function centerNode(id){
+  const n = nodeById(id);
+  if (!n) return;
+  const r = nodeRect(n), b = board.getBoundingClientRect();
+  view.x = b.width/2 - r.cx*view.k;
+  view.y = b.height/2 - r.cy*view.k;
+  applyView();
+}
+function activatePaletteItem(item){
+  if (!item) return;
+  closeCommandPalette();
+  if (item.type === "node" || item.type === "field"){
+    setSelection("node", item.nodeId);
+    centerNode(item.nodeId);
+    render();
+    return;
+  }
+  const c = viewCenter();
+  if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
+  if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
+  if (item.command === "exportSQL") document.getElementById("btnExportSQL").click();
+  if (item.command === "fit") fitView();
+  if (item.command === "open") openDoc();
+  if (item.command === "save") saveDoc();
+}
+function openCommandPalette(){
+  closeCommandPalette();
+  const modal = document.createElement("div");
+  modal.className = "modal open command-modal";
+  modal.innerHTML = `<div class="card"><h3>Command palette</h3><div class="palette-body"></div></div>`;
+  const body = modal.querySelector(".palette-body");
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Search nodes and fields, or type > for commands";
+  input.className = "palette-input";
+  const list = document.createElement("div");
+  list.className = "palette-list";
+  body.append(input, list);
+  let selected = 0, matches = [];
+  const renderList = () => {
+    matches = paletteMatches(input.value, paletteItems()).slice(0, 20);
+    selected = Math.min(selected, Math.max(0, matches.length - 1));
+    list.innerHTML = "";
+    matches.forEach((item, idx) => {
+      const b = document.createElement("button");
+      b.className = "palette-item" + (idx === selected ? " on" : "");
+      b.innerHTML = `<span>${escapeHtml(item.label)}</span><small>${item.type}</small>`;
+      b.addEventListener("mousedown", ev => ev.preventDefault());
+      b.addEventListener("click", () => activatePaletteItem(item));
+      list.appendChild(b);
+    });
+  };
+  input.addEventListener("input", renderList);
+  input.addEventListener("keydown", ev => {
+    if (ev.key === "Escape"){ ev.preventDefault(); closeCommandPalette(); }
+    if (ev.key === "ArrowDown"){ ev.preventDefault(); selected = Math.min(matches.length - 1, selected + 1); renderList(); }
+    if (ev.key === "ArrowUp"){ ev.preventDefault(); selected = Math.max(0, selected - 1); renderList(); }
+    if (ev.key === "Enter"){ ev.preventDefault(); activatePaletteItem(matches[selected]); }
+  });
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeCommandPalette(); });
+  document.body.appendChild(modal);
+  paletteModal = modal;
+  renderList();
+  input.focus();
+}
+function closeCommandPalette(){
+  if (paletteModal && paletteModal.parentNode) paletteModal.parentNode.removeChild(paletteModal);
+  paletteModal = null;
+}
+function openShortcutModal(){
+  closeShortcutModal();
+  const modal = document.createElement("div");
+  modal.className = "modal open shortcut-modal";
+  const rows = SHORTCUTS.map(s =>
+    `<div class="shortcut-row"><kbd>${escapeHtml(s.keys)}</kbd><span>${escapeHtml(s.title)}</span></div>`).join("");
+  modal.innerHTML = `<div class="card"><h3>Shortcuts</h3><div class="shortcut-list">${rows}</div><div class="actions"><button class="primary" id="btnCloseShortcuts">Close</button></div></div>`;
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeShortcutModal(); });
+  document.body.appendChild(modal);
+  shortcutModal = modal;
+  modal.querySelector("#btnCloseShortcuts").addEventListener("click", closeShortcutModal);
+}
+function closeShortcutModal(){
+  if (shortcutModal && shortcutModal.parentNode) shortcutModal.parentNode.removeChild(shortcutModal);
+  shortcutModal = null;
+}
+
 /* -------------------------- Inspector ----------------------------- */
 const inspBody = document.getElementById("inspBody");
 const inspTitle = document.getElementById("inspTitle");
@@ -844,8 +1290,9 @@ function renderInspector(){
   if (!sel){ inspTitle.textContent = "Inspector"; renderHelp(); return; }
 
   if (sel.kind === "node"){
-    const n = nodeById(sel.id);
-    if (!n){ sel = null; renderHelp(); return; }
+    if (selectionCount("node") > 1){ renderMultiInspector(); return; }
+    const n = singleSelectedNode();
+    if (!n){ clearSelection(); renderHelp(); return; }
     inspTitle.textContent = n.type === "concept" ? "Concept node" : "Table node";
 
     frow(n.type === "concept" ? "Title" : "Table name", () => {
@@ -885,8 +1332,8 @@ function renderInspector(){
     inspBody.appendChild(mkBtn("Delete node", deleteSelection, "dangerbtn"));
 
   } else {
-    const e = edgeById(sel.id);
-    if (!e){ sel = null; renderHelp(); return; }
+    const e = singleSelectedEdge();
+    if (!e){ clearSelection(); renderHelp(); return; }
     inspTitle.textContent = "Edge";
     const a = nodeById(e.from), b = nodeById(e.to);
     const endName = (n, fid) => {
@@ -927,6 +1374,38 @@ function renderInspector(){
     div.appendChild(mkBtn("Delete edge", deleteSelection, "dangerbtn"));
     inspBody.appendChild(div);
   }
+}
+
+function renderMultiInspector(){
+  const nodes = selectedNodes();
+  inspTitle.textContent = `${nodes.length} nodes selected`;
+  const helper = document.createElement("div");
+  helper.className = "helper";
+  helper.textContent = "Bulk edits apply to every selected node.";
+  inspBody.appendChild(helper);
+  frow("Color", () => swatches([...CONCEPT_COLORS, ...TABLE_COLORS], nodes[0].color,
+    (c, commit) => {
+      pushHistory("color:multi");
+      for (const n of nodes) n.color = c;
+      commit ? render() : drawOnly();
+    }));
+  frow("Text size", () => sizeStepper(nodes[0].type === "concept" ? conceptFont(nodes[0]) : tableMetrics(nodes[0]).base,
+    8, 48, 1, (v, commit) => {
+      pushHistory("fs:multi");
+      for (const n of nodes) n.fontSize = n.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
+      commit ? render() : drawOnly();
+    }));
+  frow("Text color", () => swatches(FONT_COLORS, nodes[0].fontColor || "#16232F",
+    (c, commit) => {
+      pushHistory("fc:multi");
+      for (const n of nodes) n.fontColor = c;
+      commit ? render() : drawOnly();
+    }));
+  const div = document.createElement("div");
+  div.className = "rowbtns";
+  div.appendChild(mkBtn("Duplicate", duplicateSelection));
+  div.appendChild(mkBtn("Delete", deleteSelection, "dangerbtn"));
+  inspBody.appendChild(div);
 }
 
 /* choose whole-table vs. specific field for one end of an edge */
@@ -1267,7 +1746,7 @@ function newDoc(){
   state.nodes = [];
   state.edges = [];
   state.nextId = 1;
-  sel = null;
+  clearSelection();
   undoStack.length = 0;
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
@@ -1302,7 +1781,7 @@ document.getElementById("fileInput").addEventListener("change", ev => {
 
 document.getElementById("btnClear").addEventListener("click", () => {
   if (!state.nodes.length || confirm("Clear the entire canvas? (Undo can bring it back.)")){
-    pushHistory(); state.nodes = []; state.edges = []; sel = null; render();
+    pushHistory(); state.nodes = []; state.edges = []; clearSelection(); render();
   }
 });
 document.getElementById("btnUndo").addEventListener("click", undo);
@@ -1472,28 +1951,36 @@ function ctxSwatches(parent, colors, current, apply){
   parent.appendChild(hexWrap);
 }
 /* compact font-size stepper for the context menu */
-function ctxSizeRow(parent, n){
+function ctxSizeRow(parent, n, targets = [n]){
   const isC = n.type === "concept";
   const cur = isC ? conceptFont(n) : tableMetrics(n).base;
   const wrap = document.createElement("div");
   wrap.className = "swrow";
   wrap.appendChild(sizeStepper(cur, isC ? 9 : 8, isC ? 48 : 28, isC ? 1 : 0.5,
-    (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+    (v, commit) => {
+      pushHistory(targets.length > 1 ? "fs:multi" : "fs:"+n.id);
+      for (const t of targets) t.fontSize = t.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
+      commit ? render() : drawOnly();
+    }));
   parent.appendChild(wrap);
 }
 
 function nodeMenu(n, x, y){
+  const targets = isSelected("node", n.id) ? selectedNodes() : [n];
+  const applyToTargets = (fn) => {
+    for (const t of targets) fn(t);
+  };
   showCtx(x, y, m => {
     ctxLabel(m, n.type === "concept" ? "Color" : "Header color");
     ctxSwatches(m, n.type === "concept" ? CONCEPT_COLORS : TABLE_COLORS, n.color,
-      (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); });
+      (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
     ctxLabel(m, "Text size");
-    ctxSizeRow(m, n);
+    ctxSizeRow(m, n, targets);
     ctxLabel(m, "Text color");
     ctxSwatches(m, FONT_COLORS, n.fontColor || "#16232F",
-      (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); });
+      (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
     ctxSep(m);
-    ctxItem(m, "Edit in inspector", () => focusTitleInput(), {kbd:"dbl-click"});
+    ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
     ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table"){
       ctxItem(m, "Add related table (1:N)", () => addRelatedTable(n.id));
@@ -1505,6 +1992,18 @@ function nodeMenu(n, x, y){
       });
     }
     ctxItem(m, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
+    if (targets.length >= 2){
+      ctxSep(m);
+      ctxLabel(m, "Align");
+      ctxItem(m, "Align left", () => alignSelection("left"));
+      ctxItem(m, "Align right", () => alignSelection("right"));
+      ctxItem(m, "Align top", () => alignSelection("top"));
+      ctxItem(m, "Align bottom", () => alignSelection("bottom"));
+      ctxItem(m, "Center horizontally", () => alignSelection("centerX"));
+      ctxItem(m, "Center vertically", () => alignSelection("centerY"));
+      ctxItem(m, "Distribute horizontally", () => alignSelection("distributeX"));
+      ctxItem(m, "Distribute vertically", () => alignSelection("distributeY"));
+    }
     ctxSep(m);
     ctxItem(m, "Bring to front", () => reorderNode(n.id, true));
     ctxItem(m, "Send to back",   () => reorderNode(n.id, false));
@@ -1534,7 +2033,7 @@ function edgeMenu(e, x, y){
       if (tf !== undefined) e.toField = tf; else delete e.toField;
       render();
     });
-    ctxItem(m, "Edit in inspector", () => {});
+    ctxItem(m, "Edit label", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
     ctxSep(m);
     ctxItem(m, "Delete edge", deleteSelection, {kbd:"Del", danger:true});
   });
@@ -1554,12 +2053,12 @@ board.addEventListener("contextmenu", ev => {
   const edgeEl = ev.target.closest("[data-edge]");
   if (nodeEl){
     const n = nodeById(nodeEl.getAttribute("data-node"));
-    sel = { kind:"node", id:n.id };
+    if (!isSelected("node", n.id)) setSelection("node", n.id);
     render();
     nodeMenu(n, ev.clientX, ev.clientY);
   } else if (edgeEl){
     const e = edgeById(edgeEl.getAttribute("data-edge"));
-    sel = { kind:"edge", id:e.id };
+    setSelection("edge", e.id);
     render();
     edgeMenu(e, ev.clientX, ev.clientY);
   } else {
@@ -1638,11 +2137,39 @@ window.__T = {
   saveAsDoc,
   newDoc,
   pushHistory,
+  undo,
+  redo,
   setDocDirty,
   generateSQL,
+  render,
+  nodeRect,
+  get view(){ return view; },
+  setView(next){ view = {...view, ...next}; applyView(); },
+  get selection(){ return sel ? { kind:sel.kind, ids:[...sel.ids] } : null; },
+  setSelection,
+  clearSelection,
+  selectionIds,
+  isSelected,
+  selectedNodes,
+  get undoDepth(){ return undoStack.length; },
   pushRecentColor,
   mergeRecentColors,
   recordRecentColor,
   get recentColors(){ return recentColors; },
-  selectNode(id){ sel = { kind: "node", id }; render(); }
+  selectNode(id){ setSelection("node", id); render(); },
+  cloneSelectionPayload,
+  copySelection,
+  pasteSelection,
+  deleteSelection,
+  duplicateSelection,
+  alignSelection,
+  startInlineEditor,
+  closeInlineEditor,
+  paletteItems,
+  paletteMatches,
+  openCommandPalette,
+  closeCommandPalette,
+  openShortcutModal,
+  closeShortcutModal,
+  get SHORTCUTS(){ return SHORTCUTS.slice(); }
 };

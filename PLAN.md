@@ -148,10 +148,10 @@ Harness quirks you must respect:
 ## 3. Existing features (implemented, tested)
 
 **Canvas & interaction**
-- Infinite pannable/zoomable SVG canvas (wheel zoom at cursor 0.2–3×, drag-empty pan,
-  dot-grid background), Fit view (`F`), 4px grid snap on node drag, arrow-key nudge
-  (Shift = 24px), Esc deselect, no text-selection during drags.
-- Selection model: single node or edge; selection drives inspector.
+- Infinite pannable/zoomable SVG canvas (wheel zoom at cursor 0.2–3×, Alt/middle-drag
+  pan, drag-empty marquee select, dot-grid background), Fit view (`F`), 4px grid snap on
+  node drag, arrow-key nudge (Shift = 24px), Esc deselect, no text-selection during drags.
+- Selection model: single node/edge plus multi-node selection; selection drives inspector.
 
 **Nodes**
 - Concept nodes: title, notes (dot indicator), fill color, per-node font size (9–48px)
@@ -159,9 +159,11 @@ Harness quirks you must respect:
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
-- Add via toolbar, keyboard (`C`/`T`), double-click empty canvas, or context menu ("here").
-- Duplicate (Ctrl+D, remaps field ids), delete (removes attached edges), z-order
-  (bring to front / send to back), Tab = add linked child concept,
+- Add via toolbar, keyboard (`C`/`T`), double-click empty canvas, command palette, or
+  context menu ("here").
+- Duplicate (Ctrl+D, remaps node/field ids and internal edges), copy/cut/paste
+  (Ctrl/Cmd+C/X/V with in-memory clipboard and best-effort OS clipboard), delete
+  (removes attached edges), z-order (bring to front / send to back), Tab = add linked child concept,
   "Add related table (1:N)" = child table pre-wired with FK column + bound edge.
 
 **Edges**
@@ -170,12 +172,18 @@ Harness quirks you must respect:
   (per-row ○ handles on hover, drag to another field/node, live drop-target highlight,
   anchor dots on bound ends, inspector attachment dropdowns per end).
 - Auto-orientation on field↔field drags (PK side becomes "from"), swap direction
-  (carries bindings), labels, duplicate rejection at field granularity.
+  (carries bindings), inline-editable labels, duplicate rejection at field granularity.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).
+- Multi-select inspector with bulk color, text-size, and text-color controls.
 - Right-click context menus for node (colors, text size/color, add child/related/field,
   duplicate, z-order, delete), edge (kind quick-set, swap, delete), canvas (add here, fit).
+- Multi-node context menu alignment/distribution tools: left/right/top/bottom, center
+  horizontally/vertically, distribute horizontally/vertically.
+- Inline title editor on canvas for nodes; inline label editor for edges.
+- Quick-jump / command palette (`Ctrl/Cmd+K`) for nodes, fields, and `>` commands.
+- Shortcut cheat sheet modal (`?`) generated from the shortcut registry.
 - Color pickers everywhere: 6 presets + native color well + validated 6-digit hex input
   (3-digit shorthand accepted, live-apply, invalid flags red on blur).
 - Persistent custom color palette: committed custom colors join a recent-swatches row in
@@ -203,8 +211,8 @@ Harness quirks you must respect:
   junction-table suggestions for N:M; copy + `.sql` download.
 - PNG export: 2× raster of content bounding box, white background, handles stripped.
 
-**Testing** — Node/jsdom harness covering Phase A lifecycle behavior plus key rendering
-regressions; suite ends `ALL TESTS PASSED`.
+**Testing** — Node/jsdom harness covering Phase A lifecycle behavior, Phase B editing
+workflows, and key rendering regressions; suite ends `ALL TESTS PASSED`.
 
 ---
 
@@ -312,9 +320,11 @@ untouched. Tests for both.
 
 ### Phase B — Editing quality of life (P1)
 
+Status: implemented and tested on 2026-07-08.
+
 ---
 
-**SCH-010 · Multi-select + marquee · P1 · L**
+**SCH-010 · Multi-select + marquee · P1 · L · Done 2026-07-08**
 
 - `sel` becomes `{ kind:"node"|"edge", ids:Set<string> }` OR keep current shape and add
   `selExtra:Set` — choose the first; update every `sel` consumer (search for `sel.` —
@@ -335,7 +345,7 @@ selected). Update context menus to act on selection when target is selected.
 
 ---
 
-**SCH-011 · Copy / Paste · P1 · M · Depends: SCH-010**
+**SCH-011 · Copy / Paste · P1 · M · Depends: SCH-010 · Done 2026-07-08**
 
 - In-memory clipboard variable (survives within session) + best-effort
   `navigator.clipboard.writeText(JSON)` wrapped in try/catch (may be unavailable; never
@@ -349,7 +359,7 @@ distinct ids everywhere. Tests assert id remapping and edge preservation.
 
 ---
 
-**SCH-012 · Alignment & distribution tools · P2 · S · Depends: SCH-010**
+**SCH-012 · Alignment & distribution tools · P2 · S · Depends: SCH-010 · Done 2026-07-08**
 
 Context-menu section (visible when ≥2 nodes selected): Align left/right/top/bottom,
 Center horizontally/vertically, Distribute horizontally/vertically (equal gaps by rect
@@ -359,7 +369,7 @@ AC: geometry assertions on 3 nodes for each operation.
 
 ---
 
-**SCH-013 · Inline title editing on canvas · P2 · M**
+**SCH-013 · Inline title editing on canvas · P2 · M · Done 2026-07-08**
 
 Double-click a node currently focuses the inspector. Change to: overlay an absolutely
 positioned HTML `<input>` (in `#canvasWrap`, transformed to node screen coords with
@@ -374,7 +384,7 @@ doesn't blur it instantly (see existing `hexinput` pattern).
 
 ---
 
-**SCH-014 · Quick-jump / command palette · P2 · M**
+**SCH-014 · Quick-jump / command palette · P2 · M · Done 2026-07-08**
 
 `Ctrl/Cmd+K` opens a centered palette (reuse `.modal` styles): fuzzy list of node titles
 and field names (`table.field`); Enter pans/zooms to center the match and selects it;
@@ -385,7 +395,7 @@ AC: typing filters; Enter centers + selects; Esc closes. Tests on filter functio
 
 ---
 
-**SCH-015 · Shortcut cheat-sheet modal (`?`) · P3 · S**
+**SCH-015 · Shortcut cheat-sheet modal (`?`) · P3 · S · Done 2026-07-08**
 
 Static modal listing all shortcuts. Keep in sync manually; add a test asserting every
 shortcut key handled in the keydown handler appears in the modal text (single source
@@ -393,7 +403,7 @@ array `SHORTCUTS = [...]` used by both).
 
 ---
 
-**SCH-016 · Edge label inline edit · P3 · S**
+**SCH-016 · Edge label inline edit · P3 · S · Done 2026-07-08**
 
 Double-click an edge label pill (or edge path) opens the same overlay editor as SCH-013
 bound to `e.label`.

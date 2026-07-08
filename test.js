@@ -38,6 +38,8 @@ function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}
   window.SVGElement.prototype.getBoundingClientRect = () => ({
     left: 0, top: 0, width: 1200, height: 800, right: 1200, bottom: 800
   });
+  window.SVGElement.prototype.setPointerCapture = () => {};
+  window.SVGElement.prototype.releasePointerCapture = () => {};
   window.URL.createObjectURL = () => "blob:test";
   window.URL.revokeObjectURL = () => {};
   window.HTMLAnchorElement.prototype.click = function click(){
@@ -95,6 +97,23 @@ async function delay(ms){
 
 function sameList(actual, expected, msg){
   assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected), msg);
+}
+
+function firePointer(window, target, type, opts = {}){
+  const ev = new window.MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: opts.button || 0,
+    clientX: opts.clientX || 0,
+    clientY: opts.clientY || 0,
+    shiftKey: !!opts.shiftKey,
+    altKey: !!opts.altKey,
+    ctrlKey: !!opts.ctrlKey,
+    metaKey: !!opts.metaKey
+  });
+  Object.defineProperty(ev, "pointerId", { configurable: true, value: 1 });
+  target.dispatchEvent(ev);
+  return ev;
 }
 
 (async () => {
@@ -268,6 +287,171 @@ function sameList(actual, expected, msg){
     T.recordRecentColor("#ab12cd");
     assert.strictEqual(T.doc.dirty, before, "recording a palette color alone does not dirty the document");
     assert.strictEqual(T.state.nodes.length, depth, "palette ops leave canvas state alone");
+  }
+
+  /* SCH-010 — multi-select, marquee, group drag */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.setView({ x:0, y:0, k:1 });
+    const first = T.state.nodes.find(n => n.title === "Loyalty program launch");
+    const second = T.state.nodes.find(n => n.title === "Tiered rewards");
+    T.selectNode(first.id);
+    let g = window.document.querySelector(`[data-node="${second.id}"]`);
+    firePointer(window, g, "pointerdown", { clientX:second.x + 5, clientY:second.y + 5, shiftKey:true });
+    sameList(T.selection.ids.sort(), [first.id, second.id].sort(), "shift-click toggles a node into the selection");
+
+    T.clearSelection();
+    T.render();
+    const board = window.document.getElementById("board");
+    firePointer(window, board, "pointerdown", { clientX:40, clientY:80 });
+    firePointer(window, board, "pointermove", { clientX:520, clientY:280 });
+    firePointer(window, board, "pointerup", { clientX:520, clientY:280 });
+    assert(T.selection.ids.includes(first.id), "marquee selects intersecting first node");
+    assert(T.selection.ids.includes(second.id), "marquee selects intersecting second node");
+
+    T.setSelection("node", [first.id, second.id]);
+    T.render();
+    const beforeUndo = T.undoDepth;
+    const x1 = first.x, x2 = second.x;
+    g = window.document.querySelector(`[data-node="${first.id}"]`);
+    firePointer(window, g, "pointerdown", { clientX:first.x + 10, clientY:first.y + 10 });
+    firePointer(window, board, "pointermove", { clientX:first.x + 90, clientY:first.y + 10 });
+    firePointer(window, board, "pointerup", { clientX:first.x + 90, clientY:first.y + 10 });
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "group drag creates one history entry");
+    assert(first.x > x1 && second.x > x2, "group drag moves all selected nodes");
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(n => n.id === first.id).x, x1, "undo restores first node after group drag");
+    assert.strictEqual(T.state.nodes.find(n => n.id === second.id).x, x2, "undo restores second node after group drag");
+
+    const beforeCount = T.state.nodes.length;
+    T.setSelection("node", [first.id, second.id]);
+    T.duplicateSelection();
+    assert.strictEqual(T.state.nodes.length, beforeCount + 2, "duplicate operates on all selected nodes");
+    assert.strictEqual(T.selection.ids.length, 2, "duplicate selects the duplicated node set");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const orders = T.state.nodes.find(n => n.title === "orders");
+    T.setSelection("node", [customers.id, orders.id]);
+    T.deleteSelection();
+    assert(!T.state.nodes.some(n => n.id === customers.id || n.id === orders.id), "delete removes all selected nodes");
+    assert(!T.state.edges.some(e => e.from === customers.id || e.to === customers.id || e.from === orders.id || e.to === orders.id),
+      "delete removes edges attached to selected nodes");
+  }
+
+  /* SCH-011 — copy/paste with id and field remapping */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const orders = T.state.nodes.find(n => n.title === "orders");
+    T.setSelection("node", [customers.id, orders.id]);
+    assert.strictEqual(T.copySelection(), true, "copySelection succeeds for selected nodes");
+    assert.strictEqual(T.pasteSelection(), true, "pasteSelection succeeds from in-memory clipboard");
+    const pasted = T.selectedNodes();
+    assert.strictEqual(pasted.length, 2, "paste selects the pasted nodes");
+    assert(pasted.every(n => n.id !== customers.id && n.id !== orders.id), "pasted nodes get new ids");
+    const pastedCustomers = pasted.find(n => n.title === "customers");
+    const pastedOrders = pasted.find(n => n.title === "orders");
+    assert(pastedCustomers && pastedOrders, "pasted tables preserve titles");
+    const pastedEdge = T.state.edges.find(e => e.from === pastedCustomers.id && e.to === pastedOrders.id);
+    assert(pastedEdge, "internal edge is preserved on paste");
+    assert.notStrictEqual(pastedEdge.fromField, customers.fields[0].id, "fromField binding is remapped");
+    assert.notStrictEqual(pastedEdge.toField, orders.fields[1].id, "toField binding is remapped");
+    assert(pastedCustomers.fields.every(f => !customers.fields.some(old => old.id === f.id)), "field ids are distinct");
+  }
+
+  /* SCH-012 — alignment and distribution */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version:1, nextId:4, edges:[], nodes:[
+      { id:"n1", type:"concept", x:10, y:10, title:"Alpha", notes:"", color:"#FFE9A8" },
+      { id:"n2", type:"concept", x:140, y:90, title:"Beta", notes:"", color:"#CFE8FF" },
+      { id:"n3", type:"concept", x:360, y:170, title:"Gamma", notes:"", color:"#D8F3DC" }
+    ] }));
+    T.setSelection("node", ["n1", "n2", "n3"]);
+    T.alignSelection("left");
+    assert.deepStrictEqual([...new Set(T.selectedNodes().map(n => n.x))], [10], "align left gives all nodes the same x");
+    T.importDocText(JSON.stringify({ version:1, nextId:4, edges:[], nodes:[
+      { id:"n1", type:"concept", x:10, y:10, title:"Alpha", notes:"", color:"#FFE9A8" },
+      { id:"n2", type:"concept", x:140, y:90, title:"Beta", notes:"", color:"#CFE8FF" },
+      { id:"n3", type:"concept", x:360, y:170, title:"Gamma", notes:"", color:"#D8F3DC" }
+    ] }));
+    T.setSelection("node", ["n1", "n2", "n3"]);
+    T.alignSelection("distributeX");
+    const rects = T.selectedNodes().map(T.nodeRect).sort((a, b) => a.x - b.x);
+    const gap1 = rects[1].x - (rects[0].x + rects[0].w);
+    const gap2 = rects[2].x - (rects[1].x + rects[1].w);
+    assert(Math.abs(gap1 - gap2) < 1e-9, "distribute horizontally creates equal edge gaps");
+  }
+
+  /* SCH-013 and SCH-016 — inline title and edge-label editing */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const node = T.state.nodes.find(n => n.title === "Tiered rewards");
+    T.startInlineEditor("node", node.id);
+    let input = window.document.querySelector(".inline-editor");
+    assert(input, "node inline editor appears");
+    input.value = "Tier strategy";
+    input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true }));
+    assert.strictEqual(node.title, "Tier strategy", "Enter commits node inline edit");
+
+    T.startInlineEditor("node", node.id);
+    input = window.document.querySelector(".inline-editor");
+    input.value = "Cancelled title";
+    input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true }));
+    assert.strictEqual(node.title, "Tier strategy", "Escape cancels node inline edit");
+
+    T.startInlineEditor("node", node.id);
+    input = window.document.querySelector(".inline-editor");
+    input.value = "Zoom cancelled";
+    const wheel = new window.WheelEvent("wheel", { bubbles:true, cancelable:true, deltaY:-1, clientX:10, clientY:10 });
+    window.document.getElementById("board").dispatchEvent(wheel);
+    assert(!window.document.querySelector(".inline-editor"), "zoom closes inline editor");
+    assert.strictEqual(node.title, "Tier strategy", "zoom close does not commit an edit");
+
+    const edge = T.state.edges.find(e => e.label === "drives");
+    T.startInlineEditor("edge", edge.id);
+    input = window.document.querySelector(".inline-editor");
+    input.value = "maps to";
+    input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true }));
+    assert.strictEqual(edge.label, "maps to", "Enter commits edge label inline edit");
+  }
+
+  /* SCH-014 — quick-jump / command palette */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const items = T.paletteItems();
+    assert(T.paletteMatches("ord", items).some(item => item.label === "orders"), "paletteMatches finds node titles");
+    assert(T.paletteMatches("customers.email", items).some(item => item.label === "customers.email"), "paletteMatches finds table fields");
+    assert(T.paletteMatches("> add t", items).some(item => item.command === "addTable"), "command queries require > prefix");
+    T.openCommandPalette();
+    const input = window.document.querySelector(".palette-input");
+    input.value = "orders";
+    input.dispatchEvent(new window.Event("input", { bubbles:true }));
+    input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true }));
+    const orders = T.state.nodes.find(n => n.title === "orders");
+    assert.strictEqual(T.selection.ids[0], orders.id, "palette Enter selects the matching node");
+    assert(!window.document.querySelector(".command-modal"), "palette closes after activation");
+  }
+
+  /* SCH-015 — shortcut cheat sheet */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.openShortcutModal();
+    const text = window.document.querySelector(".shortcut-modal").textContent;
+    for (const s of T.SHORTCUTS)
+      assert(text.includes(s.keys), `shortcut modal includes ${s.keys}`);
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"?", bubbles:true }));
+    assert(window.document.querySelector(".shortcut-modal"), "? opens the shortcut modal");
   }
 
   {
