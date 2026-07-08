@@ -178,6 +178,10 @@ Harness quirks you must respect:
   duplicate, z-order, delete), edge (kind quick-set, swap, delete), canvas (add here, fit).
 - Color pickers everywhere: 6 presets + native color well + validated 6-digit hex input
   (3-digit shorthand accepted, live-apply, invalid flags red on blur).
+- Persistent custom color palette: committed custom colors join a recent-swatches row in
+  the inspector and context menus (normalized, deduped, capped at 8, presets excluded);
+  stored in the document (`meta.recentColors`, written only when non-empty) and mirrored
+  to localStorage when available; document colors win on import merge.
 - Undo/redo: 100-step snapshot stack with time+key coalescing for continuous edits.
 
 **I/O (all local, no server)**
@@ -393,6 +397,33 @@ array `SHORTCUTS = [...]` used by both).
 
 Double-click an edge label pill (or edge path) opens the same overlay editor as SCH-013
 bound to `e.label`.
+
+---
+
+**SCH-017 · Persistent custom color palette · P2 · S · Done 2026-07-08**
+
+Once a custom hex color is entered (color well or validated hex input), it becomes part of
+the swatch palette going forward.
+
+- Add `meta.recentColors: string[]` to the document (additive, E8 — same `meta` object as
+  SCH-022's `meta.dialect`). Most-recent-first, deduped, normalized via `normalizeHex`,
+  capped (e.g. 8 entries). Never add the 6 built-in presets.
+- Record on **commit** (color-well `change`, hex input blur/Enter), not per `input` event
+  mid-drag — one palette entry per pick.
+- Surface a "recent" row after the presets in every swatch UI: `swatches`, `ctxSwatches`,
+  `customColorRow` (inspector + context menus, fill and font colors alike).
+- Cross-document persistence (optional, rule P5): mirror to
+  `localStorage["schematic.recentColors"]` behind the same feature-detect pattern as
+  SCH-003; merge on load (document colors win on order). Works in-document-only when
+  localStorage is unavailable.
+- No `pushHistory()` for adding a swatch (UI state, not a canvas mutation); applying the
+  color keeps its existing history behavior.
+
+AC: entering `#AB12CD` once makes it a clickable swatch in inspector + context menus,
+immediately and after JSON round-trip; list deduped/normalized/capped, presets excluded;
+old documents import unchanged; app boots with a throwing localStorage stub. Tests: swatch
+DOM after commit, `meta.recentColors` round-trip, pure `pushRecentColor(list, hex)` helper
+(dedup/cap/normalize).
 
 ---
 
