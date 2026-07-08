@@ -738,6 +738,113 @@ most needs.
 
 ---
 
+### Phase G — To-do lists (v1.1, P0–P2)
+
+A third canvas item type: **to-do lists** — a titled node containing checkable items.
+Edges may connect to the list as a whole (node-level anchoring) or to individual items
+(row-level anchoring, exactly like table fields). Ship order: SCH-060 → 061 → 062 → 063;
+tag `v1.1.0` when all four are done.
+
+Design keystones (apply across all Phase G items):
+- Items reuse the field-id infrastructure: item ids come from `uid()`, and edges bind to
+  items through the **existing** `fromField`/`toField` keys — no edge-schema change.
+- Introduce a row accessor `nodeRows(n)` (`n.fields` for tables, `n.items` for todos,
+  else `null`) and route the row machinery through it (`hitTest`, `fieldRowCenterY`,
+  `fieldAnchor`, `edgeEndpoints`, drop targets, hover handles) instead of adding parallel
+  `type === "todo"` branches at each of those sites.
+- `DOC_VERSION` stays 1 — a new node `type` value plus an `items` array is additive (E8).
+  Old documents import unchanged.
+
+---
+
+**SCH-060 · To-do node type: model, rendering, item editing · P0 · L**
+
+- Data model (additive): `{ id, type:"todo", x, y, title, notes, color, fontSize,
+  fontColor, collapsed?, items:[{ id, text, done }] }`. Absent `done` means false; do not
+  write `done:false` explicitly (keep absent keys absent).
+- `addNode("todo", x, y)`: title "To-do list", one seed item, own default color; wire the
+  toolbar "+ To-do" button, keyboard `D` (add to `SHORTCUTS` — the cheat-sheet test
+  enforces sync), double-click-empty and canvas context menu "Add to-do list here".
+- Geometry: extend `tableMetrics(n)` to accept todo nodes (rows = items, checkbox box in
+  place of PK/FK badges — reuse the `badgeW` slot for the checkbox) so drawing,
+  hit-testing, anchors, and handles share one source of row math (E3). `nodeSize` sizes
+  by widest item text; `collapsed` renders header + `n items` count like collapsed tables.
+- Render in `drawNode`: header shows title + progress (`3/7`); item rows draw a checkbox
+  (SVG rect + check path, presentation attributes only, colors from `THEME` — E5/SCH-044);
+  `done` items render with `text-decoration="line-through"` and muted ink; "no items yet"
+  empty state like tables.
+- Interaction: pointer-down on the checkbox toggles `done` (`pushHistory()` per toggle, no
+  coalescing); inspector editor mirrors the field editor (text input, done flag, reorder
+  ↑↓, delete with `cleanFieldRefs(item.id)`, "+ add item"); node context menu gains
+  "Add item"; inline title editing (SCH-013 overlay) must work unchanged.
+- Id hygiene (E4): extend `ensureFieldIds` and duplicate-remap to walk `n.items`;
+  `hitTest` returns the item row via the shared `nodeRows` path.
+
+AC: add/edit/toggle/reorder/delete items each = one undo step; toggling done never
+destroys the inspector mid-interaction (E1/E2); collapsed todo shows count; JSON
+round-trips items with absent-`done` kept absent; old documents import unchanged.
+Tests: metrics for todo rows, toggle mutation + undo, id remap on duplicate, shortcut
+sync, serializer round-trip.
+
+---
+
+**SCH-061 · Edges to to-do lists and items · P0 · M · Depends: SCH-060**
+
+- Node-level: todo nodes participate in `addEdge`/`edgeEndpoints` like concepts (they are
+  only excluded today by `frame` guards — verify, don't special-case). Default kind for
+  any edge touching a todo is `link`; relation kinds (`1:1/1:N/N:M`), crow's-foot
+  notation, PK auto-orientation, and the column-pair editor remain table↔table only —
+  hide the kind quick-set row in the edge menu/inspector when either end is a todo.
+- Item-level: per-row ○ hover handles (existing `[data-fieldhandle]` machinery via
+  `nodeRows`), drag item↔item, item↔field, item↔node with live drop-target highlight;
+  bindings stored in the existing `fromField`/`toField` keys; anchor dots on bound ends.
+- Inspector edge editor: attachment dropdowns for a todo end list its items ("whole list"
+  + one entry per item text).
+- Collapsed todos: bound edges fall back to `anchorOnRect` (same guard as collapsed
+  tables in `edgeEndpoints`).
+- Deleting an item cleans its edge refs (`cleanFieldRefs`); deleting the node removes
+  attached edges (existing behavior — verify).
+
+AC: concept→item, item→item, and item→table-field edges create, render, anchor at row
+centers, survive reorder (ids, not indexes), and re-anchor to the node boundary when the
+list is collapsed; duplicate rejection works at item granularity; swap direction carries
+item bindings. Tests for each pairing + collapse fallback + `cleanFieldRefs` on item
+delete.
+
+---
+
+**SCH-062 · To-do interop: exports, lint, palette · P1 · S · Depends: SCH-060**
+
+- Markdown outline export (`generateMarkdownOutline`): todo lists render as GitHub task
+  lists — `- [ ] text` / `- [x] text` — nested under linked concepts like table leaves;
+  standalone lists appear as roots.
+- SQL (`generateSQL`) and Mermaid (`generateMermaid`) exports ignore todo nodes and any
+  edge touching them (comment header notes the omission, matching the concepts note).
+- `lintDocument` rules: warning for an empty to-do list (no items); error for a relation
+  kind (`1:1/1:N/N:M`) on an edge touching a todo node.
+- Command palette (`paletteItems`): index items as `list.item text` alongside
+  `table.field`; Enter centers + selects the list.
+
+AC: outline export shows checked/unchecked state deterministically; SQL/Mermaid output is
+byte-identical for a document before/after adding an unconnected todo list; lint hits on
+seeded violations; palette finds items. Tests call the pure functions directly.
+
+---
+
+**SCH-063 · To-do platform parity · P2 · S · Depends: SCH-060, SCH-061**
+
+Sweep the cross-cutting features and assert todo coverage: dark theme (all todo draw
+colors come from `THEME` — extend the no-literal-ink grep test), minimap fill, touch hit
+targets (checkbox + row handles get the enlarged radius), keyboard canvas navigation +
+ARIA (checkbox buttons labelled with item text + state; selection live-region announces
+"to-do list"), copy/paste (item ids remap; edges bound to items inside the clipboard set
+survive), multi-select/alignment/frames containment (should be generic — verify),
+auto-layout tree scope includes `link`-connected todos like concepts.
+
+AC: one assertion per surface above; PNG/SVG exports strip handles and render checkboxes.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.
