@@ -7,8 +7,9 @@ Where the existing code and this document disagree, STOP and flag the discrepanc
 guessing.
 
 **Product definition.** Schematic is a static browser application that combines business
-mind mapping (concept nodes) and database ER modeling (table nodes with typed fields,
-crow's-foot relations, SQL DDL export) on one canvas.
+mind mapping (concept nodes), database ER modeling (table nodes with typed fields,
+crow's-foot relations, SQL DDL export), and to-do lists (checkable items, connectable at
+list or item granularity) on one canvas.
 
 ---
 
@@ -91,8 +92,13 @@ Add new code inside the matching section.
 }
 ```
 
-- `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**.
-- `fromField`/`toField` are optional field-id bindings (field-level anchoring).
+- To-do nodes (v1.1): `{ "id": "n12", "type": "todo", "x": 0, "y": 0, "title": "Launch checklist",
+  "notes": "", "color": "#E9E2F8", "items": [ { "id": "n13", "text": "Approve copy", "done": true } ] }`
+  — `done` is optional (absent = false, never written as `false`); item ids share the node
+  id namespace and are referenced by `fromField`/`toField` exactly like table field ids.
+- `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
+  kinds are table↔table only; edges touching a to-do list are always `link`.
+- `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
 - `pairs` is optional and supersedes `fromField`/`toField` for composite relations; for
   one-pair relations, both shapes may be written for backward compatibility.
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
@@ -106,7 +112,7 @@ Add new code inside the matching section.
 | Area | Functions |
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
-| Geometry | `nodeSize`, `nodeRect`, `tableMetrics(n)` ← single source of truth for table row math, `conceptFont`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
+| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
 | Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
@@ -197,6 +203,26 @@ Harness quirks you must respect:
   (carries bindings), inline-editable labels, duplicate rejection at field granularity.
 - Per-edge routing: curved default or orthogonal Manhattan routing via inspector/context menu;
   routing round-trips in JSON and keeps crow's-foot notation.
+
+**To-do lists (v1.1)**
+- Third node type `todo`: titled list of checkable items with a `done/total` progress
+  header, checkbox toggle on canvas (one undo step each), strikethrough + muted done
+  items, per-node color/font size/font color, notes, collapse (header + `n items`),
+  "no items yet" empty state.
+- Item editing in the inspector (text, DONE flag, reorder ↑↓, delete with edge-ref
+  cleanup, add) and context menu (add item, collapse/expand); add via toolbar "+ To-do",
+  keyboard `D`, canvas context menu, or the command palette.
+- Connections at list or item granularity: per-row ○ handles reuse the field machinery
+  via the shared `nodeRows(n)` accessor; bindings live in the existing
+  `fromField`/`toField` keys; collapsed lists re-anchor bound edges to the node boundary;
+  edges touching a to-do are always `link` (relation kinds stay table↔table, hidden in
+  edge editors for to-do edges).
+- Interop: Markdown outline renders task lists (`- [ ]` / `- [x]`, nested under linked
+  concepts); SQL/Mermaid exports ignore to-dos (headers note the omission); lint warns on
+  empty lists and errors on relation kinds touching a to-do; palette indexes
+  `list.item text`; copy/paste and duplicate remap item ids and preserve item-bound
+  edges; tree auto-layout includes link-connected to-dos; SVG/PNG exports render
+  checkboxes and strip handles.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).
@@ -757,7 +783,7 @@ Design keystones (apply across all Phase G items):
 
 ---
 
-**SCH-060 · To-do node type: model, rendering, item editing · P0 · L**
+**SCH-060 · To-do node type: model, rendering, item editing · P0 · L · Done 2026-07-08**
 
 - Data model (additive): `{ id, type:"todo", x, y, title, notes, color, fontSize,
   fontColor, collapsed?, items:[{ id, text, done }] }`. Absent `done` means false; do not
@@ -788,7 +814,7 @@ sync, serializer round-trip.
 
 ---
 
-**SCH-061 · Edges to to-do lists and items · P0 · M · Depends: SCH-060**
+**SCH-061 · Edges to to-do lists and items · P0 · M · Depends: SCH-060 · Done 2026-07-08**
 
 - Node-level: todo nodes participate in `addEdge`/`edgeEndpoints` like concepts (they are
   only excluded today by `frame` guards — verify, don't special-case). Default kind for
@@ -813,7 +839,7 @@ delete.
 
 ---
 
-**SCH-062 · To-do interop: exports, lint, palette · P1 · S · Depends: SCH-060**
+**SCH-062 · To-do interop: exports, lint, palette · P1 · S · Depends: SCH-060 · Done 2026-07-08**
 
 - Markdown outline export (`generateMarkdownOutline`): todo lists render as GitHub task
   lists — `- [ ] text` / `- [x] text` — nested under linked concepts like table leaves;
@@ -831,7 +857,7 @@ seeded violations; palette finds items. Tests call the pure functions directly.
 
 ---
 
-**SCH-063 · To-do platform parity · P2 · S · Depends: SCH-060, SCH-061**
+**SCH-063 · To-do platform parity · P2 · S · Depends: SCH-060, SCH-061 · Done 2026-07-08**
 
 Sweep the cross-cutting features and assert todo coverage: dark theme (all todo draw
 colors come from `THEME` — extend the no-literal-ink grep test), minimap fill, touch hit
