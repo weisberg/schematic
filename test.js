@@ -6,6 +6,7 @@ const { JSDOM } = require("jsdom");
 const ROOT = __dirname;
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 const script = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+const styles = fs.readFileSync(path.join(ROOT, "styles.css"), "utf8");
 
 function makeStorage(throwing = false){
   const store = new Map();
@@ -112,7 +113,8 @@ function firePointer(window, target, type, opts = {}){
     ctrlKey: !!opts.ctrlKey,
     metaKey: !!opts.metaKey
   });
-  Object.defineProperty(ev, "pointerId", { configurable: true, value: 1 });
+  Object.defineProperty(ev, "pointerId", { configurable: true, value: opts.pointerId || 1 });
+  Object.defineProperty(ev, "pointerType", { configurable: true, value: opts.pointerType || "mouse" });
   target.dispatchEvent(ev);
   return ev;
 }
@@ -630,6 +632,365 @@ function closeEnough(a, b, msg){
     assert(parsed.nodes.some(n => n.type === "frame" && n.w && n.h), "frame JSON round-trips dimensions");
     T.importDocText(JSON.stringify(parsed));
     assert(T.state.nodes.some(n => n.type === "frame" && n.title === "Area"), "frame imports from JSON");
+  }
+
+  /* SCH-020 — extended field metadata */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const email = customers.fields.find(f => f.name === "email");
+    email.default = "'unknown@example.com'";
+    email.unique = true;
+    email.index = true;
+    email.comment = "Customer email address";
+    email.metaOpen = true;
+    const tier = customers.fields.find(f => f.name === "tier");
+    tier.default = "";
+    tier.comment = "";
+    tier.unique = false;
+    tier.index = false;
+    T.render();
+
+    const parsed = JSON.parse(T.serializeDocument());
+    const savedEmail = parsed.nodes.find(n => n.title === "customers").fields.find(f => f.name === "email");
+    assert.strictEqual(savedEmail.default, "'unknown@example.com'", "field default serializes");
+    assert.strictEqual(savedEmail.unique, true, "field unique flag serializes");
+    assert.strictEqual(savedEmail.index, true, "field index flag serializes");
+    assert.strictEqual(savedEmail.comment, "Customer email address", "field comment serializes");
+    assert(!("metaOpen" in savedEmail), "field UI expansion state does not serialize");
+    const savedTier = parsed.nodes.find(n => n.title === "customers").fields.find(f => f.name === "tier");
+    assert(!("default" in savedTier) && !("comment" in savedTier) && !("unique" in savedTier) && !("index" in savedTier),
+      "empty field metadata stays absent in JSON");
+    assert(window.document.querySelector(`[data-node="${customers.id}"] text[title="Customer email address"]`),
+      "field comments render as SVG title attributes");
+    assert([...window.document.querySelectorAll(`[data-node="${customers.id}"] text`)].some(el => el.textContent === "U"),
+      "unique fields render a U badge");
+
+    const sql = T.generateSQL("postgres");
+    assert(sql.includes("DEFAULT 'unknown@example.com'"), "SQL emits field default");
+    assert(sql.includes("UNIQUE"), "SQL emits unique field constraint");
+    assert(sql.includes("-- Customer email address"), "SQL emits field comment");
+    assert(sql.includes("CREATE INDEX idx_customers_email ON customers (email);"), "SQL emits field index statement");
+
+    T.importDocText(JSON.stringify({ version:1, nextId:3, nodes:[
+      { id:"n1", type:"table", x:0, y:0, title:"old_doc", color:"#16232F", notes:"",
+        fields:[{ id:"f1", name:"id", type:"INT", pk:true, fk:false, nullable:false }] }
+    ], edges:[] }));
+    assert.strictEqual(T.state.nodes[0].fields[0].default, undefined, "old documents import without new metadata keys");
+  }
+
+  /* SCH-021 — composite keys and multi-field relations */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version:1, nextId:20, nodes:[
+      { id:"accounts", type:"table", x:0, y:0, title:"accounts", color:"#16232F", notes:"", fields:[
+        { id:"acct_id", name:"account_id", type:"INT", pk:true, fk:false, nullable:false },
+        { id:"acct_org", name:"org_id", type:"INT", pk:true, fk:false, nullable:false },
+        { id:"acct_name", name:"name", type:"VARCHAR(255)", pk:false, fk:false, nullable:false }
+      ] },
+      { id:"usage", type:"table", x:360, y:0, title:"usage_events", color:"#2456E6", notes:"", fields:[
+        { id:"usage_acct", name:"account_id", type:"INT", pk:false, fk:true, nullable:false },
+        { id:"usage_org", name:"org_id", type:"INT", pk:false, fk:true, nullable:false },
+        { id:"usage_ts", name:"event_ts", type:"TIMESTAMP", pk:false, fk:false, nullable:false }
+      ] }
+    ], edges:[
+      { id:"rel", from:"accounts", to:"usage", kind:"1:N", label:"covers",
+        pairs:[{fromField:"acct_id", toField:"usage_acct"}, {fromField:"acct_org", toField:"usage_org"}] }
+    ] }));
+    const sql = T.generateSQL("postgres");
+    assert(sql.includes("PRIMARY KEY (account_id, org_id)"), "composite primary key exports");
+    assert(sql.includes("FOREIGN KEY (account_id, org_id) REFERENCES accounts(account_id, org_id)"),
+      "multi-column foreign key exports");
+    T.render();
+    assert(window.document.querySelector('[data-edge="rel"]').textContent.includes("2 cols"),
+      "multi-field relation label shows the column count");
+    const savedRel = JSON.parse(T.serializeDocument()).edges.find(e => e.id === "rel");
+    assert.strictEqual(savedRel.pairs.length, 2, "multi-field relation pairs serialize");
+
+    T.setSelection("node", ["accounts", "usage"]);
+    T.copySelection();
+    T.pasteSelection();
+    const pasted = T.selectedNodes();
+    const pastedAccounts = pasted.find(n => n.title === "accounts");
+    const pastedUsage = pasted.find(n => n.title === "usage_events");
+    const pastedEdge = T.state.edges.find(e => e.from === pastedAccounts.id && e.to === pastedUsage.id);
+    assert(pastedEdge.pairs.every(p => !["acct_id","acct_org","usage_acct","usage_org"].includes(p.fromField) &&
+      !["acct_id","acct_org","usage_acct","usage_org"].includes(p.toField)),
+      "copy/paste remaps multi-field relation bindings");
+  }
+
+  /* SCH-022 — SQL dialect selector */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.applyDialect("mysql", { render:true, dirty:true });
+    assert.strictEqual(T.docDialect, "mysql", "dialect switches in state");
+    assert.strictEqual(window.document.getElementById("dialectSelect").value, "mysql", "dialect selector mirrors state");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).meta.dialect, "mysql", "dialect serializes in document meta");
+    const mysql = T.generateSQL("mysql");
+    assert(mysql.includes("`customers`"), "MySQL dialect quotes identifiers with backticks");
+    assert(mysql.includes("INT AUTO_INCREMENT"), "MySQL dialect maps SERIAL to INT AUTO_INCREMENT");
+    assert(mysql.includes("DATETIME"), "MySQL dialect maps TIMESTAMP to DATETIME");
+    const postgres = T.generateSQL("postgres");
+    assert(postgres.includes("customer_id SERIAL"), "Postgres dialect preserves SERIAL");
+    const ansi = T.generateSQL("ansi");
+    assert(ansi.includes("customer_id INT"), "ANSI dialect maps SERIAL to INT");
+    const athena = T.generateSQL("athena");
+    assert(athena.includes("CREATE EXTERNAL TABLE"), "Athena dialect emits external table scaffold");
+    assert(athena.includes("STORED AS PARQUET"), "Athena dialect emits parquet storage scaffold");
+    assert(athena.includes("-- LOCATION 's3://bucket/path/';"), "Athena dialect emits location TODO");
+    assert(athena.includes("-- PRIMARY KEY"), "Athena dialect comments primary keys");
+    assert(athena.includes("-- FOREIGN KEY"), "Athena dialect comments foreign keys");
+    T.applyDialect("athena", { render:true, dirty:true });
+    T.selectNode(T.state.nodes.find(n => n.type === "table").id);
+    assert(window.document.getElementById("sqltypes").innerHTML.includes("STRING"), "SQL type datalist swaps with dialect");
+    T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[], edges:[], meta:{ dialect:"athena" } }));
+    assert.strictEqual(T.docDialect, "athena", "dialect imports from document meta");
+  }
+
+  /* SCH-023 — schema lint panel */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    assert.strictEqual(T.lintDocument().length, 0, "seed document has no lint errors");
+    const badState = { nodes:[
+      { id:"t1", type:"table", x:0, y:0, title:"dupe", fields:[
+        { id:"f1", name:"id", type:"INT", pk:false, fk:false, nullable:true },
+        { id:"f2", name:"id", type:"INT", pk:false, fk:false, nullable:true },
+        { id:"f3", name:"orphan_id", type:"INT", pk:false, fk:true, nullable:true }
+      ] },
+      { id:"t2", type:"table", x:0, y:0, title:"dupe", fields:[
+        { id:"f4", name:"id", type:"INT", pk:true, fk:false, nullable:false }
+      ] },
+      { id:"p", type:"table", x:0, y:0, title:"parents", fields:[
+        { id:"p_id", name:"id", type:"INT", pk:true, fk:false, nullable:false }
+      ] },
+      { id:"c", type:"table", x:0, y:0, title:"children", fields:[
+        { id:"c_id", name:"id", type:"INT", pk:true, fk:false, nullable:false },
+        { id:"c_parent", name:"parent_id", type:"VARCHAR(10)", pk:false, fk:true, nullable:false }
+      ] },
+      { id:"a", type:"table", x:0, y:0, title:"alpha", fields:[
+        { id:"a_id", name:"id", type:"INT", pk:true, fk:false, nullable:false }
+      ] },
+      { id:"b", type:"table", x:0, y:0, title:"beta", fields:[
+        { id:"b_id", name:"id", type:"INT", pk:true, fk:false, nullable:false }
+      ] },
+      { id:"empty", type:"concept", x:0, y:0, title:"", notes:"", color:"#FFE9A8" }
+    ], edges:[
+      { id:"mismatch", from:"p", to:"c", kind:"1:N", pairs:[{fromField:"p_id", toField:"c_parent"}] },
+      { id:"nm", from:"a", to:"b", kind:"N:M" }
+    ] };
+    const messages = T.lintDocument(badState).map(i => i.msg);
+    assert(messages.some(m => m.includes("Duplicate table name")), "lint catches duplicate table names");
+    assert(messages.some(m => m.includes("has no primary key")), "lint catches missing primary keys");
+    assert(messages.some(m => m.includes("Duplicate field id")), "lint catches duplicate field names");
+    assert(messages.some(m => m.includes("orphan_id") && m.includes("no bound relation")), "lint catches unbound FK flags");
+    assert(messages.some(m => m.includes("Type mismatch")), "lint catches relation type mismatches");
+    assert(messages.some(m => m.includes("has no junction table")), "lint catches N:M without junction table");
+    assert(messages.some(m => m.includes("empty title")), "lint catches empty concept titles");
+
+    T.openLintModal();
+    assert(window.document.querySelector(".lint-modal"), "lint modal opens");
+    T.closeLintModal();
+    assert(!window.document.querySelector(".lint-modal"), "lint modal closes");
+  }
+
+  /* SCH-024 — table notes and field collapse */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const orders = T.state.nodes.find(n => n.title === "orders");
+    customers.notes = "Primary customer table";
+    const edge = T.state.edges.find(e => e.from === customers.id && e.to === orders.id);
+    const expanded = T.edgeEndpoints(edge);
+    customers.collapsed = true;
+    T.render();
+    const group = window.document.querySelector(`[data-node="${customers.id}"]`);
+    assert(group.textContent.includes(`${customers.fields.length} fields`), "collapsed table shows field count");
+    assert(!group.textContent.includes("customer_id"), "collapsed table hides field rows");
+    assert.strictEqual(T.hitTest({ x:customers.x + 20, y:customers.y + 42 }).field, null, "hitTest returns no field for collapsed table");
+    const collapsed = T.edgeEndpoints(edge);
+    assert.strictEqual(collapsed.boundA, false, "collapsed table edge falls back to node boundary");
+    assert.notStrictEqual(collapsed.pa.y, expanded.pa.y, "collapsed table re-anchors bound edge");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).nodes.find(n => n.id === customers.id).collapsed, true,
+      "collapsed state round-trips through JSON");
+    assert(group.querySelector("circle"), "table notes render a dot indicator");
+    firePointer(window, group.querySelector("[data-collapse]"), "pointerdown", { clientX:customers.x + 1, clientY:customers.y + 1 });
+    assert.strictEqual(customers.collapsed, false, "collapse chevron toggles table expansion");
+  }
+
+  /* SCH-030 — SQL DDL import subset */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const ddl = T.generateSQL("postgres");
+    const parsed = T.parseDDL(ddl);
+    const names = parsed.tables.map(t => t.title).sort();
+    assert(names.includes("customers") && names.includes("orders") && names.includes("reward_events"),
+      "DDL parser imports generated table names");
+    assert(parsed.tables.find(t => t.title === "customers").fields.some(f => f.name === "customer_id" && f.pk),
+      "DDL parser imports primary keys");
+    assert(parsed.fks.length >= 2, "DDL parser imports generated foreign keys");
+
+    T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[], edges:[] }));
+    const imported = T.importDDLText(ddl);
+    assert.strictEqual(imported.imported, true, "DDL importer creates nodes");
+    assert(T.state.nodes.some(n => n.title === "orders"), "DDL importer creates table nodes");
+    assert(T.state.edges.some(e => e.kind === "1:N" && T.edgeFieldPairs(e).length), "DDL importer creates bound FK edges");
+
+    const partial = T.parseDDL("CREATE TABLE ok (id INT PRIMARY KEY); BROKEN STATEMENT;");
+    assert.strictEqual(partial.tables.length, 1, "DDL parser keeps valid statements in partial input");
+    assert.strictEqual(partial.skipped.length, 1, "DDL parser reports skipped statements");
+    for (const bad of [
+      "CREATE TAB nope (id INT);",
+      "CREATE TABLE missing_paren id INT;",
+      "CREATE TABLE odd (FOREIGN KEY (x) REFERENCES);",
+      "not sql at all;",
+      "CREATE TABLE quoted (\"id\" INT PRIMARY KEY, amount DECIMAL(12,2)); CREATE INDEX x ON quoted(id);"
+    ]){
+      assert.doesNotThrow(() => T.parseDDL(bad), "malformed DDL never throws");
+    }
+  }
+
+  /* SCH-031 — Mermaid ER export */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[
+      { id:"a", type:"table", x:0, y:0, title:"a", color:"#16232F", notes:"", fields:[{id:"a_id", name:"id", type:"INT", pk:true, fk:false, nullable:false}] },
+      { id:"b", type:"table", x:0, y:0, title:"b", color:"#2456E6", notes:"", fields:[{id:"b_id", name:"id", type:"INT", pk:true, fk:false, nullable:false}] },
+      { id:"c", type:"table", x:0, y:0, title:"c", color:"#1E7A4F", notes:"", fields:[{id:"c_id", name:"id", type:"INT", pk:true, fk:false, nullable:false}] }
+    ], edges:[
+      { id:"e1", from:"a", to:"b", kind:"1:1", label:"one" },
+      { id:"e2", from:"a", to:"c", kind:"1:N", label:"many" },
+      { id:"e3", from:"b", to:"c", kind:"N:M", label:"join" }
+    ] }));
+    const mermaid = T.generateMermaid();
+    assert(mermaid.includes("a ||--|| b"), "Mermaid export maps 1:1 cardinality");
+    assert(mermaid.includes("a ||--o{ c"), "Mermaid export maps 1:N cardinality");
+    assert(mermaid.includes("b }o--o{ c"), "Mermaid export maps N:M cardinality");
+  }
+
+  /* SCH-032 — Markdown outline export */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const outline = T.generateMarkdownOutline();
+    assert(outline.includes("- Loyalty program launch"), "Markdown outline includes the seed root");
+    assert(outline.includes("  > Q3 initiative"), "Markdown outline includes concept notes as blockquotes");
+    assert(outline.includes("  - Tiered rewards"), "Markdown outline nests linked concepts");
+    assert(outline.includes("    - **customers**"), "Markdown outline includes linked tables as leaves");
+
+    T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[
+      { id:"r", type:"concept", x:0, y:0, title:"Root", notes:"", color:"#FFE9A8" },
+      { id:"a", type:"concept", x:0, y:80, title:"Cycle A", notes:"", color:"#CFE8FF" },
+      { id:"b", type:"concept", x:0, y:160, title:"Cycle B", notes:"", color:"#D8F3DC" }
+    ], edges:[
+      { id:"ra", from:"r", to:"a", kind:"link", label:"" },
+      { id:"ab", from:"a", to:"b", kind:"link", label:"" },
+      { id:"ba", from:"b", to:"a", kind:"link", label:"" }
+    ] }));
+    assert(T.generateMarkdownOutline().includes("(→ see Cycle A)"), "Markdown outline breaks cycles with a see marker");
+  }
+
+  /* SCH-033 — SVG export */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const svg = T.serializedSvg(true);
+    const parsed = new window.DOMParser().parseFromString(svg, "image/svg+xml");
+    assert.strictEqual(parsed.documentElement.localName, "svg", "SVG export parses as XML");
+    assert(!parsed.querySelector("parsererror"), "SVG export has no parser errors");
+    assert(parsed.documentElement.getAttribute("viewBox"), "SVG export has a viewBox");
+    assert(!svg.includes("data-handle") && !svg.includes("data-fieldhandle") && !svg.includes("data-frame-resize"),
+      "SVG export strips editing handles");
+    assert(svg.includes("Fonts use system fallbacks"), "SVG export includes font fallback style note");
+  }
+
+  /* SCH-034 — CSV headers to table */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    sameList(T.parseCSVLine('"last, first",age,"quote ""ok"""'), ["last, first", "age", 'quote "ok"'], "CSV splitter handles quoted commas and escaped quotes");
+    const inferred = T.inferTable([
+      "id,\"last, first\",amount,created_at,active,joined,maybe",
+      "1,\"Smith, Jane\",12.50,2026-07-08T10:00:00Z,true,2026-07-08,",
+      "2,\"Lee, Pat\",8.00,2026-07-09T11:00:00Z,false,2026-07-09,x"
+    ].join("\n"), "sample_csv");
+    const byName = Object.fromEntries(inferred.fields.map(f => [f.name, f]));
+    assert.strictEqual(inferred.name, "sample_csv", "CSV inference normalizes the table name");
+    assert.strictEqual(byName.id.type, "INT", "CSV inference detects integer columns");
+    assert.strictEqual(byName.last_first.type, "VARCHAR(255)", "CSV inference normalizes quoted header names");
+    assert.strictEqual(byName.amount.type, "DECIMAL(12,2)", "CSV inference detects decimal columns");
+    assert.strictEqual(byName.created_at.type, "TIMESTAMP", "CSV inference detects timestamp columns");
+    assert.strictEqual(byName.active.type, "BOOLEAN", "CSV inference detects boolean columns");
+    assert.strictEqual(byName.joined.type, "DATE", "CSV inference detects date columns");
+    assert.strictEqual(byName.maybe.nullable, true, "CSV inference marks blank-containing columns nullable");
+  }
+
+  /* SCH-050 — touch and iPad support */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const next = T.pinchTransform({x:0, y:0}, {x:100, y:0}, {x:10, y:20}, {x:210, y:20}, {x:0, y:0, k:1});
+    closeEnough(next.k, 2, "pinchTransform scale");
+    closeEnough(next.x, 10, "pinchTransform x translation");
+    closeEnough(next.y, 20, "pinchTransform y translation");
+    assert([...window.document.querySelectorAll(".fieldhandle circle")].some(c => c.getAttribute("r") === "14"),
+      "field handles expose larger touch-friendly hit targets");
+  }
+
+  /* SCH-051 — keyboard-only canvas navigation and ARIA */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const board = window.document.getElementById("board");
+    assert.strictEqual(board.getAttribute("role"), "application", "board has application role");
+    assert.strictEqual(board.getAttribute("tabindex"), "0", "board is keyboard focusable");
+    assert.strictEqual(window.document.getElementById("btnSave").getAttribute("aria-label"),
+      window.document.getElementById("btnSave").title, "toolbar titles mirror to aria-label");
+    board.focus();
+    assert.strictEqual(window.document.activeElement, board, "board receives focus");
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Tab", bubbles:true, cancelable:true }));
+    assert(T.selection && T.selection.kind === "node", "Tab cycles canvas node selection");
+    assert(window.document.getElementById("liveStatus").textContent.includes("Selected"), "selection changes announce to live region");
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true, cancelable:true }));
+    assert(window.document.querySelector(".inline-editor"), "Enter opens inline editor for selected node");
+  }
+
+  /* SCH-052 — performance guardrails */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const cacheBefore = T.textMeasureCacheSize;
+    const widthA = T.textW("memoized label", "12px sans-serif");
+    const cacheMid = T.textMeasureCacheSize;
+    const widthB = T.textW("memoized label", "12px sans-serif");
+    assert.strictEqual(widthA, widthB, "memoized text measurement returns identical values");
+    assert.strictEqual(T.textMeasureCacheSize, cacheMid, "repeated text measurement reuses cache entry");
+    assert(cacheMid >= cacheBefore, "text measurement cache grows monotonically before threshold clearing");
+
+    T.perfSeed(501);
+    T.setView({ x:0, y:0, k:1 });
+    const node = T.state.nodes[0];
+    const group = window.document.querySelector(`[data-node="${node.id}"]`);
+    firePointer(window, group, "pointerdown", { clientX:node.x + 4, clientY:node.y + 4 });
+    const fullAfterDown = T.renderStats.full;
+    const fastBeforeMove = T.renderStats.fast;
+    firePointer(window, window.document.getElementById("board"), "pointermove", { clientX:node.x + 80, clientY:node.y + 20 });
+    assert(T.renderStats.fast > fastBeforeMove, "large document drag uses fast path");
+    assert.strictEqual(T.renderStats.full, fullAfterDown, "large document drag avoids full redraw during pointermove");
+    firePointer(window, window.document.getElementById("board"), "pointerup", { clientX:node.x + 80, clientY:node.y + 20 });
+    assert(T.renderStats.full > fullAfterDown, "large document drag performs full redraw on drop");
+  }
+
+  /* SCH-053 — print stylesheet */
+  {
+    assert(styles.includes("@media print"), "print stylesheet is present");
+    assert(styles.includes("header,aside,footer") && styles.includes("display:none"), "print stylesheet hides chrome");
   }
 
   {

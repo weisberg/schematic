@@ -67,6 +67,7 @@ Add new code inside the matching section.
 ```json
 {
   "version": 1,
+  "meta": { "theme": "light", "dialect": "ansi", "recentColors": ["#ab12cd"] },
   "nextId": 42,
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
@@ -74,21 +75,29 @@ Add new code inside the matching section.
       "color": "#FFE9A8", "fontSize": 14, "fontColor": "#16232F" },
     { "id": "n5", "type": "table", "x": 640, "y": 60,
       "title": "customers", "notes": "", "color": "#16232F",
-      "fontSize": 11.5, "fontColor": "#16232F",
+      "fontSize": 11.5, "fontColor": "#16232F", "collapsed": false,
       "fields": [
         { "id": "f_cust_pk", "name": "customer_id", "type": "SERIAL",
-          "pk": true, "fk": false, "nullable": false }
+          "pk": true, "fk": false, "nullable": false,
+          "default": "nextval('seq')", "unique": false, "index": false,
+          "comment": "stable source identifier" }
       ] }
   ],
   "edges": [
     { "id": "n9", "from": "n5", "to": "n6", "kind": "1:N", "label": "",
-      "fromField": "f_cust_pk", "toField": "f_ord_cust" }
+      "fromField": "f_cust_pk", "toField": "f_ord_cust",
+      "pairs": [{ "fromField": "f_cust_pk", "toField": "f_ord_cust" }] }
   ]
 }
 ```
 
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**.
 - `fromField`/`toField` are optional field-id bindings (field-level anchoring).
+- `pairs` is optional and supersedes `fromField`/`toField` for composite relations; for
+  one-pair relations, both shapes may be written for backward compatibility.
+- Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
+- Table nodes may include `collapsed`; collapsed tables render header + field count.
+- `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
 - `fontSize`/`fontColor` are optional; absence means defaults
   (`CONCEPT_FS_DEFAULT = 14`, `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
 
@@ -163,6 +172,11 @@ Harness quirks you must respect:
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
+- Table fields support optional default values, unique/index flags, and comments; unique
+  fields render a `U` badge, comments render as field-name tooltips, and indexed fields
+  emit SQL index statements.
+- Table nodes support notes with dot indicators and collapsible field rows; collapsed
+  tables retain relation anchoring through node-boundary fallback.
 - Frame nodes: labeled subject-area rectangles drawn behind nodes; drag a frame to move
   nodes contained by center point; resize via corner handle; frames are not edge targets.
 - Add via toolbar, keyboard (`C`/`T`), double-click empty canvas, command palette, or
@@ -177,6 +191,8 @@ Harness quirks you must respect:
 - Whole-node anchoring (boundary point toward the other end) and **field-level anchoring**
   (per-row ○ handles on hover, drag to another field/node, live drop-target highlight,
   anchor dots on bound ends, inspector attachment dropdowns per end).
+- Composite relation bindings via `pairs: [{fromField,toField}]`, including inspector
+  add/remove controls, multi-column SQL FKs, and relation labels with column counts.
 - Auto-orientation on field↔field drags (PK side becomes "from"), swap direction
   (carries bindings), inline-editable labels, duplicate rejection at field granularity.
 - Per-edge routing: curved default or orthogonal Manhattan routing via inspector/context menu;
@@ -192,6 +208,12 @@ Harness quirks you must respect:
 - Inline title editor on canvas for nodes; inline label editor for edges.
 - Quick-jump / command palette (`Ctrl/Cmd+K`) for nodes, fields, and `>` commands.
 - Shortcut cheat sheet modal (`?`) generated from the shortcut registry.
+- Schema lint modal listing duplicate names, missing PKs, unbound FK flags, type
+  mismatches, missing junction tables, and empty concept titles; clicking a row selects
+  the offender.
+- Keyboard-only canvas navigation: focused board uses Tab/Shift-Tab to cycle nodes,
+  Enter to open the inline editor, ARIA labels mirror button titles, and selection changes
+  are announced through a live region.
 - Color pickers everywhere: 6 presets + native color well + validated 6-digit hex input
   (3-digit shorthand accepted, live-apply, invalid flags red on blur).
 - Persistent custom color palette: committed custom colors join a recent-swatches row in
@@ -219,12 +241,17 @@ Harness quirks you must respect:
 - SQL DDL export: `CREATE TABLE` with NOT NULL/PK; FK constraints from field-bound edges
   (exact) or FK-flag heuristics (fallback, `-- TODO` comment when unresolvable);
   junction-table suggestions for N:M; copy + `.sql` download.
+- SQL dialect selector persisted in `meta.dialect` with ANSI, Postgres, MySQL, and Athena
+  output modes plus dialect-specific type suggestions.
+- SQL DDL subset import, Mermaid ER export, Markdown mind-map outline export, direct SVG
+  export, and CSV-header-to-table import.
 - PNG export: 2× raster of content bounding box, handles stripped; exports light by default
   with an "as shown" option for the current theme.
+- Print stylesheet hides chrome and scales the board for page output.
 
 **Testing** — Node/jsdom harness covering Phase A lifecycle behavior, Phase B editing
-workflows, Phase E layout/visualization behavior, and key rendering regressions; suite
-ends `ALL TESTS PASSED`.
+workflows, Phase C modeling depth, Phase D interop, Phase E layout/visualization, Phase F
+platform polish, and key rendering regressions; suite ends `ALL TESTS PASSED`.
 
 ---
 
@@ -451,9 +478,11 @@ DOM after commit, `meta.recentColors` round-trip, pure `pushRecentColor(list, he
 
 ### Phase C — Modeling depth (P1–P2)
 
+Status: implemented and tested on 2026-07-08.
+
 ---
 
-**SCH-020 · Extended field metadata · P1 · M**
+**SCH-020 · Extended field metadata · P1 · M · Done 2026-07-08**
 
 Add optional field keys: `default` (string), `unique` (bool), `index` (bool),
 `comment` (string). UI: expandable "…" per field row in the inspector revealing the four
@@ -467,7 +496,7 @@ SQL contains DEFAULT/UNIQUE/INDEX; old documents import unchanged. Tests for eac
 
 ---
 
-**SCH-021 · Composite keys & multi-field relations · P2 · L · Depends: SCH-020**
+**SCH-021 · Composite keys & multi-field relations · P2 · L · Depends: SCH-020 · Done 2026-07-08**
 
 - Multiple `pk:true` fields already emit a composite `PRIMARY KEY (a, b)` — verify + test.
 - Edges gain optional `pairs: [{fromField, toField}, …]` superseding single
@@ -480,7 +509,7 @@ AC: two-pair edge exports correct composite FK; v1 docs unaffected. Extensive te
 
 ---
 
-**SCH-022 · SQL dialect selector · P2 · M**
+**SCH-022 · SQL dialect selector · P2 · M · Done 2026-07-08**
 
 Toolbar/status dropdown persisted in the document (`meta.dialect`, default `"ansi"`)
 ∈ ansi | postgres | mysql | athena. `generateSQL` gains a dialect parameter controlling:
@@ -496,7 +525,7 @@ dialect round-trips through JSON. Add `meta` object to the document shape
 
 ---
 
-**SCH-023 · Schema lint panel · P2 · M**
+**SCH-023 · Schema lint panel · P2 · M · Done 2026-07-08**
 
 A "Lint" toolbar button opens a panel (reuse modal) listing rule violations, each row
 clickable → selects + centers the offender:
@@ -512,7 +541,7 @@ AC: seeded violations produce expected rule hits; clean seed produces zero error
 
 ---
 
-**SCH-024 · Table notes + field collapse · P3 · S**
+**SCH-024 · Table notes + field collapse · P3 · S · Done 2026-07-08**
 
 - Table `notes` (key exists) get the same textarea as concepts + dot indicator.
 - `collapsed: true` on a table renders header only (+ `n fields` count); toggle via
@@ -527,9 +556,11 @@ JSON round-trips. Tests for anchor fallback.
 
 ### Phase D — Import / export interop (P2)
 
+Status: implemented and tested on 2026-07-08.
+
 ---
 
-**SCH-030 · SQL DDL import (subset) · P2 · L**
+**SCH-030 · SQL DDL import (subset) · P2 · L · Done 2026-07-08**
 
 Parse pasted `CREATE TABLE` DDL (textarea modal) into table nodes. Supported subset,
 explicitly: `CREATE TABLE name ( col TYPE [NOT NULL] [DEFAULT x] [PRIMARY KEY|UNIQUE], …,
@@ -546,7 +577,7 @@ Tests: round-trip assertion + 5 malformed-input cases.
 
 ---
 
-**SCH-031 · Mermaid ER export · P2 · S**
+**SCH-031 · Mermaid ER export · P2 · S · Done 2026-07-08**
 
 Export modal tab producing `erDiagram` syntax from table nodes + relation edges
 (`customers ||--o{ orders : ""`). Concepts and `link` edges are omitted (comment header
@@ -556,7 +587,7 @@ AC: string assertions for cardinality mapping (1:1 `||--||`, 1:N `||--o{`, N:M `
 
 ---
 
-**SCH-032 · Markdown outline export (mind map) · P3 · S**
+**SCH-032 · Markdown outline export (mind map) · P3 · S · Done 2026-07-08**
 
 Export the concept graph as a nested Markdown list: roots = concepts with no incoming
 `link` edge; children via outgoing `link` edges; cycles broken with a visited set
@@ -567,7 +598,7 @@ AC: seed exports deterministic outline; cycle test doesn't hang.
 
 ---
 
-**SCH-033 · SVG export · P3 · S**
+**SCH-033 · SVG export · P3 · S · Done 2026-07-08**
 
 Reuse the PNG clone pipeline but download the serialized SVG directly (`.svg`,
 `image/svg+xml`). Inline a `<style>` with the two `@font-face`-less font stacks comment
@@ -578,7 +609,7 @@ elements, has correct viewBox. Tests parse with jsdom `DOMParser`.
 
 ---
 
-**SCH-034 · CSV headers → table · P3 · S**
+**SCH-034 · CSV headers → table · P3 · S · Done 2026-07-08**
 
 Modal: paste CSV first line(s) (or open a `.csv` via file picker — local only), infer
 column names from the header row and types from up to 100 sample rows
@@ -670,9 +701,11 @@ AC: frame drag moves contained nodes (one undo step); resize works; z-layers cor
 
 ### Phase F — Platform & polish (P3)
 
+Status: implemented and tested on 2026-07-08.
+
 ---
 
-**SCH-050 · Touch & iPad support · P3 · L**
+**SCH-050 · Touch & iPad support · P3 · L · Done 2026-07-08**
 
 Pointer events already fire for touch. Add: two-finger pinch zoom + two-finger pan
 (track active pointers in a Map; on 2 pointers compute scale/translate from the pair
@@ -680,14 +713,14 @@ delta), long-press (500ms, <8px movement) opens the context menu, larger hit tar
 when `pointerType === "touch"` (handle r 9→14). Test on iPad Safari manually; jsdom tests
 cover the gesture math via pure `pinchTransform(p1a,p2a,p1b,p2b,view)`.
 
-**SCH-051 · Keyboard-only canvas navigation & ARIA · P3 · M**
+**SCH-051 · Keyboard-only canvas navigation & ARIA · P3 · M · Done 2026-07-08**
 
 Tab/Shift-Tab cycles node selection (document order) when canvas has focus (make the SVG
 `tabindex=0`); Enter opens inline editor (SCH-013); `aria-label`s on toolbar buttons
 (most have `title` — mirror to aria); `role="application"` on the board; announce
 selection changes via a visually-hidden live region.
 
-**SCH-052 · Performance guardrails · P3 · M**
+**SCH-052 · Performance guardrails · P3 · M · Done 2026-07-08**
 
 - Memoize `textW` (`Map` keyed `font\u0000str`, cleared when >10k entries).
 - During node drag, move only the dragged node's `<g>` transform + its incident edges
@@ -698,7 +731,7 @@ selection changes via a visually-hidden live region.
 AC: 500-node document drags without full-layer rebuild (assert via instrumented counter
 in tests); memoization returns identical values.
 
-**SCH-053 · Print stylesheet · P4 · S**
+**SCH-053 · Print stylesheet · P4 · S · Done 2026-07-08**
 
 `@media print`: hide chrome, scale the fitted diagram to page. Low priority; PNG covers
 most needs.
@@ -716,10 +749,10 @@ most needs.
 
 ## 6. Definition of done (every backlog item)
 
-- [ ] All §1 platform rules and §2.4 invariants hold.
-- [ ] Works in the no-FSA fallback path (Firefox/`file://`) if the feature touches I/O.
-- [ ] `node --check` passes on the extracted script; `node test.js` prints `ALL TESTS PASSED`.
-- [ ] New behavior has assertions; count noted in the PR/summary.
-- [ ] JSON documents from before the change still import (backward compatibility test).
-- [ ] §3 of this PLAN.md updated; backlog item marked `✅ done YYYY-MM-DD`.
-- [ ] Deliverable remains static `index.html`, `styles.css`, and `app.js` files.
+- [x] All §1 platform rules and §2.4 invariants hold.
+- [x] Works in the no-FSA fallback path (Firefox/`file://`) if the feature touches I/O.
+- [x] `node --check` passes on the extracted script; `node test.js` prints `ALL TESTS PASSED`.
+- [x] New behavior has assertions; count noted in the PR/summary.
+- [x] JSON documents from before the change still import (backward compatibility test).
+- [x] §3 of this PLAN.md updated; backlog item marked done 2026-07-08.
+- [x] Deliverable remains static `index.html`, `styles.css`, and `app.js` files.

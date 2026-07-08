@@ -41,6 +41,7 @@
     <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree</button>
     <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema</button>
     <button id="btnAddFrame" title="Add a subject-area frame">Frame</button>
+    <button id="btnLint" title="Run schema lint checks">Lint</button>
   </div>
 
   <div class="spacer"></div>
@@ -54,6 +55,11 @@
     <button id="btnExportJSON" title="Download diagram as JSON">JSON ↓</button>
     <button id="btnImportJSON" title="Load a diagram from JSON">Import</button>
     <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL</button>
+    <button id="btnImportDDL" title="Import a SQL DDL subset">DDL In</button>
+    <button id="btnExportMermaid" title="Export Mermaid ER diagram">Mermaid</button>
+    <button id="btnExportMarkdown" title="Export mind map as Markdown">Outline</button>
+    <button id="btnExportSVG" title="Download diagram as SVG">SVG ↓</button>
+    <button id="btnImportCSV" title="Create a table from CSV headers">CSV In</button>
     <button id="btnExportPNG" title="Download diagram as PNG">PNG ↓</button>
     <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear</button>
   </div>
@@ -65,7 +71,7 @@
 
 <main>
   <div id="canvasWrap">
-    <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    <svg id="board" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="application" aria-label="Schematic canvas"></svg>
   </div>
   <aside id="inspector">
     <div class="head"><h2 id="inspTitle">Inspector</h2></div>
@@ -76,10 +82,12 @@
 <footer>
   <span id="zoomLabel">100%</span>
   <span id="countLabel">0 nodes · 0 edges</span>
+  <label class="statuscheck" title="SQL dialect"><span>SQL</span><select id="dialectSelect"><option value="ansi">ANSI</option><option value="postgres">Postgres</option><option value="mysql">MySQL</option><option value="athena">Athena</option></select></label>
   <button id="btnTheme" class="statusbtn" title="Toggle light/dark theme">Dark</button>
   <label class="statuscheck" title="Export PNG using the current theme"><input type="checkbox" id="pngAsShown"> PNG as shown</label>
   <span class="hint spacer">Drag empty canvas to select · Alt-drag to pan · scroll to zoom · drag ○ to connect · double-click to edit · right-click for actions</span>
 </footer>
+<div id="liveStatus" class="visually-hidden" aria-live="polite"></div>
 
 <div class="modal" id="sqlModal">
   <div class="card">

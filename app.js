@@ -55,8 +55,15 @@ const THEME = {
 };
 let docTheme = "light";
 let pngAsShown = false;
-const SQL_TYPES = ["INT","BIGINT","SERIAL","VARCHAR(255)","TEXT","BOOLEAN","DATE",
-                   "TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSONB"];
+let docDialect = "ansi";
+const SQL_DIALECTS = ["ansi","postgres","mysql","athena"];
+const SQL_TYPES_BY_DIALECT = {
+  ansi: ["INT","BIGINT","VARCHAR(255)","TEXT","BOOLEAN","DATE","TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSON"],
+  postgres: ["INT","BIGINT","SERIAL","BIGSERIAL","VARCHAR(255)","TEXT","BOOLEAN","DATE","TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSONB"],
+  mysql: ["INT","BIGINT","INT AUTO_INCREMENT","VARCHAR(255)","TEXT","BOOLEAN","DATE","DATETIME","DECIMAL(12,2)","DOUBLE","JSON"],
+  athena: ["INT","BIGINT","STRING","BOOLEAN","DATE","TIMESTAMP","DECIMAL(12,2)","DOUBLE","JSON"]
+};
+let SQL_TYPES = SQL_TYPES_BY_DIALECT.ansi.slice();
 const SHORTCUTS = [
   { id:"open", keys:"Ctrl/Cmd+O", title:"Open" },
   { id:"save", keys:"Ctrl/Cmd+S", title:"Save" },
@@ -153,6 +160,28 @@ function setPngAsShown(value){
   pngAsShown = !!value;
   updateThemeControls();
 }
+function updateDialectControls(){
+  const select = document.getElementById("dialectSelect");
+  if (select) select.value = docDialect;
+  SQL_TYPES = (SQL_TYPES_BY_DIALECT[docDialect] || SQL_TYPES_BY_DIALECT.ansi).slice();
+  const dl = document.getElementById("sqltypes");
+  if (dl){
+    dl.innerHTML = "";
+    for (const t of SQL_TYPES){ const o = document.createElement("option"); o.value = t; dl.appendChild(o); }
+  }
+}
+function applyDialect(next, opts = {}){
+  const normalized = SQL_DIALECTS.includes(next) ? next : "ansi";
+  const changed = docDialect !== normalized;
+  docDialect = normalized;
+  updateDialectControls();
+  if (opts.render) render();
+  if (opts.dirty && changed) setDocDirty(true);
+}
+function setDialect(next){
+  pushHistory("dialect");
+  applyDialect(next, { render:true, dirty:true });
+}
 
 const uid = () => "n" + (state.nextId++);
 const nodeById = id => state.nodes.find(n => n.id === id);
@@ -163,8 +192,22 @@ function makeSelection(kind, ids){
   const set = new Set(values.filter(Boolean));
   return set.size ? { kind, ids:set } : null;
 }
-function setSelection(kind, ids){ sel = makeSelection(kind, ids); return sel; }
-function clearSelection(){ sel = null; }
+function announce(msg){
+  const live = document.getElementById("liveStatus");
+  if (live) live.textContent = msg;
+}
+function describeSelection(){
+  if (!sel) return "Selection cleared";
+  const count = sel.ids.size;
+  if (sel.kind === "node" && count === 1){
+    const n = nodeById([...sel.ids][0]);
+    return n ? `Selected ${n.type} ${n.title || n.id}` : "Selected node";
+  }
+  if (sel.kind === "edge" && count === 1) return "Selected edge";
+  return `Selected ${count} ${sel.kind}s`;
+}
+function setSelection(kind, ids){ sel = makeSelection(kind, ids); announce(describeSelection()); return sel; }
+function clearSelection(){ sel = null; announce("Selection cleared"); }
 function selectionIds(kind){
   return sel && (!kind || sel.kind === kind) ? [...sel.ids] : [];
 }
@@ -198,6 +241,10 @@ function cleanFieldRefs(fid){
   for (const e of state.edges){
     if (e.fromField === fid) delete e.fromField;
     if (e.toField === fid) delete e.toField;
+    if (Array.isArray(e.pairs)){
+      e.pairs = e.pairs.filter(p => p.fromField !== fid && p.toField !== fid);
+      if (!e.pairs.length) delete e.pairs;
+    }
   }
 }
 /* topmost node (and field row, for tables) under a world point */
@@ -207,7 +254,7 @@ function hitTest(w){
     if (n.type === "frame") continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
     let field = null;
-    if (n.type === "table" && n.fields.length){
+    if (n.type === "table" && !n.collapsed && n.fields.length){
       const m = tableMetrics(n);
       if (w.y > r.y + m.headerH){
         const idx = Math.min(n.fields.length - 1, Math.floor((w.y - r.y - m.headerH) / m.rowH));
@@ -221,10 +268,19 @@ function hitTest(w){
 
 /* text measurement */
 const meas = document.createElement("canvas").getContext("2d");
-function textW(str, font){ meas.font = font; return meas.measureText(str).width; }
+const textMeasureCache = new Map();
+function textW(str, font){
+  const key = font + "\u0000" + str;
+  if (textMeasureCache.has(key)) return textMeasureCache.get(key);
+  if (textMeasureCache.size > 10000) textMeasureCache.clear();
+  meas.font = font;
+  const w = meas.measureText(str).width;
+  textMeasureCache.set(key, w);
+  return w;
+}
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme}}); }
+function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect}}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (coalesceKey != null){
@@ -244,6 +300,7 @@ function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
   applyTheme(s.meta && s.meta.theme ? s.meta.theme : "light", { render:false });
+  applyDialect(s.meta && s.meta.dialect ? s.meta.dialect : "ansi", { render:false });
   pruneSelection();
   render();
 }
@@ -254,9 +311,45 @@ function syncHistoryButtons(){
   document.getElementById("btnRedo").disabled = !redoStack.length;
 }
 
+function cleanFieldForDocument(f){
+  const out = {...f};
+  if (!out.default) delete out.default;
+  if (!out.comment) delete out.comment;
+  if (!out.unique) delete out.unique;
+  if (!out.index) delete out.index;
+  delete out.metaOpen;
+  return out;
+}
+function cleanEdgeForDocument(e){
+  const out = {...e};
+  if (Array.isArray(out.pairs)){
+    out.pairs = out.pairs.filter(p => p && (p.fromField || p.toField))
+      .map(p => ({fromField:p.fromField || "", toField:p.toField || ""}));
+    if (!out.pairs.length) delete out.pairs;
+    else if (out.pairs.length === 1){
+      out.fromField = out.pairs[0].fromField || out.fromField;
+      out.toField = out.pairs[0].toField || out.toField;
+    }
+  }
+  if (!out.fromField) delete out.fromField;
+  if (!out.toField) delete out.toField;
+  if (!out.routing || out.routing === "curve") delete out.routing;
+  return out;
+}
+function cleanNodeForDocument(n){
+  const out = {...n};
+  if (Array.isArray(out.fields)) out.fields = out.fields.map(cleanFieldForDocument);
+  if (!out.notes) out.notes = out.notes || "";
+  return out;
+}
 function documentObject(){
-  const d = { version:DOC_VERSION, nodes:state.nodes, edges:state.edges, nextId:state.nextId };
-  const meta = { theme:docTheme };
+  const d = {
+    version:DOC_VERSION,
+    nodes:state.nodes.map(cleanNodeForDocument),
+    edges:state.edges.map(cleanEdgeForDocument),
+    nextId:state.nextId
+  };
+  const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
   d.meta = meta;
   return d;
@@ -295,6 +388,7 @@ function applyDocument(d, opts = {}){
     persistRecentColors();
   }
   applyTheme(migrated.meta && migrated.meta.theme ? migrated.meta.theme : "light", { render:false });
+  applyDialect(migrated.meta && migrated.meta.dialect ? migrated.meta.dialect : "ansi", { render:false });
   clearSelection();
   if (opts.resetHistory !== false){
     undoStack.length = 0;
@@ -358,6 +452,12 @@ function showCapabilityBanner(){
   if (!unsupported) return;
   banner.textContent = "This browser is missing required canvas capabilities. Use a current browser with SVG and Pointer Events support.";
   banner.hidden = false;
+}
+function syncAriaLabels(){
+  document.querySelectorAll("button[title]:not([aria-label])").forEach(b => b.setAttribute("aria-label", b.title));
+  board.setAttribute("tabindex", "0");
+  board.setAttribute("role", "application");
+  board.setAttribute("aria-label", "Schematic canvas");
 }
 function maybeShowRecovery(){
   if (!RECOVERY) return;
@@ -427,6 +527,7 @@ function nodeSize(n){
   // table node
   const m = tableMetrics(n);
   const headW = textW(n.title || "table", `700 ${m.headerSize}px Archivo, sans-serif`) + 56;
+  if (n.collapsed) return { w: Math.min(Math.max(190, headW), 460), h: m.headerH + 10 };
   let maxRow = 150;
   for (const f of n.fields){
     const rw = m.nameX + textW(f.name + (f.nullable ? "?" : ""), `500 ${m.nameSize}px 'IBM Plex Mono', monospace`)
@@ -491,6 +592,7 @@ function el(tag, attrs, parent){
 }
 
 let world, frameLayer, edgeLayer, nodeLayer, draftLayer, minimap, minimapDrag = false;
+const renderStats = { full:0, fast:0 };
 
 function buildScaffold(){
   board.innerHTML = "";
@@ -516,6 +618,7 @@ function applyView(){
 }
 
 function render(){
+  renderStats.full++;
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
@@ -529,6 +632,22 @@ function render(){
            : `${nodes} nodes · ${state.edges.length} edges`;
   renderMinimap();
   renderInspector();
+}
+function fastDragRender(ids){
+  renderStats.fast++;
+  const moved = new Set(ids);
+  for (const id of moved){
+    const n = nodeById(id);
+    const g = n && document.querySelector(`[data-node="${id}"]`);
+    if (n && g) g.setAttribute("transform", `translate(${n.x},${n.y})`);
+  }
+  const incident = state.edges.filter(e => moved.has(e.from) || moved.has(e.to));
+  for (const e of incident){
+    const old = edgeLayer.querySelector(`[data-edge="${e.id}"]`);
+    if (old) old.remove();
+    drawEdge(e);
+  }
+  renderMinimap();
 }
 
 function minimapTransform(bounds, viewState, box){
@@ -628,13 +747,22 @@ function fieldAnchor(n, idx, towardX){
   const side = towardX >= r.cx ? "e" : "w";
   return { x: side === "e" ? r.x + r.w : r.x, y: fieldRowCenterY(n, idx), side };
 }
+function edgeFieldPairs(e){
+  if (Array.isArray(e.pairs) && e.pairs.length)
+    return e.pairs.filter(p => p && (p.fromField || p.toField));
+  if (e.fromField || e.toField) return [{ fromField:e.fromField || "", toField:e.toField || "" }];
+  return [];
+}
 function edgeEndpoints(e){
   const a = nodeById(e.from), b = nodeById(e.to);
   if (!a || !b) return null;
   if (a.type === "frame" || b.type === "frame") return null;
   const ra = nodeRect(a), rb = nodeRect(b);
-  const ia = (e.fromField && a.type === "table") ? a.fields.findIndex(f => f.id === e.fromField) : -1;
-  const ib = (e.toField   && b.type === "table") ? b.fields.findIndex(f => f.id === e.toField)   : -1;
+  const firstPair = edgeFieldPairs(e)[0] || {};
+  const fromField = firstPair.fromField || e.fromField;
+  const toField = firstPair.toField || e.toField;
+  const ia = (fromField && a.type === "table" && !a.collapsed) ? a.fields.findIndex(f => f.id === fromField) : -1;
+  const ib = (toField   && b.type === "table" && !b.collapsed) ? b.fields.findIndex(f => f.id === toField)   : -1;
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
@@ -709,7 +837,9 @@ function drawEdge(e){
   }
   if (ep.boundA) el("circle", {cx:ep.pa.x, cy:ep.pa.y, r:3, fill:color}, g);
   if (ep.boundB) el("circle", {cx:ep.pb.x, cy:ep.pb.y, r:3, fill:color}, g);
-  const label = e.label || (isLink ? "" : e.kind);
+  let label = e.label || (isLink ? "" : e.kind);
+  const pairCount = edgeFieldPairs(e).length;
+  if (!isLink && pairCount > 1) label += ` · ${pairCount} cols`;
   if (label){
     const mx = (ep.pa.x + ep.pb.x)/2, my = (ep.pa.y + ep.pb.y)/2;
     const w = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
@@ -764,27 +894,39 @@ function drawNode(n){
                 fill: n.color || t.ink}, g);
     const ht = el("text", {x:12, y:m.headerBaseline, fill:t.tableText, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700, "letter-spacing":".04em"}, g);
-    ht.textContent = truncate(n.title || "table", r.w - 60, `700 ${m.headerSize}px Archivo, sans-serif`);
-    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"end", fill:t.tableText, opacity:.75,
+    ht.textContent = truncate(n.title || "table", r.w - 82, `700 ${m.headerSize}px Archivo, sans-serif`);
+    if (n.notes) el("circle", {cx:r.w - 34, cy:Math.max(10, m.headerH/2), r:3.2, fill:t.tableText, opacity:.7}, g);
+    const cg = el("g", {"data-collapse":n.id, cursor:"pointer"}, g);
+    el("rect", {x:r.w - 24, y:0, width:24, height:m.headerH, fill:"transparent"}, cg);
+    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"middle", fill:t.tableText, opacity:.85,
+                "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(10, m.base)}, cg)
+      .textContent = n.collapsed ? "▸" : "▾";
+    el("text", {x:r.w - 34, y:m.headerBaseline, "text-anchor":"end", fill:t.tableText, opacity:.75,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(8, m.base-2)}, g)
       .textContent = "TBL";
+    if (n.collapsed){
+      el("text", {x:12, y:m.headerH + 2, fill:t.muted, "font-family":"'IBM Plex Mono', monospace",
+                  "font-size":Math.max(8, m.base - 1)}, g)
+        .textContent = `${n.fields.length} fields`;
+    } else {
     n.fields.forEach((f, i) => {
       const rowTop = m.headerH + i*m.rowH;
       const cy = rowTop + m.rowH/2;
       if (i > 0) el("line", {x1:8, y1:rowTop, x2:r.w-8, y2:rowTop, stroke:t.rowLine, "stroke-width":1}, g);
-      const badge = f.pk ? "PK" : f.fk ? "FK" : "";
+      const badge = f.pk ? "PK" : f.fk ? "FK" : f.unique ? "U" : "";
       if (badge){
         el("rect", {x:8, y:cy - m.badgeH/2, width:m.badgeW, height:m.badgeH, rx:3,
-                    fill: f.pk ? t.ink : t.tableFill,
+                    fill: f.pk ? t.ink : f.unique ? t.accent : t.tableFill,
                     stroke:t.ink, "stroke-width":.9}, g);
         el("text", {x:8 + m.badgeW/2, y:cy + m.badgeSize*0.34, "text-anchor":"middle",
-                    fill: f.pk ? t.tableText : t.ink,
+                    fill: f.pk || f.unique ? t.tableText : t.ink,
                     "font-family":"'IBM Plex Mono', monospace", "font-size":m.badgeSize,
                     "font-weight":600}, g).textContent = badge;
       }
       const nm = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill:fc,
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.nameSize,
                   "font-weight":500}, g);
+      if (f.comment) nm.setAttribute("title", f.comment);
       nm.textContent = f.name + (f.nullable ? "?" : "");
       el("text", {x:r.w-12, y:cy + m.nameSize*0.35, "text-anchor":"end", fill:t.muted,
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.typeSize}, g)
@@ -800,16 +942,17 @@ function drawNode(n){
       for (const x of [0, r.w]){
         const fh = el("g", {class:"fieldhandle", "data-fieldhandle": f.id,
                             "data-fieldnode": n.id, cursor:"crosshair"}, g);
-        el("circle", {cx:x, cy:y, r:9, fill:"transparent"}, fh);
+        el("circle", {cx:x, cy:y, r:14, fill:"transparent"}, fh);
         el("circle", {cx:x, cy:y, r:3.6, fill:t.tableFill,
                       stroke:t.accent, "stroke-width":1.4}, fh);
       }
     });
+    }
   }
 
   /* connect handle (right edge) */
   const hg = el("g", {"data-handle": n.id, cursor:"crosshair"}, g);
-  el("circle", {cx:r.w, cy:r.h/2, r:11, fill:"transparent"}, hg);
+  el("circle", {cx:r.w, cy:r.h/2, r:14, fill:"transparent"}, hg);
   el("circle", {cx:r.w, cy:r.h/2, r:5.5, fill:t.tableFill,
                 stroke: selected ? t.accent : t.ink, "stroke-width":1.6,
                 opacity: selected ? 1 : .55}, hg);
@@ -863,6 +1006,7 @@ function addEdge(from, to){
   const e = { id: uid(), from: from.id, to: to.id, kind, label:"" };
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;
+  if (kind !== "link" && (e.fromField || e.toField)) e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
   state.edges.push(e);
   setSelection("edge", e.id);
   render();
@@ -924,6 +1068,12 @@ function remapPayload(payload, offset = 36){
     e.to = nodeMap.get(src.to);
     if (e.fromField) e.fromField = fieldMap.get(e.fromField) || e.fromField;
     if (e.toField) e.toField = fieldMap.get(e.toField) || e.toField;
+    if (Array.isArray(e.pairs)){
+      e.pairs = e.pairs.map(p => ({
+        fromField: fieldMap.get(p.fromField) || p.fromField,
+        toField: fieldMap.get(p.toField) || p.toField
+      }));
+    }
     return e;
   }).filter(e => e.from && e.to);
   return { nodes, edges, nodeIds:nodes.map(n => n.id) };
@@ -1181,6 +1331,7 @@ function addRelatedTable(parentId){
   state.nodes.push(n);
   const e = { id: uid(), from: p.id, to: n.id, kind:"1:N", label:"", toField: fk.id };
   if (ppk) e.fromField = ppk.id;
+  e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
   state.edges.push(e);
   setSelection("node", n.id);
   render();
@@ -1213,6 +1364,45 @@ function addChildConcept(){
 
 /* --------------------------- Pointer ------------------------------ */
 let drag = null; // {mode:'pan'|'node'|'connect', ...}
+const activePointers = new Map();
+let touchGesture = null;
+let longPress = null;
+
+function dist(a, b){ return Math.hypot(b.x - a.x, b.y - a.y); }
+function mid(a, b){ return { x:(a.x + b.x)/2, y:(a.y + b.y)/2 }; }
+function pinchTransform(p1a, p2a, p1b, p2b, startView){
+  const m0 = mid(p1a, p2a), m1 = mid(p1b, p2b);
+  const d0 = Math.max(1, dist(p1a, p2a));
+  const d1 = Math.max(1, dist(p1b, p2b));
+  const k = Math.min(3, Math.max(0.2, startView.k * (d1 / d0)));
+  const wx = (m0.x - startView.x) / startView.k;
+  const wy = (m0.y - startView.y) / startView.k;
+  return { x:m1.x - wx*k, y:m1.y - wy*k, k };
+}
+function clearLongPress(){
+  if (longPress && longPress.timer) clearTimeout(longPress.timer);
+  longPress = null;
+}
+function startLongPress(ev){
+  clearLongPress();
+  const start = { x:ev.clientX, y:ev.clientY };
+  const nodeEl = ev.target.closest("[data-node]");
+  const edgeEl = ev.target.closest("[data-edge]");
+  const worldPoint = clientToWorld(ev.clientX, ev.clientY);
+  longPress = { start, timer:setTimeout(() => {
+    longPress = null;
+    drag = null;
+    if (nodeEl){
+      const n = nodeById(nodeEl.getAttribute("data-node"));
+      if (n){ setSelection("node", n.id); render(); nodeMenu(n, start.x, start.y); }
+    } else if (edgeEl){
+      const e = edgeById(edgeEl.getAttribute("data-edge"));
+      if (e){ setSelection("edge", e.id); render(); edgeMenu(e, start.x, start.y); }
+    } else {
+      canvasMenu(worldPoint, start.x, start.y);
+    }
+  }, 500) };
+}
 
 board.addEventListener("pointerdown", ev => {
   if (ev.button === 2) return;
@@ -1222,10 +1412,23 @@ board.addEventListener("pointerdown", ev => {
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   const fieldHandleEl = ev.target.closest("[data-fieldhandle]");
   const handleEl = ev.target.closest("[data-handle]");
+  const collapseEl = ev.target.closest("[data-collapse]");
   const resizeEl = ev.target.closest("[data-frame-resize]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
+  if (ev.pointerType === "touch"){
+    activePointers.set(ev.pointerId, { x:ev.clientX, y:ev.clientY });
+    startLongPress(ev);
+    if (activePointers.size === 2){
+      const pts = [...activePointers.values()];
+      touchGesture = { start:[pts[0], pts[1]], view:{...view} };
+      clearLongPress();
+      drag = null;
+      board.classList.remove("panning","connecting");
+      return;
+    }
+  }
 
   if (fieldHandleEl){
     drag = { mode:"connect", from: { id: fieldHandleEl.getAttribute("data-fieldnode"),
@@ -1236,6 +1439,17 @@ board.addEventListener("pointerdown", ev => {
   if (handleEl){
     drag = { mode:"connect", from: { id: handleEl.getAttribute("data-handle") } };
     board.classList.add("connecting");
+    return;
+  }
+  if (collapseEl){
+    const id = collapseEl.getAttribute("data-collapse");
+    const n = nodeById(id);
+    if (n && n.type === "table"){
+      pushHistory();
+      n.collapsed = !n.collapsed;
+      setSelection("node", id);
+      render();
+    }
     return;
   }
   if (resizeEl){
@@ -1286,6 +1500,18 @@ board.addEventListener("pointerdown", ev => {
 });
 
 board.addEventListener("pointermove", ev => {
+  if (ev.pointerType === "touch" && activePointers.has(ev.pointerId)){
+    const prev = activePointers.get(ev.pointerId);
+    activePointers.set(ev.pointerId, { x:ev.clientX, y:ev.clientY });
+    if (longPress && dist(longPress.start, {x:ev.clientX, y:ev.clientY}) > 8) clearLongPress();
+    if (touchGesture && activePointers.size >= 2){
+      const pts = [...activePointers.values()];
+      view = pinchTransform(touchGesture.start[0], touchGesture.start[1], pts[0], pts[1], touchGesture.view);
+      applyView();
+      return;
+    }
+    if (prev && dist(prev, {x:ev.clientX, y:ev.clientY}) > 0 && longPress && dist(longPress.start, {x:ev.clientX, y:ev.clientY}) > 8) clearLongPress();
+  }
   if (!drag) return;
   if (drag.mode === "pan"){
     view.x = drag.vx + (ev.clientX - drag.sx);
@@ -1302,7 +1528,8 @@ board.addEventListener("pointermove", ev => {
       n.x = Math.round((start.x + dx)/4)*4;
       n.y = Math.round((start.y + dy)/4)*4;
     }
-    render();
+    if (state.nodes.length > 150) fastDragRender(drag.starts.map(s => s.id));
+    else render();
   } else if (drag.mode === "frame-resize"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     const n = nodeById(drag.id);
@@ -1351,9 +1578,16 @@ board.addEventListener("pointermove", ev => {
 });
 
 board.addEventListener("pointerup", ev => {
+  if (ev.pointerType === "touch"){
+    activePointers.delete(ev.pointerId);
+    clearLongPress();
+    if (activePointers.size < 2) touchGesture = null;
+  }
   if (!drag) return;
   if (drag.mode === "pan" && !drag.moved){
     clearSelection(); render();
+  } else if (drag.mode === "node"){
+    if (drag.moved && state.nodes.length > 150) render();
   } else if (drag.mode === "marquee"){
     draftLayer.innerHTML = "";
     if (drag.moved){
@@ -1372,6 +1606,13 @@ board.addEventListener("pointerup", ev => {
   }
   board.classList.remove("panning","connecting");
   drag = null;
+});
+board.addEventListener("pointercancel", ev => {
+  activePointers.delete(ev.pointerId);
+  clearLongPress();
+  if (activePointers.size < 2) touchGesture = null;
+  drag = null;
+  board.classList.remove("panning","connecting");
 });
 
 board.addEventListener("dblclick", ev => {
@@ -1452,6 +1693,16 @@ function runShortcut(id, ev){
   if (id === "fit") return fitView();
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
 }
+function cycleNodeSelection(reverse = false){
+  const nodes = state.nodes.filter(n => n.type !== "frame");
+  if (!nodes.length) return;
+  const current = firstSelectionId("node");
+  let idx = nodes.findIndex(n => n.id === current);
+  idx = idx < 0 ? (reverse ? nodes.length - 1 : 0) : (idx + (reverse ? -1 : 1) + nodes.length) % nodes.length;
+  setSelection("node", nodes[idx].id);
+  centerNode(nodes[idx].id);
+  render();
+}
 function nudgeSelection(key, step){
   const nodes = selectedNodes();
   if (!nodes.length) return;
@@ -1467,6 +1718,17 @@ function nudgeSelection(key, step){
 window.addEventListener("keydown", ev => {
   const tag = document.activeElement && document.activeElement.tagName;
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  if (!typing && document.activeElement === board && ev.key === "Tab"){
+    ev.preventDefault();
+    cycleNodeSelection(ev.shiftKey);
+    return;
+  }
+  if (!typing && document.activeElement === board && ev.key === "Enter"){
+    ev.preventDefault();
+    const node = singleSelectedNode();
+    if (node) startInlineEditor("node", node.id);
+    return;
+  }
   const shortcut = matchShortcut(ev, typing);
   if (shortcut){
     ev.preventDefault();
@@ -1744,12 +2006,23 @@ function renderInspector(){
       frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
     } else {
+      frow("Notes", () => {
+        const t = document.createElement("textarea");
+        t.value = n.notes || "";
+        t.addEventListener("focus", pushHistoryOnce());
+        t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
+        return t;
+      });
       frow("Header color", () => swatches(TABLE_COLORS, n.color,
         (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
       frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      frow("Collapsed", () => {
+        const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
+        return b;
+      });
       renderFieldEditor(n);
     }
 
@@ -1802,8 +2075,11 @@ function renderInspector(){
       });
       return s;
     });
-    attachRow("From", a, e, "fromField");
-    attachRow("To",   b, e, "toField");
+    if (a.type === "table" && b.type === "table" && e.kind !== "link") renderPairEditor(a, b, e);
+    else {
+      attachRow("From", a, e, "fromField");
+      attachRow("To",   b, e, "toField");
+    }
     frow("Label (optional)", () => mkInput(e.label, v => { e.label = v; drawOnly(); }));
 
     const div = document.createElement("div");
@@ -1878,6 +2154,74 @@ function attachRow(which, node, e, key){
     return s;
   });
 }
+function setEdgePairs(e, pairs){
+  e.pairs = pairs.filter(p => p.fromField || p.toField);
+  if (!e.pairs.length){
+    delete e.pairs;
+    delete e.fromField;
+    delete e.toField;
+  } else {
+    e.fromField = e.pairs[0].fromField || "";
+    e.toField = e.pairs[0].toField || "";
+  }
+}
+function fieldSelect(node, value, onChange){
+  const s = document.createElement("select");
+  const empty = document.createElement("option");
+  empty.value = ""; empty.textContent = "(none)";
+  s.appendChild(empty);
+  for (const f of node.fields){
+    const o = document.createElement("option");
+    o.value = f.id;
+    o.textContent = f.name;
+    if (value === f.id) o.selected = true;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => onChange(s.value));
+  return s;
+}
+function renderPairEditor(a, b, e){
+  const wrapD = document.createElement("div");
+  const lab = document.createElement("label");
+  lab.textContent = "Column pairs";
+  lab.style.cssText = "font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px";
+  wrapD.appendChild(lab);
+  const pairs = edgeFieldPairs(e);
+  if (!pairs.length) pairs.push({ fromField:e.fromField || "", toField:e.toField || "" });
+  pairs.forEach((pair, i) => {
+    const row = document.createElement("div");
+    row.className = "fieldrow";
+    row.append(
+      fieldSelect(a, pair.fromField, value => {
+        pushHistory();
+        pairs[i] = {...pairs[i], fromField:value};
+        setEdgePairs(e, pairs);
+        render();
+      }),
+      fieldSelect(b, pair.toField, value => {
+        pushHistory();
+        pairs[i] = {...pairs[i], toField:value};
+        setEdgePairs(e, pairs);
+        render();
+      }),
+      mkBtn("✕", () => {
+        pushHistory();
+        pairs.splice(i, 1);
+        setEdgePairs(e, pairs);
+        render();
+      }, "mini del")
+    );
+    wrapD.appendChild(row);
+  });
+  wrapD.appendChild(mkBtn("+ Add column pair", () => {
+    pushHistory();
+    const next = edgeFieldPairs(e);
+    next.push({ fromField:"", toField:"" });
+    setEdgePairs(e, next);
+    render();
+  }));
+  inspBody.appendChild(wrapD);
+}
 
 function renderFieldEditor(n){
   const wrapD = document.createElement("div");
@@ -1901,9 +2245,23 @@ function renderFieldEditor(n){
     flags.appendChild(mkFlag("PK", f.pk, v => { f.pk = v; if (v) f.nullable = false; render(); }));
     flags.appendChild(mkFlag("FK", f.fk, v => { f.fk = v; render(); }));
     flags.appendChild(mkFlag("NULL", f.nullable, v => { f.nullable = v; render(); }));
+    flags.appendChild(mkFlag("UNQ", f.unique, v => { f.unique = v; render(); }));
+    flags.appendChild(mkFlag("IDX", f.index, v => { f.index = v; render(); }));
+    flags.appendChild(mkBtn("…", () => { f.metaOpen = !f.metaOpen; render(); }, "mini"));
     flags.appendChild(mkBtn("↑", () => moveField(n, i, -1), "mini"));
     flags.appendChild(mkBtn("↓", () => moveField(n, i, +1), "mini"));
     wrapD.appendChild(flags);
+    if (f.metaOpen){
+      const meta = document.createElement("div");
+      meta.className = "fieldmeta";
+      const def = mkInput(f.default || "", v => { if (v) f.default = v; else delete f.default; drawOnly(); });
+      def.placeholder = "default";
+      const comment = mkInput(f.comment || "", v => { if (v) f.comment = v; else delete f.comment; drawOnly(); });
+      comment.placeholder = "comment";
+      comment.className = "wide";
+      meta.append(def, comment);
+      wrapD.appendChild(meta);
+    }
   });
 
   wrapD.appendChild(mkBtn("+ Add field", () => {
@@ -2201,6 +2559,7 @@ function newDoc(){
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
   applyTheme("light", { render:false });
+  applyDialect("ansi", { render:false });
   setPngAsShown(false);
   render();
   syncHistoryButtons();
@@ -2244,65 +2603,512 @@ document.getElementById("btnAddTable").addEventListener("click", () => { const c
 document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
 document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
+document.getElementById("btnLint").addEventListener("click", openLintModal);
 document.getElementById("btnTheme").addEventListener("click", toggleTheme);
 document.getElementById("pngAsShown").addEventListener("change", ev => setPngAsShown(ev.target.checked));
+document.getElementById("dialectSelect").addEventListener("change", ev => setDialect(ev.target.value));
 
 /* --------------------------- SQL export --------------------------- */
 function ident(s){
   const t = (s||"t").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g,"");
   return t || "t";
 }
-function generateSQL(){
+function qident(s, dialect = docDialect){
+  const id = ident(s);
+  if (dialect === "mysql" || dialect === "athena") return "`" + id + "`";
+  return id;
+}
+function sqlType(raw, dialect = docDialect){
+  const t = String(raw || "TEXT").trim();
+  if (dialect === "mysql"){
+    if (/^SERIAL$/i.test(t)) return "INT AUTO_INCREMENT";
+    if (/^TIMESTAMP$/i.test(t)) return "DATETIME";
+    if (/^BOOLEAN$/i.test(t)) return "BOOLEAN";
+    return t.replace(/^JSONB$/i, "JSON");
+  }
+  if (dialect === "athena"){
+    if (/^SERIAL$/i.test(t)) return "INT";
+    if (/^VARCHAR\(\d+\)$/i.test(t) || /^TEXT$/i.test(t)) return "STRING";
+    if (/^BOOLEAN$/i.test(t)) return "BOOLEAN";
+    if (/^FLOAT$/i.test(t)) return "DOUBLE";
+    if (/^JSONB?$/i.test(t)) return "STRING";
+    return t;
+  }
+  if (dialect === "ansi"){
+    if (/^SERIAL$/i.test(t)) return "INT";
+    if (/^JSONB$/i.test(t)) return "JSON";
+    return t;
+  }
+  return t;
+}
+function comparableType(raw){
+  return String(sqlType(raw, "ansi")).toUpperCase()
+    .replace(/^SERIAL$/, "INT")
+    .replace(/^INT AUTO_INCREMENT$/, "INT")
+    .replace(/^VARCHAR\(\d+\)$/, "VARCHAR")
+    .replace(/^DECIMAL\([^)]+\)$/, "DECIMAL")
+    .replace(/^NUMERIC\([^)]+\)$/, "NUMERIC");
+}
+function edgePairsResolved(e, parent, child){
+  const pairs = edgeFieldPairs(e);
+  if (pairs.length){
+    const resolved = pairs.map(p => ({
+      parent: parent.fields.find(f => f.id === p.fromField),
+      child: child.fields.find(f => f.id === p.toField)
+    })).filter(p => p.parent && p.child);
+    if (resolved.length) return resolved;
+  }
+  const ppk = parent.fields.find(f => f.pk);
+  const boundChild = e.toField ? child.fields.find(f => f.id === e.toField) : null;
+  const boundParent = e.fromField ? parent.fields.find(f => f.id === e.fromField) : null;
+  const fkField = boundChild
+               || child.fields.find(f => f.fk && ident(f.name).includes(ident(parent.title).replace(/s$/,"")))
+               || child.fields.find(f => f.fk);
+  const refField = boundParent || ppk;
+  return fkField && refField ? [{ parent:refField, child:fkField }] : [];
+}
+function columnLine(f, dialect = docDialect){
+  const parts = [`  ${qident(f.name, dialect)} ${sqlType(f.type, dialect)}`];
+  if (dialect !== "athena"){
+    if (!f.nullable) parts.push("NOT NULL");
+    if (f.default) parts.push("DEFAULT " + f.default);
+    if (f.unique) parts.push("UNIQUE");
+  }
+  const comment = f.comment ? ` -- ${f.comment}` : "";
+  return parts.join(" ") + comment;
+}
+function generateSQL(dialect = docDialect){
   const tables = state.nodes.filter(n => n.type === "table");
   if (!tables.length) return "-- No table nodes on the canvas.\n-- Add a Table node, give it fields, then export again.";
-  const lines = ["-- Draft DDL generated by Schematic — review types & constraints before use.",""];
+  dialect = SQL_DIALECTS.includes(dialect) ? dialect : "ansi";
+  const lines = [`-- Draft ${dialect.toUpperCase()} DDL generated by Schematic — review types & constraints before use.`,""];
   for (const t of tables){
-    const tn = ident(t.title);
-    const cols = t.fields.map(f =>
-      `  ${ident(f.name)} ${f.type || "TEXT"}${f.nullable ? "" : " NOT NULL"}`);
-    const pks = t.fields.filter(f => f.pk).map(f => ident(f.name));
-    if (pks.length) cols.push(`  PRIMARY KEY (${pks.join(", ")})`);
-    // FK constraints from 1:N / 1:1 edges where this table is the "many" (to) side.
-    // Field-bound edges give exact column mappings; otherwise fall back to heuristics.
+    const tn = qident(t.title, dialect);
+    const cols = t.fields.map(f => columnLine(f, dialect));
+    const constraintComments = [];
+    const pks = t.fields.filter(f => f.pk).map(f => qident(f.name, dialect));
+    if (pks.length){
+      const line = `  PRIMARY KEY (${pks.join(", ")})`;
+      if (dialect === "athena") constraintComments.push("-- " + line.trim());
+      else cols.push(line);
+    }
     for (const e of state.edges){
       if (e.kind !== "1:N" && e.kind !== "1:1") continue;
       if (e.to !== t.id) continue;
       const parent = nodeById(e.from);
       if (!parent || parent.type !== "table") continue;
-      const ppk = parent.fields.find(f => f.pk);
-      const boundChild  = e.toField   ? t.fields.find(f => f.id === e.toField)          : null;
-      const boundParent = e.fromField ? parent.fields.find(f => f.id === e.fromField)   : null;
-      const refField = boundParent || ppk;
-      const fkField = boundChild
-                   || t.fields.find(f => f.fk && ident(f.name).includes(ident(parent.title).replace(/s$/,"")))
-                   || t.fields.find(f => f.fk);
-      if (fkField && refField){
-        cols.push(`  FOREIGN KEY (${ident(fkField.name)}) REFERENCES ${ident(parent.title)}(${ident(refField.name)})`);
+      const pairs = edgePairsResolved(e, parent, t);
+      if (pairs.length){
+        const childCols = pairs.map(p => qident(p.child.name, dialect)).join(", ");
+        const parentCols = pairs.map(p => qident(p.parent.name, dialect)).join(", ");
+        const line = `  FOREIGN KEY (${childCols}) REFERENCES ${qident(parent.title, dialect)}(${parentCols})`;
+        if (dialect === "athena") constraintComments.push("-- " + line.trim());
+        else cols.push(line);
       } else {
-        cols.push(`  -- TODO: add FK column referencing ${ident(parent.title)}${ppk ? "(" + ident(ppk.name) + ")" : ""} (edge: ${e.kind})`);
+        const ppk = parent.fields.find(f => f.pk);
+        cols.push(`  -- TODO: add FK column referencing ${qident(parent.title, dialect)}${ppk ? "(" + qident(ppk.name, dialect) + ")" : ""} (edge: ${e.kind})`);
       }
     }
-    lines.push(`CREATE TABLE ${tn} (`, cols.join(",\n"), ");", "");
-    // N:M edges → junction table suggestion
+    if (dialect === "athena"){
+      lines.push(`CREATE EXTERNAL TABLE ${tn} (`, cols.join(",\n"), ")",
+        "STORED AS PARQUET",
+        "-- LOCATION 's3://bucket/path/';");
+      if (constraintComments.length) lines.push(...constraintComments);
+      if (t.fields.some(f => /^SERIAL$/i.test(f.type || ""))) lines.push("-- SERIAL fields emitted as INT for Athena.");
+      lines.push("");
+    } else {
+      lines.push(`CREATE TABLE ${tn} (`, cols.join(",\n"), ");", "");
+      for (const f of t.fields.filter(f => f.index)){
+        lines.push(`CREATE INDEX idx_${ident(t.title)}_${ident(f.name)} ON ${tn} (${qident(f.name, dialect)});`);
+      }
+      if (t.fields.some(f => f.index)) lines.push("");
+    }
   }
   for (const e of state.edges){
     if (e.kind !== "N:M") continue;
     const a = nodeById(e.from), b = nodeById(e.to);
     if (!a || !b || a.type !== "table" || b.type !== "table") continue;
-    const an = ident(a.title), bn = ident(b.title);
+    const an = qident(a.title, dialect), bn = qident(b.title, dialect);
+    const rawAn = ident(a.title), rawBn = ident(b.title);
     const apk = a.fields.find(f => f.pk), bpk = b.fields.find(f => f.pk);
-    lines.push(`-- N:M between ${an} and ${bn} — suggested junction table:`,
-      `CREATE TABLE ${an}_${bn} (`,
-      `  ${an}_id ${apk ? apk.type.replace(/^SERIAL$/i,"INT") : "INT"} NOT NULL,`,
-      `  ${bn}_id ${bpk ? bpk.type.replace(/^SERIAL$/i,"INT") : "INT"} NOT NULL,`,
-      `  PRIMARY KEY (${an}_id, ${bn}_id)` +
-        (apk ? `,\n  FOREIGN KEY (${an}_id) REFERENCES ${an}(${ident(apk.name)})` : "") +
-        (bpk ? `,\n  FOREIGN KEY (${bn}_id) REFERENCES ${bn}(${ident(bpk.name)})` : ""),
+    lines.push(`-- N:M between ${rawAn} and ${rawBn} — suggested junction table:`,
+      `CREATE TABLE ${qident(rawAn + "_" + rawBn, dialect)} (`,
+      `  ${qident(rawAn + "_id", dialect)} ${apk ? sqlType(apk.type, dialect) : "INT"} NOT NULL,`,
+      `  ${qident(rawBn + "_id", dialect)} ${bpk ? sqlType(bpk.type, dialect) : "INT"} NOT NULL,`,
+      `  PRIMARY KEY (${qident(rawAn + "_id", dialect)}, ${qident(rawBn + "_id", dialect)})` +
+        (apk && dialect !== "athena" ? `,\n  FOREIGN KEY (${qident(rawAn + "_id", dialect)}) REFERENCES ${an}(${qident(apk.name, dialect)})` : "") +
+        (bpk && dialect !== "athena" ? `,\n  FOREIGN KEY (${qident(rawBn + "_id", dialect)}) REFERENCES ${bn}(${qident(bpk.name, dialect)})` : ""),
       ");", "");
   }
   return lines.join("\n");
 }
+function lintDocument(docState = state){
+  const issues = [];
+  const nodes = docState.nodes || [];
+  const edges = docState.edges || [];
+  const tables = nodes.filter(n => n.type === "table");
+  const concepts = nodes.filter(n => n.type === "concept");
+  const titleKey = n => ident(n.title);
+  const tableNames = new Map();
+  for (const t of tables){
+    const key = titleKey(t);
+    if (tableNames.has(key)) issues.push({level:"error", msg:`Duplicate table name: ${t.title}`, nodeId:t.id});
+    else tableNames.set(key, t);
+    if (!t.fields.some(f => f.pk)) issues.push({level:"error", msg:`Table ${t.title} has no primary key`, nodeId:t.id});
+    const fieldNames = new Set();
+    for (const f of t.fields){
+      const fk = ident(f.name);
+      if (fieldNames.has(fk)) issues.push({level:"error", msg:`Duplicate field ${f.name} in ${t.title}`, nodeId:t.id});
+      fieldNames.add(fk);
+      if (f.fk){
+        const bound = edges.some(e => e.fromField === f.id || e.toField === f.id ||
+          edgeFieldPairs(e).some(p => p.fromField === f.id || p.toField === f.id));
+        if (!bound) issues.push({level:"error", msg:`FK field ${t.title}.${f.name} has no bound relation`, nodeId:t.id});
+      }
+    }
+  }
+  for (const c of concepts){
+    if (!String(c.title || "").trim()) issues.push({level:"error", msg:"Concept has an empty title", nodeId:c.id});
+  }
+  for (const e of edges){
+    if (e.kind === "link") continue;
+    const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to);
+    if (!a || !b || a.type !== "table" || b.type !== "table") continue;
+    if (e.kind === "N:M"){
+      const expected = ident(a.title) + "_" + ident(b.title);
+      const reverse = ident(b.title) + "_" + ident(a.title);
+      if (!tables.some(t => ident(t.title) === expected || ident(t.title) === reverse))
+        issues.push({level:"error", msg:`N:M ${a.title} ↔ ${b.title} has no junction table`, edgeId:e.id});
+    }
+    for (const p of edgePairsResolved(e, a, b)){
+      if (comparableType(p.parent.type) !== comparableType(p.child.type))
+        issues.push({level:"error", msg:`Type mismatch on ${a.title}.${p.parent.name} → ${b.title}.${p.child.name}`, edgeId:e.id});
+    }
+  }
+  return issues;
+}
+let lintModal = null;
+function openLintModal(){
+  closeLintModal();
+  const modal = document.createElement("div");
+  modal.className = "modal open lint-modal";
+  const issues = lintDocument();
+  const rows = document.createElement("div");
+  rows.className = "lint-list";
+  if (!issues.length){
+    const p = document.createElement("p");
+    p.className = "helper";
+    p.textContent = "No schema lint errors.";
+    rows.appendChild(p);
+  } else {
+    for (const issue of issues){
+      const b = document.createElement("button");
+      b.className = "lint-row";
+      b.innerHTML = `<b>${escapeHtml(issue.msg)}</b><small>${escapeHtml(issue.level)}</small>`;
+      b.addEventListener("click", () => {
+        if (issue.nodeId){ setSelection("node", issue.nodeId); centerNode(issue.nodeId); render(); }
+        if (issue.edgeId){ setSelection("edge", issue.edgeId); render(); }
+        closeLintModal();
+      });
+      rows.appendChild(b);
+    }
+  }
+  modal.innerHTML = `<div class="card"><h3>Schema lint</h3><div class="actions"><button class="primary" id="btnCloseLint">Close</button></div></div>`;
+  modal.querySelector(".card").insertBefore(rows, modal.querySelector(".actions"));
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeLintModal(); });
+  document.body.appendChild(modal);
+  lintModal = modal;
+  modal.querySelector("#btnCloseLint").addEventListener("click", closeLintModal);
+}
+function closeLintModal(){
+  if (lintModal && lintModal.parentNode) lintModal.parentNode.removeChild(lintModal);
+  lintModal = null;
+}
+
+/* ------------------------ Interop helpers ------------------------- */
+function stripSqlComments(text){
+  return String(text || "").replace(/--.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+}
+function splitSqlStatements(text){
+  const out = [];
+  let cur = "", quote = null, depth = 0;
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (quote){
+      cur += ch;
+      if (ch === quote && text[i-1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`"){ quote = ch; cur += ch; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === ";" && depth === 0){ if (cur.trim()) out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function splitTopLevelComma(text){
+  const out = [];
+  let cur = "", quote = null, depth = 0;
+  for (let i = 0; i < text.length; i++){
+    const ch = text[i];
+    if (quote){
+      cur += ch;
+      if (ch === quote && text[i-1] !== "\\") quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === "`"){ quote = ch; cur += ch; continue; }
+    if (ch === "(") depth++;
+    if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0){ out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function unquoteName(s){
+  return String(s || "").trim().replace(/^[`"[]|[`"\]]$/g, "");
+}
+function parseNameList(text){
+  return splitTopLevelComma(text).map(unquoteName).map(ident);
+}
+function parseDDL(text){
+  const result = { tables:[], fks:[], skipped:[] };
+  const statements = splitSqlStatements(stripSqlComments(text));
+  for (const stmt of statements){
+    const m = stmt.match(/^\s*CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`"\[]?[\w.-]+[`"\]]?)\s*\(([\s\S]*)\)\s*(?:STORED\s+AS[\s\S]*)?$/i);
+    if (!m){ result.skipped.push(stmt.slice(0, 80)); continue; }
+    try {
+      const tableName = ident(unquoteName(m[1].split(".").pop()));
+      const table = { title:tableName, fields:[] };
+      const tablePk = [];
+      for (const part of splitTopLevelComma(m[2])){
+        const pk = part.match(/^PRIMARY\s+KEY\s*\(([^)]+)\)$/i);
+        if (pk){ tablePk.push(...parseNameList(pk[1])); continue; }
+        const fk = part.match(/^FOREIGN\s+KEY\s*\(([^)]+)\)\s+REFERENCES\s+([`"\[]?[\w.-]+[`"\]]?)\s*\(([^)]+)\)$/i);
+        if (fk){
+          result.fks.push({
+            fromTable: ident(unquoteName(fk[2].split(".").pop())),
+            toTable: tableName,
+            fromFields: parseNameList(fk[3]),
+            toFields: parseNameList(fk[1])
+          });
+          continue;
+        }
+        const cm = part.match(/^([`"\[]?[\w]+[`"\]]?)\s+(.+)$/i);
+        if (!cm){ result.skipped.push(part); continue; }
+        const name = ident(unquoteName(cm[1]));
+        let rest = cm[2].trim();
+        const field = { name, type:"TEXT", pk:false, fk:false, nullable:true };
+        const typeMatch = rest.match(/^([A-Z]+(?:\s+AUTO_INCREMENT)?(?:\([^)]+\))?)/i);
+        if (typeMatch){ field.type = typeMatch[1].toUpperCase(); rest = rest.slice(typeMatch[0].length).trim(); }
+        if (/NOT\s+NULL/i.test(rest)) field.nullable = false;
+        if (/PRIMARY\s+KEY/i.test(rest)){ field.pk = true; field.nullable = false; }
+        if (/UNIQUE/i.test(rest)) field.unique = true;
+        const def = rest.match(/\bDEFAULT\s+((?:'[^']*')|(?:"[^"]*")|[^\s,]+)/i);
+        if (def) field.default = def[1];
+        table.fields.push(field);
+      }
+      for (const f of table.fields) if (tablePk.includes(ident(f.name))){ f.pk = true; f.nullable = false; }
+      result.tables.push(table);
+    } catch {
+      result.skipped.push(stmt.slice(0, 80));
+    }
+  }
+  return result;
+}
+function importParsedDDL(parsed){
+  if (!parsed || !parsed.tables || !parsed.tables.length) return false;
+  pushHistory();
+  const start = viewCenter();
+  const tableIdByName = new Map();
+  const fieldIdByTableName = new Map();
+  parsed.tables.forEach((src, i) => {
+    const col = i % 4, row = Math.floor(i / 4);
+    const n = { id:uid(), type:"table", x:start.x + col*300, y:start.y + row*220,
+      title:src.title, notes:"", color:TABLE_COLORS[i % TABLE_COLORS.length],
+      fields:src.fields.map(f => ({ id:uid(), name:f.name, type:f.type, pk:!!f.pk, fk:!!f.fk,
+        nullable:f.nullable !== false, default:f.default, unique:!!f.unique, index:!!f.index, comment:f.comment })) };
+    state.nodes.push(n);
+    tableIdByName.set(ident(n.title), n.id);
+    fieldIdByTableName.set(ident(n.title), new Map(n.fields.map(f => [ident(f.name), f.id])));
+  });
+  for (const fk of parsed.fks || []){
+    const from = tableIdByName.get(ident(fk.fromTable));
+    const to = tableIdByName.get(ident(fk.toTable));
+    if (!from || !to) continue;
+    const fromFields = fieldIdByTableName.get(ident(fk.fromTable));
+    const toFields = fieldIdByTableName.get(ident(fk.toTable));
+    const pairs = fk.fromFields.map((ff, i) => ({
+      fromField: fromFields.get(ident(ff)) || "",
+      toField: toFields.get(ident(fk.toFields[i])) || ""
+    })).filter(p => p.fromField && p.toField);
+    for (const p of pairs){
+      const toNode = nodeById(to);
+      const f = toNode && toNode.fields.find(x => x.id === p.toField);
+      if (f) f.fk = true;
+    }
+    const e = { id:uid(), from, to, kind:"1:N", label:"" };
+    if (pairs.length) setEdgePairs(e, pairs);
+    state.edges.push(e);
+  }
+  render();
+  return true;
+}
+function importDDLText(text){
+  const parsed = parseDDL(text);
+  const ok = importParsedDDL(parsed);
+  return {...parsed, imported:ok};
+}
+function generateMermaid(){
+  const lines = ["erDiagram"];
+  const tables = state.nodes.filter(n => n.type === "table");
+  for (const t of tables){
+    lines.push(`  ${ident(t.title)} {`);
+    for (const f of t.fields) lines.push(`    ${String(f.type || "TEXT").replace(/\s+/g, "_")} ${ident(f.name)}`);
+    lines.push("  }");
+  }
+  for (const e of state.edges){
+    if (e.kind === "link") continue;
+    const a = nodeById(e.from), b = nodeById(e.to);
+    if (!a || !b || a.type !== "table" || b.type !== "table") continue;
+    const rel = e.kind === "1:1" ? "||--||" : e.kind === "1:N" ? "||--o{" : "}o--o{";
+    lines.push(`  ${ident(a.title)} ${rel} ${ident(b.title)} : "${(e.label || "").replace(/"/g, '\\"')}"`);
+  }
+  return lines.join("\n");
+}
+function generateMarkdownOutline(){
+  const concepts = state.nodes.filter(n => n.type === "concept");
+  const incoming = new Set(state.edges.filter(e => e.kind === "link").map(e => e.to));
+  const roots = concepts.filter(n => !incoming.has(n.id)).sort((a, b) => a.y - b.y || a.x - b.x);
+  const childEdges = id => state.edges.filter(e => e.kind === "link" && e.from === id)
+    .sort((a, b) => (nodeById(a.to)?.y || 0) - (nodeById(b.to)?.y || 0));
+  const lines = [];
+  function walk(id, depth, seen){
+    const n = nodeById(id);
+    if (!n) return;
+    const indent = "  ".repeat(depth);
+    if (seen.has(id)){ lines.push(`${indent}- (→ see ${n.title || id})`); return; }
+    if (n.type === "table") lines.push(`${indent}- **${n.title || "table"}**`);
+    else {
+      lines.push(`${indent}- ${n.title || "(untitled)"}`);
+      if (n.notes) lines.push(`${indent}  > ${n.notes}`);
+    }
+    const nextSeen = new Set(seen); nextSeen.add(id);
+    for (const e of childEdges(id)) walk(e.to, depth + 1, nextSeen);
+  }
+  for (const root of roots) walk(root.id, 0, new Set());
+  return lines.join("\n") || "- (empty)";
+}
+function serializedSvg(asShown = true){
+  if (!state.nodes.length) return "";
+  const bounds = documentBounds();
+  const pad = 40, W = bounds.w + pad*2, H = bounds.h + pad*2;
+  const png = cloneBoardForPng(asShown);
+  const clone = png.clone;
+  clone.setAttribute("width", W);
+  clone.setAttribute("height", H);
+  clone.setAttribute("viewBox", `${bounds.x-pad} ${bounds.y-pad} ${W} ${H}`);
+  const g = clone.querySelector("#world");
+  if (g) g.removeAttribute("transform");
+  const bg = clone.querySelector("[data-bg]");
+  if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize]").forEach(h => h.remove());
+  const style = document.createElementNS(SVGNS, "style");
+  style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
+  clone.insertBefore(style, clone.firstChild);
+  return new XMLSerializer().serializeToString(clone);
+}
+function parseCSVLine(line){
+  const out = [];
+  let cur = "", quoted = false;
+  for (let i = 0; i < line.length; i++){
+    const ch = line[i];
+    if (quoted){
+      if (ch === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ","){ out.push(cur); cur = ""; }
+    else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+function inferScalarType(values){
+  const present = values.filter(v => String(v).trim() !== "");
+  if (!present.length) return "VARCHAR(255)";
+  if (present.every(v => /^-?\d+$/.test(String(v).trim()))) return "INT";
+  if (present.every(v => /^-?\d+(?:\.\d+)?$/.test(String(v).trim()))) return "DECIMAL(12,2)";
+  if (present.every(v => /^\d{4}-\d{2}-\d{2}$/.test(String(v).trim()))) return "DATE";
+  if (present.every(v => !Number.isNaN(Date.parse(String(v).trim())) && /[T:]/.test(String(v)))) return "TIMESTAMP";
+  if (present.every(v => /^(true|false|0|1)$/i.test(String(v).trim()))) return "BOOLEAN";
+  return "VARCHAR(255)";
+}
+function inferTable(csvText, name = "imported_csv"){
+  const rows = String(csvText || "").trim().split(/\r?\n/).filter(Boolean).slice(0, 101).map(parseCSVLine);
+  if (!rows.length) return { name:ident(name), fields:[] };
+  const headers = rows[0].map(h => ident(h || "field"));
+  const data = rows.slice(1);
+  const fields = headers.map((h, i) => {
+    const values = data.map(r => r[i] || "");
+    return { name:h, type:inferScalarType(values), pk:false, fk:false, nullable:values.some(v => String(v).trim() === "") };
+  });
+  return { name:ident(name), fields };
+}
+function importCSVText(text, name = "imported_csv"){
+  const inferred = inferTable(text, name);
+  if (!inferred.fields.length) return inferred;
+  pushHistory();
+  const c = viewCenter();
+  state.nodes.push({ id:uid(), type:"table", x:c.x-95, y:c.y-40, title:inferred.name,
+    notes:"", color:TABLE_COLORS[state.nodes.filter(n => n.type === "table").length % TABLE_COLORS.length],
+    fields:inferred.fields.map(f => ({...f, id:uid()})) });
+  render();
+  return inferred;
+}
+
 const sqlModal = document.getElementById("sqlModal");
+let textModal = null;
+function closeTextModal(){
+  if (textModal && textModal.parentNode) textModal.parentNode.removeChild(textModal);
+  textModal = null;
+}
+function openTextInputModal(title, placeholder, actionLabel, onSubmit){
+  closeTextModal();
+  const modal = document.createElement("div");
+  modal.className = "modal open text-input-modal";
+  modal.innerHTML = `<div class="card"><h3>${escapeHtml(title)}</h3><div class="palette-body"><textarea class="modal-textarea" placeholder="${escapeHtml(placeholder)}" style="min-height:220px"></textarea></div><div class="actions"><button id="btnCancelText">Cancel</button><button class="primary" id="btnSubmitText">${escapeHtml(actionLabel)}</button></div></div>`;
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeTextModal(); });
+  document.body.appendChild(modal);
+  textModal = modal;
+  const ta = modal.querySelector("textarea");
+  modal.querySelector("#btnCancelText").addEventListener("click", closeTextModal);
+  modal.querySelector("#btnSubmitText").addEventListener("click", () => {
+    onSubmit(ta.value);
+    closeTextModal();
+  });
+  ta.focus();
+}
+function openOutputModal(title, text, downloadName, mime){
+  closeTextModal();
+  const modal = document.createElement("div");
+  modal.className = "modal open output-modal";
+  modal.innerHTML = `<div class="card"><h3>${escapeHtml(title)}</h3><pre></pre><div class="actions"><button id="btnCopyOutput">Copy</button><button id="btnDownloadOutput">Download</button><button class="primary" id="btnCloseOutput">Close</button></div></div>`;
+  modal.querySelector("pre").textContent = text;
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeTextModal(); });
+  document.body.appendChild(modal);
+  textModal = modal;
+  modal.querySelector("#btnCopyOutput").addEventListener("click", ev => {
+    navigator.clipboard.writeText(text).then(() => {
+      ev.target.textContent = "Copied";
+      setTimeout(() => ev.target.textContent = "Copy", 1200);
+    });
+  });
+  modal.querySelector("#btnDownloadOutput").addEventListener("click", () => download(downloadName, text, mime));
+  modal.querySelector("#btnCloseOutput").addEventListener("click", closeTextModal);
+}
 document.getElementById("btnExportSQL").addEventListener("click", () => {
   document.getElementById("sqlOut").textContent = generateSQL();
   sqlModal.classList.add("open");
@@ -2315,6 +3121,19 @@ document.getElementById("btnCopySQL").addEventListener("click", ev => {
 });
 document.getElementById("btnDownloadSQL").addEventListener("click", () =>
   download("schematic-schema.sql", document.getElementById("sqlOut").textContent, "text/plain"));
+document.getElementById("btnImportDDL").addEventListener("click", () =>
+  openTextInputModal("Import SQL DDL", "CREATE TABLE ...", "Import", text => {
+    const result = importDDLText(text);
+    if (result.skipped.length) openOutputModal("DDL import report", `Imported ${result.tables.length} tables.\nSkipped:\n- ${result.skipped.join("\n- ")}`, "schematic-ddl-import.txt", "text/plain");
+  }));
+document.getElementById("btnExportMermaid").addEventListener("click", () =>
+  openOutputModal("Mermaid ER", generateMermaid(), "schematic-er.mmd", "text/plain"));
+document.getElementById("btnExportMarkdown").addEventListener("click", () =>
+  openOutputModal("Markdown outline", generateMarkdownOutline(), "schematic-outline.md", "text/markdown"));
+document.getElementById("btnExportSVG").addEventListener("click", () =>
+  download("schematic-diagram.svg", serializedSvg(true), "image/svg+xml"));
+document.getElementById("btnImportCSV").addEventListener("click", () =>
+  openTextInputModal("Import CSV", "id,email,created_at\n1,user@example.com,2026-07-08", "Create table", text => importCSVText(text)));
 
 /* --------------------------- PNG export --------------------------- */
 function cloneBoardForPng(asShown = pngAsShown){
@@ -2449,6 +3268,11 @@ function nodeMenu(n, x, y){
     if (n.type !== "frame") ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table"){
       ctxItem(m, "Add related table (1:N)", () => addRelatedTable(n.id));
+      ctxItem(m, n.collapsed ? "Expand fields" : "Collapse fields", () => {
+        pushHistory();
+        n.collapsed = !n.collapsed;
+        render();
+      });
       ctxItem(m, "Add field", () => {
         pushHistory();
         n.fields.push({id: uid(), name:"field_" + (n.fields.length+1),
@@ -2592,6 +3416,20 @@ function seed(){
   E(customers, orders,  "1:N", "", "f_cust_pk", "f_ord_cust");
   E(customers, rewards, "1:N", "", "f_cust_pk", "f_rw_cust");
 }
+function perfSeed(n = 500){
+  state.nodes = [];
+  state.edges = [];
+  state.nextId = 1;
+  clearSelection();
+  for (let i = 0; i < n; i++){
+    state.nodes.push({ id:uid(), type:"table", x:(i%25)*230, y:Math.floor(i/25)*130,
+      title:"bench_" + i, color:TABLE_COLORS[i % TABLE_COLORS.length], notes:"",
+      fields:[{id:uid(), name:"id", type:"INT", pk:true, fk:false, nullable:false},
+              {id:uid(), name:"value", type:"VARCHAR(255)", pk:false, fk:false, nullable:true}] });
+  }
+  render();
+  fitView();
+}
 
 /* ----------------------------- Init ------------------------------- */
 buildScaffold();
@@ -2600,6 +3438,8 @@ ensureFieldIds();
 render();
 syncHistoryButtons();
 updateDocLabel();
+syncAriaLabels();
+updateDialectControls();
 showCapabilityBanner();
 maybeShowRecovery();
 requestAnimationFrame(fitView);
@@ -2631,8 +3471,24 @@ window.__T = {
   frameContainedNodes,
   addNode,
   addEdge,
+  edgeFieldPairs,
+  setEdgePairs,
   edgeEndpoints,
   edgePath,
+  lintDocument,
+  openLintModal,
+  closeLintModal,
+  parseDDL,
+  importParsedDDL,
+  importDDLText,
+  generateMermaid,
+  generateMarkdownOutline,
+  serializedSvg,
+  parseCSVLine,
+  inferTable,
+  importCSVText,
+  pinchTransform,
+  perfSeed,
   layoutMindMapTree,
   layoutSchemaTables,
   conceptTreeScope,
@@ -2644,6 +3500,9 @@ window.__T = {
   setPngAsShown,
   cloneBoardForPng,
   get docTheme(){ return docTheme; },
+  applyDialect,
+  setDialect,
+  get docDialect(){ return docDialect; },
   get pngAsShown(){ return pngAsShown; },
   get THEME(){ return THEME; },
   get view(){ return view; },
@@ -2659,6 +3518,9 @@ window.__T = {
   mergeRecentColors,
   recordRecentColor,
   get recentColors(){ return recentColors; },
+  textW,
+  get textMeasureCacheSize(){ return textMeasureCache.size; },
+  get renderStats(){ return renderStats; },
   selectNode(id){ setSelection("node", id); render(); },
   cloneSelectionPayload,
   copySelection,
