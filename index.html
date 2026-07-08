@@ -36,6 +36,13 @@
     <button id="btnFit" title="Fit diagram in view (F)">Fit</button>
   </div>
 
+  <div class="tgroup">
+    <span class="tlabel">Layout</span>
+    <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree</button>
+    <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema</button>
+    <button id="btnAddFrame" title="Add a subject-area frame">Frame</button>
+  </div>
+
   <div class="spacer"></div>
 
   <div class="tgroup">
@@ -69,6 +76,8 @@
 <footer>
   <span id="zoomLabel">100%</span>
   <span id="countLabel">0 nodes · 0 edges</span>
+  <button id="btnTheme" class="statusbtn" title="Toggle light/dark theme">Dark</button>
+  <label class="statuscheck" title="Export PNG using the current theme"><input type="checkbox" id="pngAsShown"> PNG as shown</label>
   <span class="hint spacer">Drag empty canvas to select · Alt-drag to pan · scroll to zoom · drag ○ to connect · double-click to edit · right-click for actions</span>
 </footer>
 

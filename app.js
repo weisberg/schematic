@@ -38,6 +38,23 @@ const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7
 const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B7683"];
 const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A3A"];
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
+const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
+const THEME = {
+  light: {
+    paper:"#EEF1F4", panel:"#FFFFFF", control:"#FBFCFD", ink:"#16232F",
+    ink2:"#33475C", muted:"#7A8794", rowLine:"#EDF0F3", accent:"#2456E6",
+    link:"#98A5B3", edge:"#33475C", labelBg:"#EEF1F4", tableFill:"#FFFFFF",
+    tableText:"#FFFFFF", grid:"#C9D2DB", empty:"#98A5B3"
+  },
+  dark: {
+    paper:"#10161D", panel:"#151D26", control:"#1C2631", ink:"#E6EDF4",
+    ink2:"#C8D3DF", muted:"#8D9AAA", rowLine:"#273240", accent:"#7AA2FF",
+    link:"#728296", edge:"#A7B6C5", labelBg:"#151D26", tableFill:"#111820",
+    tableText:"#F6F9FC", grid:"#2A3542", empty:"#7F8FA0"
+  }
+};
+let docTheme = "light";
+let pngAsShown = false;
 const SQL_TYPES = ["INT","BIGINT","SERIAL","VARCHAR(255)","TEXT","BOOLEAN","DATE",
                    "TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSONB"];
 const SHORTCUTS = [
@@ -105,6 +122,38 @@ function recordRecentColor(hex){
 }
 let recentColors = loadStoredRecentColors();
 
+function themeColors(name = docTheme){
+  return THEME[name] || THEME.light;
+}
+function updateThemeControls(){
+  document.documentElement.dataset.theme = docTheme;
+  const btn = document.getElementById("btnTheme");
+  if (btn){
+    btn.textContent = docTheme === "dark" ? "Light" : "Dark";
+    btn.title = docTheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+  }
+  const png = document.getElementById("pngAsShown");
+  if (png) png.checked = pngAsShown;
+  const dot = board && board.querySelector("#dots circle");
+  if (dot) dot.setAttribute("fill", themeColors().grid);
+}
+function applyTheme(next, opts = {}){
+  const normalized = next === "dark" ? "dark" : "light";
+  const changed = docTheme !== normalized;
+  docTheme = normalized;
+  updateThemeControls();
+  if (opts.render) render();
+  if (opts.dirty && changed) setDocDirty(true);
+}
+function toggleTheme(){
+  pushHistory("theme");
+  applyTheme(docTheme === "dark" ? "light" : "dark", { render:true, dirty:true });
+}
+function setPngAsShown(value){
+  pngAsShown = !!value;
+  updateThemeControls();
+}
+
 const uid = () => "n" + (state.nextId++);
 const nodeById = id => state.nodes.find(n => n.id === id);
 const edgeById = id => state.edges.find(e => e.id === id);
@@ -155,6 +204,7 @@ function cleanFieldRefs(fid){
 function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
+    if (n.type === "frame") continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
     let field = null;
     if (n.type === "table" && n.fields.length){
@@ -174,7 +224,7 @@ const meas = document.createElement("canvas").getContext("2d");
 function textW(str, font){ meas.font = font; return meas.measureText(str).width; }
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId}); }
+function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme}}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (coalesceKey != null){
@@ -193,6 +243,7 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
+  applyTheme(s.meta && s.meta.theme ? s.meta.theme : "light", { render:false });
   pruneSelection();
   render();
 }
@@ -205,7 +256,9 @@ function syncHistoryButtons(){
 
 function documentObject(){
   const d = { version:DOC_VERSION, nodes:state.nodes, edges:state.edges, nextId:state.nextId };
-  if (recentColors.length) d.meta = { recentColors: recentColors.slice() };
+  const meta = { theme:docTheme };
+  if (recentColors.length) meta.recentColors = recentColors.slice();
+  d.meta = meta;
   return d;
 }
 function serializeDocument(){
@@ -241,6 +294,7 @@ function applyDocument(d, opts = {}){
     recentColors = mergeRecentColors(migrated.meta.recentColors, recentColors);
     persistRecentColors();
   }
+  applyTheme(migrated.meta && migrated.meta.theme ? migrated.meta.theme : "light", { render:false });
   clearSelection();
   if (opts.resetHistory !== false){
     undoStack.length = 0;
@@ -358,6 +412,12 @@ function tableMetrics(n){
     headerBaseline: Math.round(headerH * 0.64) };
 }
 function nodeSize(n){
+  if (n.type === "frame"){
+    return {
+      w: clampSize(n.w || FRAME_DEFAULT.w, 120, 4000),
+      h: clampSize(n.h || FRAME_DEFAULT.h, 90, 4000)
+    };
+  }
   if (n.type === "concept"){
     const fs = conceptFont(n);
     const w = Math.max(130, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) + 44);
@@ -385,6 +445,26 @@ function rectFromPoints(a, b){
 function rectsIntersect(a, b){
   return a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y;
 }
+function rectsOverlap(a, b){
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function documentBounds(nodes = state.nodes){
+  if (!nodes.length) return null;
+  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
+  for (const n of nodes){
+    const r = nodeRect(n);
+    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
+  }
+  return { x:x0, y:y0, w:x1-x0, h:y1-y0, cx:(x0+x1)/2, cy:(y0+y1)/2 };
+}
+function frameContainedNodes(frame){
+  const fr = nodeRect(frame);
+  return state.nodes.filter(n => n.type !== "frame" && n.id !== frame.id).filter(n => {
+    const r = nodeRect(n);
+    return r.cx >= fr.x && r.cx <= fr.x + fr.w && r.cy >= fr.y && r.cy <= fr.y + fr.h;
+  });
+}
 
 /* point on rect boundary toward an external point */
 function anchorOnRect(r, px, py){
@@ -410,36 +490,135 @@ function el(tag, attrs, parent){
   return e;
 }
 
-let world, edgeLayer, nodeLayer, draftLayer;
+let world, frameLayer, edgeLayer, nodeLayer, draftLayer, minimap, minimapDrag = false;
 
 function buildScaffold(){
   board.innerHTML = "";
   const defs = el("defs", {}, board);
   const pat = el("pattern", {id:"dots", width:24, height:24, patternUnits:"userSpaceOnUse"}, defs);
-  el("circle", {cx:1.2, cy:1.2, r:1.2, fill:"#C9D2DB"}, pat);
+  el("circle", {cx:1.2, cy:1.2, r:1.2, fill:themeColors().grid}, pat);
 
   world = el("g", {id:"world"}, board);
   el("rect", {x:-50000, y:-50000, width:100000, height:100000, fill:"url(#dots)",
               "data-bg":"1"}, world);
-  edgeLayer  = el("g", {}, world);
-  nodeLayer  = el("g", {}, world);
-  draftLayer = el("g", {}, world);
+  frameLayer = el("g", {id:"frameLayer"}, world);
+  edgeLayer  = el("g", {id:"edgeLayer"}, world);
+  nodeLayer  = el("g", {id:"nodeLayer"}, world);
+  draftLayer = el("g", {id:"draftLayer"}, world);
+  ensureMinimap();
   applyView();
 }
 function applyView(){
   if (inlineEditor) closeInlineEditor(false);
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
+  renderMinimap();
 }
 
 function render(){
+  frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
+  for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
   for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) drawNode(n);
+  for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  const frames = state.nodes.filter(n => n.type === "frame").length;
+  const nodes = state.nodes.length - frames;
   document.getElementById("countLabel").textContent =
-    `${state.nodes.length} nodes · ${state.edges.length} edges`;
+    frames ? `${nodes} nodes · ${frames} frames · ${state.edges.length} edges`
+           : `${nodes} nodes · ${state.edges.length} edges`;
+  renderMinimap();
   renderInspector();
+}
+
+function minimapTransform(bounds, viewState, box){
+  if (!bounds || !bounds.w || !bounds.h) return null;
+  const pad = 40;
+  const bx = bounds.x - pad, by = bounds.y - pad;
+  const bw = Math.max(1, bounds.w + pad*2), bh = Math.max(1, bounds.h + pad*2);
+  const scale = Math.min(box.w / bw, box.h / bh);
+  const ox = (box.w - bw*scale)/2 - bx*scale;
+  const oy = (box.h - bh*scale)/2 - by*scale;
+  const viewportW = box.viewportW || box.boardW || 0;
+  const viewportH = box.viewportH || box.boardH || 0;
+  const worldViewport = {
+    x: -viewState.x / viewState.k,
+    y: -viewState.y / viewState.k,
+    w: viewportW / viewState.k,
+    h: viewportH / viewState.k
+  };
+  const toMini = p => ({ x:p.x*scale + ox, y:p.y*scale + oy });
+  const toWorld = p => ({ x:(p.x - ox)/scale, y:(p.y - oy)/scale });
+  return {
+    scale, ox, oy, toMini, toWorld, worldViewport,
+    viewport: {
+      x: worldViewport.x*scale + ox,
+      y: worldViewport.y*scale + oy,
+      w: worldViewport.w*scale,
+      h: worldViewport.h*scale
+    }
+  };
+}
+function ensureMinimap(){
+  if (minimap) return minimap;
+  minimap = el("svg", {id:"minimap", width:120, height:90, viewBox:"0 0 120 90", "aria-label":"Minimap"}, wrap);
+  const centerFromEvent = ev => {
+    const b = minimap.getBoundingClientRect();
+    const br = board.getBoundingClientRect();
+    const bounds = documentBounds();
+    const tx = minimapTransform(bounds, view, {w:b.width || 120, h:b.height || 90, viewportW:br.width, viewportH:br.height});
+    if (!tx) return;
+    const w = tx.toWorld({x: ev.clientX - b.left, y: ev.clientY - b.top});
+    centerViewOn(w.x, w.y);
+  };
+  minimap.addEventListener("pointerdown", ev => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    minimapDrag = true;
+    if (minimap.setPointerCapture) minimap.setPointerCapture(ev.pointerId);
+    centerFromEvent(ev);
+  });
+  minimap.addEventListener("pointermove", ev => {
+    if (!minimapDrag) return;
+    ev.preventDefault();
+    centerFromEvent(ev);
+  });
+  minimap.addEventListener("pointerup", ev => {
+    minimapDrag = false;
+    if (minimap.releasePointerCapture) minimap.releasePointerCapture(ev.pointerId);
+  });
+  minimap.addEventListener("pointercancel", () => { minimapDrag = false; });
+  return minimap;
+}
+function renderMinimap(){
+  if (!minimap) return;
+  if (state.nodes.length > 500 || !state.nodes.length){
+    minimap.hidden = true;
+    return;
+  }
+  const bounds = documentBounds();
+  const br = board.getBoundingClientRect();
+  const tx = minimapTransform(bounds, view, {w:120, h:90, viewportW:br.width, viewportH:br.height});
+  if (!tx){ minimap.hidden = true; return; }
+  const t = themeColors();
+  minimap.hidden = false;
+  minimap.innerHTML = "";
+  el("rect", {x:0, y:0, width:120, height:90, rx:6, fill:t.panel}, minimap);
+  for (const n of state.nodes){
+    const r = nodeRect(n);
+    const p = tx.toMini({x:r.x, y:r.y});
+    const fill = n.type === "frame" ? n.color || FRAME_DEFAULT.color : n.color || t.ink;
+    el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:n.type === "frame" ? 2 : 1.5,
+                fill, opacity:n.type === "frame" ? .18 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
+  }
+  el("rect", {x:tx.viewport.x, y:tx.viewport.y, width:tx.viewport.w, height:tx.viewport.h,
+              fill:"none", stroke:"#C63A3A", "stroke-width":1.2}, minimap);
+}
+function centerViewOn(x, y){
+  const b = board.getBoundingClientRect();
+  view.x = b.width/2 - x*view.k;
+  view.y = b.height/2 - y*view.k;
+  applyView();
 }
 
 /* ---- edges ---- */
@@ -452,6 +631,7 @@ function fieldAnchor(n, idx, towardX){
 function edgeEndpoints(e){
   const a = nodeById(e.from), b = nodeById(e.to);
   if (!a || !b) return null;
+  if (a.type === "frame" || b.type === "frame") return null;
   const ra = nodeRect(a), rb = nodeRect(b);
   const ia = (e.fromField && a.type === "table") ? a.fields.findIndex(f => f.id === e.fromField) : -1;
   const ib = (e.toField   && b.type === "table") ? b.fields.findIndex(f => f.id === e.toField)   : -1;
@@ -462,13 +642,33 @@ function edgeEndpoints(e){
   const pb = ib >= 0 ? fieldAnchor(b, ib, refA.x) : anchorOnRect(rb, refA.x, refA.y);
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0 };
 }
-function edgePath(pa, pb){
+function curveEdgePath(pa, pb){
   const dx = Math.max(40, Math.abs(pb.x - pa.x) * 0.45);
   const dy = Math.max(40, Math.abs(pb.y - pa.y) * 0.45);
   const c = p => p.side === "e" ? [p.x + dx, p.y] : p.side === "w" ? [p.x - dx, p.y]
             : p.side === "s" ? [p.x, p.y + dy] : [p.x, p.y - dy];
   const [c1x, c1y] = c(pa), [c2x, c2y] = c(pb);
   return `M ${pa.x} ${pa.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${pb.x} ${pb.y}`;
+}
+function orthoEdgePath(pa, pb){
+  const stub = 12;
+  const out = p => {
+    if (p.side === "e") return { x:p.x + stub, y:p.y };
+    if (p.side === "w") return { x:p.x - stub, y:p.y };
+    if (p.side === "s") return { x:p.x, y:p.y + stub };
+    return { x:p.x, y:p.y - stub };
+  };
+  const a = out(pa), b = out(pb);
+  if (pa.side === "e" || pa.side === "w" || pb.side === "e" || pb.side === "w"){
+    const mx = (a.x + b.x) / 2;
+    return `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${mx} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`;
+  }
+  const my = (a.y + b.y) / 2;
+  return `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${my} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`;
+}
+function edgePath(e, pa, pb){
+  if (!pb){ pb = pa; pa = e; e = null; }
+  return e && e.routing === "ortho" ? orthoEdgePath(pa, pb) : curveEdgePath(pa, pb);
 }
 /* crow's-foot / tick notation drawn along the anchor's outward normal */
 function drawNotation(g, p, glyph, color){
@@ -493,9 +693,10 @@ function drawEdge(e){
   if (!ep) return;
   const selected = isSelected("edge", e.id);
   const isLink = e.kind === "link";
-  const color = selected ? "#2456E6" : (isLink ? "#98A5B3" : "#33475C");
+  const t = themeColors();
+  const color = selected ? t.accent : (isLink ? t.link : t.edge);
   const g = el("g", {"data-edge": e.id, cursor:"pointer"}, edgeLayer);
-  const d = edgePath(ep.pa, ep.pb);
+  const d = edgePath(e, ep.pa, ep.pb);
   el("path", {d, fill:"none", stroke:"transparent", "stroke-width":14}, g); // hit area
   el("path", {d, fill:"none", stroke:color, "stroke-width": selected ? 2.4 : 1.7,
               "stroke-dasharray": isLink ? "5 5" : "none",
@@ -513,7 +714,7 @@ function drawEdge(e){
     const mx = (ep.pa.x + ep.pb.x)/2, my = (ep.pa.y + ep.pb.y)/2;
     const w = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
     el("rect", {x:mx - w/2, y:my - 10, width:w, height:20, rx:10,
-                fill:"#EEF1F4", stroke:color, "stroke-width":1}, g);
+                fill:t.labelBg, stroke:color, "stroke-width":1}, g);
     el("text", {x:mx, y:my + 3.5, "text-anchor":"middle", fill:color,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":10.5,
                 "font-weight":600}, g).textContent = label;
@@ -521,46 +722,63 @@ function drawEdge(e){
 }
 
 /* ---- nodes ---- */
+function drawFrame(n){
+  const r = nodeRect(n);
+  const selected = isSelected("node", n.id);
+  const t = themeColors();
+  const color = n.color || FRAME_DEFAULT.color;
+  const g = el("g", {"data-node": n.id, "data-frame": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, frameLayer);
+  el("rect", {width:r.w, height:r.h, rx:14, fill:color, opacity:.10,
+              stroke:selected ? t.accent : color, "stroke-width":selected ? 2.2 : 1.4}, g);
+  el("text", {x:14, y:24, fill:t.ink, "font-family":"Archivo, sans-serif",
+              "font-size":13, "font-weight":700}, g)
+    .textContent = truncate(n.title || "Subject area", r.w - 48, "700 13px Archivo, sans-serif");
+  const h = el("g", {class:"frame-resize", "data-frame-resize": n.id, cursor:"nwse-resize"}, g);
+  el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
+  el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
+              stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+}
 function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
+  const t = themeColors();
   const g = el("g", {"data-node": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, nodeLayer);
 
   if (n.type === "concept"){
     const fs = conceptFont(n);
-    const fc = n.fontColor || "#16232F";
+    const fc = n.fontColor || t.ink;
     el("rect", {width:r.w, height:r.h, rx:14, fill:n.color || CONCEPT_COLORS[0],
-                stroke: selected ? "#2456E6" : "#16232F",
+                stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.2}, g);
-    const t = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
+    const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
                 "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
-    t.textContent = truncate(n.title || "Untitled", r.w - 34, `600 ${fs}px Archivo, sans-serif`);
-    if (n.notes) el("circle", {cx:r.w - 12, cy:12, r:3.2, fill:"#16232F", opacity:.55}, g);
+    titleText.textContent = truncate(n.title || "Untitled", r.w - 34, `600 ${fs}px Archivo, sans-serif`);
+    if (n.notes) el("circle", {cx:r.w - 12, cy:12, r:3.2, fill:t.ink, opacity:.55}, g);
   } else {
     const m = tableMetrics(n);
-    const fc = n.fontColor || "#16232F";
-    el("rect", {width:r.w, height:r.h, rx:8, fill:"#FFFFFF",
-                stroke: selected ? "#2456E6" : "#16232F",
+    const fc = n.fontColor || t.ink;
+    el("rect", {width:r.w, height:r.h, rx:8, fill:t.tableFill,
+                stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.3}, g);
     el("path", {d:`M 0 8 Q 0 0 8 0 H ${r.w-8} Q ${r.w} 0 ${r.w} 8 V ${m.headerH} H 0 Z`,
-                fill: n.color || "#16232F"}, g);
-    const ht = el("text", {x:12, y:m.headerBaseline, fill:"#FFFFFF", "font-family":"Archivo, sans-serif",
+                fill: n.color || t.ink}, g);
+    const ht = el("text", {x:12, y:m.headerBaseline, fill:t.tableText, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700, "letter-spacing":".04em"}, g);
     ht.textContent = truncate(n.title || "table", r.w - 60, `700 ${m.headerSize}px Archivo, sans-serif`);
-    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"end", fill:"#FFFFFF", opacity:.75,
+    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"end", fill:t.tableText, opacity:.75,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(8, m.base-2)}, g)
       .textContent = "TBL";
     n.fields.forEach((f, i) => {
       const rowTop = m.headerH + i*m.rowH;
       const cy = rowTop + m.rowH/2;
-      if (i > 0) el("line", {x1:8, y1:rowTop, x2:r.w-8, y2:rowTop, stroke:"#EDF0F3", "stroke-width":1}, g);
+      if (i > 0) el("line", {x1:8, y1:rowTop, x2:r.w-8, y2:rowTop, stroke:t.rowLine, "stroke-width":1}, g);
       const badge = f.pk ? "PK" : f.fk ? "FK" : "";
       if (badge){
         el("rect", {x:8, y:cy - m.badgeH/2, width:m.badgeW, height:m.badgeH, rx:3,
-                    fill: f.pk ? "#16232F" : "#FFFFFF",
-                    stroke:"#16232F", "stroke-width":.9}, g);
+                    fill: f.pk ? t.ink : t.tableFill,
+                    stroke:t.ink, "stroke-width":.9}, g);
         el("text", {x:8 + m.badgeW/2, y:cy + m.badgeSize*0.34, "text-anchor":"middle",
-                    fill: f.pk ? "#FFFFFF" : "#16232F",
+                    fill: f.pk ? t.tableText : t.ink,
                     "font-family":"'IBM Plex Mono', monospace", "font-size":m.badgeSize,
                     "font-weight":600}, g).textContent = badge;
       }
@@ -568,12 +786,12 @@ function drawNode(n){
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.nameSize,
                   "font-weight":500}, g);
       nm.textContent = f.name + (f.nullable ? "?" : "");
-      el("text", {x:r.w-12, y:cy + m.nameSize*0.35, "text-anchor":"end", fill:"#7A8794",
+      el("text", {x:r.w-12, y:cy + m.nameSize*0.35, "text-anchor":"end", fill:t.muted,
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.typeSize}, g)
         .textContent = f.type;
     });
     if (!n.fields.length)
-      el("text", {x:12, y:m.headerH + 16, fill:"#98A5B3", "font-family":"Archivo, sans-serif",
+      el("text", {x:12, y:m.headerH + 16, fill:t.empty, "font-family":"Archivo, sans-serif",
                   "font-size":11.5, "font-style":"italic"}, g).textContent = "no fields yet";
 
     /* per-field connect handles (left + right of each row) */
@@ -583,8 +801,8 @@ function drawNode(n){
         const fh = el("g", {class:"fieldhandle", "data-fieldhandle": f.id,
                             "data-fieldnode": n.id, cursor:"crosshair"}, g);
         el("circle", {cx:x, cy:y, r:9, fill:"transparent"}, fh);
-        el("circle", {cx:x, cy:y, r:3.6, fill:"#FFFFFF",
-                      stroke:"#2456E6", "stroke-width":1.4}, fh);
+        el("circle", {cx:x, cy:y, r:3.6, fill:t.tableFill,
+                      stroke:t.accent, "stroke-width":1.4}, fh);
       }
     });
   }
@@ -592,8 +810,8 @@ function drawNode(n){
   /* connect handle (right edge) */
   const hg = el("g", {"data-handle": n.id, cursor:"crosshair"}, g);
   el("circle", {cx:r.w, cy:r.h/2, r:11, fill:"transparent"}, hg);
-  el("circle", {cx:r.w, cy:r.h/2, r:5.5, fill:"#FFFFFF",
-                stroke: selected ? "#2456E6" : "#16232F", "stroke-width":1.6,
+  el("circle", {cx:r.w, cy:r.h/2, r:5.5, fill:t.tableFill,
+                stroke: selected ? t.accent : t.ink, "stroke-width":1.6,
                 opacity: selected ? 1 : .55}, hg);
 }
 function truncate(str, maxW, font){
@@ -606,11 +824,17 @@ function truncate(str, maxW, font){
 /* ------------------------- Mutations ------------------------------ */
 function addNode(type, x, y){
   pushHistory();
-  const n = type === "concept"
-    ? { id: uid(), type, x, y, title:"New idea", notes:"",
-        color: CONCEPT_COLORS[state.nodes.filter(n=>n.type==="concept").length % CONCEPT_COLORS.length] }
-    : { id: uid(), type, x, y, title:"new_table", notes:"", color:"#16232F",
-        fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
+  let n;
+  if (type === "concept"){
+    n = { id: uid(), type, x, y, title:"New idea", notes:"",
+          color: CONCEPT_COLORS[state.nodes.filter(n=>n.type==="concept").length % CONCEPT_COLORS.length] };
+  } else if (type === "frame"){
+    n = { id: uid(), type, x, y, title:"Subject area", color:FRAME_DEFAULT.color,
+          w:FRAME_DEFAULT.w, h:FRAME_DEFAULT.h };
+  } else {
+    n = { id: uid(), type:"table", x, y, title:"new_table", notes:"", color:themeColors("light").ink,
+          fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
+  }
   state.nodes.push(n);
   setSelection("node", n.id);
   render();
@@ -619,6 +843,8 @@ function addNode(type, x, y){
 }
 function addEdge(from, to){
   if (from.id === to.id) return;
+  let a = nodeById(from.id), b = nodeById(to.id);
+  if (!a || !b || a.type === "frame" || b.type === "frame") return;
   const key = ep => ep.id + ":" + (ep.fieldId || "");
   const dup = state.edges.some(e => {
     const ef = e.from + ":" + (e.fromField || ""), et = e.to + ":" + (e.toField || "");
@@ -626,7 +852,6 @@ function addEdge(from, to){
   });
   if (dup) return;
   pushHistory();
-  let a = nodeById(from.id), b = nodeById(to.id);
   const kind = (a.type === "table" && b.type === "table") ? "1:N" : "link";
   /* field-to-field between tables: orient so the PK/"one" side is `from`
      (drag FK column → PK column or the reverse; both come out right) */
@@ -774,6 +999,172 @@ function distribute(entries, axis){
     cursor += (isX ? e.r.w : e.r.h) + gap;
   }
 }
+function conceptTreeRoot(){
+  const selected = selectedNodes().find(n => n.type === "concept");
+  if (selected) return selected;
+  const concepts = state.nodes.filter(n => n.type === "concept");
+  if (!concepts.length) return null;
+  return concepts.slice().sort((a, b) => {
+    const ao = state.edges.filter(e => e.kind === "link" && e.from === a.id).length;
+    const bo = state.edges.filter(e => e.kind === "link" && e.from === b.id).length;
+    return bo - ao || a.y - b.y || a.x - b.x;
+  })[0];
+}
+function conceptTreeScope(rootId){
+  const conceptIds = new Set(state.nodes.filter(n => n.type === "concept").map(n => n.id));
+  const childMap = new Map();
+  const visited = new Set();
+  const bySource = new Map();
+  for (const e of state.edges){
+    if (e.kind !== "link" || !conceptIds.has(e.from) || !conceptIds.has(e.to)) continue;
+    if (!bySource.has(e.from)) bySource.set(e.from, []);
+    bySource.get(e.from).push(e.to);
+  }
+  for (const ids of bySource.values()){
+    ids.sort((a, b) => {
+      const na = nodeById(a), nb = nodeById(b);
+      return (na ? na.y : 0) - (nb ? nb.y : 0) || (na ? na.x : 0) - (nb ? nb.x : 0);
+    });
+  }
+  function visit(id){
+    if (visited.has(id)) return;
+    visited.add(id);
+    const children = [];
+    for (const childId of bySource.get(id) || []){
+      if (visited.has(childId)) continue;
+      children.push(childId);
+      visit(childId);
+    }
+    childMap.set(id, children);
+  }
+  if (conceptIds.has(rootId)) visit(rootId);
+  return { rootId, ids:[...visited], children:childMap };
+}
+function layoutMindMapTree(){
+  const root = conceptTreeRoot();
+  if (!root) return false;
+  const scope = conceptTreeScope(root.id);
+  if (!scope.ids.length) return false;
+  const sizes = new Map(scope.ids.map(id => [id, nodeRect(nodeById(id))]));
+  const maxW = Math.max(...scope.ids.map(id => sizes.get(id).w));
+  const gapX = maxW + 90;
+  const gapY = 24;
+  const startX = root.x;
+  const startY = root.y;
+  function arrange(id, depth, top){
+    const n = nodeById(id);
+    const r = sizes.get(id);
+    const kids = scope.children.get(id) || [];
+    n.x = Math.round((startX + depth*gapX)/4)*4;
+    if (!kids.length){
+      n.y = Math.round(top/4)*4;
+      return r.h;
+    }
+    let cursor = top;
+    const centers = [];
+    for (const childId of kids){
+      const h = arrange(childId, depth + 1, cursor);
+      centers.push(cursor + h/2);
+      cursor += h + gapY;
+    }
+    const blockH = Math.max(r.h, cursor - top - gapY);
+    const center = centers.length ? (centers[0] + centers[centers.length - 1]) / 2 : top + r.h/2;
+    n.y = Math.round((center - r.h/2)/4)*4;
+    return blockH;
+  }
+  pushHistory();
+  arrange(root.id, 0, startY);
+  render();
+  return true;
+}
+function relationEdgesForTables(tableIds){
+  return state.edges.filter(e => e.kind !== "link" && tableIds.has(e.from) && tableIds.has(e.to));
+}
+function schemaDagEdges(tables){
+  const tableIds = new Set(tables.map(n => n.id));
+  const adjacency = new Map(tables.map(n => [n.id, []]));
+  for (const e of relationEdgesForTables(tableIds)) adjacency.get(e.from).push(e);
+  const color = new Map();
+  const dag = [];
+  function dfs(id){
+    color.set(id, 1);
+    for (const e of adjacency.get(id) || []){
+      const c = color.get(e.to) || 0;
+      if (c === 1) continue;
+      dag.push(e);
+      if (c === 0) dfs(e.to);
+    }
+    color.set(id, 2);
+  }
+  for (const n of tables) if (!color.has(n.id)) dfs(n.id);
+  return dag;
+}
+function layoutSchemaTables(){
+  const tables = state.nodes.filter(n => n.type === "table");
+  if (!tables.length) return false;
+  const dagEdges = schemaDagEdges(tables);
+  const parents = new Map(tables.map(n => [n.id, []]));
+  const children = new Map(tables.map(n => [n.id, []]));
+  for (const e of dagEdges){
+    parents.get(e.to).push(e.from);
+    children.get(e.from).push(e.to);
+  }
+  const memo = new Map();
+  function layerOf(id){
+    if (memo.has(id)) return memo.get(id);
+    const ps = parents.get(id) || [];
+    const layer = ps.length ? Math.max(...ps.map(p => layerOf(p) + 1)) : 0;
+    memo.set(id, layer);
+    return layer;
+  }
+  const layers = [];
+  for (const n of tables){
+    const l = layerOf(n.id);
+    if (!layers[l]) layers[l] = [];
+    layers[l].push(n.id);
+  }
+  const orderIndex = ids => new Map(ids.map((id, i) => [id, i]));
+  for (let sweep = 0; sweep < 2; sweep++){
+    for (let i = 1; i < layers.length; i++){
+      const prev = orderIndex(layers[i-1] || []);
+      layers[i].sort((a, b) => {
+        const av = (parents.get(a) || []).reduce((s, p) => s + (prev.get(p) ?? 0), 0) / Math.max(1, (parents.get(a) || []).length);
+        const bv = (parents.get(b) || []).reduce((s, p) => s + (prev.get(p) ?? 0), 0) / Math.max(1, (parents.get(b) || []).length);
+        return av - bv || nodeById(a).y - nodeById(b).y;
+      });
+    }
+    for (let i = layers.length - 2; i >= 0; i--){
+      const next = orderIndex(layers[i+1] || []);
+      layers[i].sort((a, b) => {
+        const av = (children.get(a) || []).reduce((s, c) => s + (next.get(c) ?? 0), 0) / Math.max(1, (children.get(a) || []).length);
+        const bv = (children.get(b) || []).reduce((s, c) => s + (next.get(c) ?? 0), 0) / Math.max(1, (children.get(b) || []).length);
+        return av - bv || nodeById(a).y - nodeById(b).y;
+      });
+    }
+  }
+  const startX = Math.min(...tables.map(n => n.x));
+  const startY = Math.min(...tables.map(n => n.y));
+  const layerWidths = layers.map(ids => Math.max(...ids.map(id => nodeRect(nodeById(id)).w)));
+  const layerX = [];
+  let cursorX = startX;
+  for (let i = 0; i < layers.length; i++){
+    layerX[i] = cursorX;
+    cursorX += layerWidths[i] + 140;
+  }
+  pushHistory();
+  for (let i = 0; i < layers.length; i++){
+    let cursorY = startY;
+    for (const id of layers[i]){
+      const n = nodeById(id);
+      const r = nodeRect(n);
+      n.x = Math.round(layerX[i]/4)*4;
+      n.y = Math.round(cursorY/4)*4;
+      cursorY += r.h + 40;
+    }
+  }
+  render();
+  return true;
+}
 /* table-only: spawn a child table wired up with an FK field and a bound 1:N edge */
 function addRelatedTable(parentId){
   const p = nodeById(parentId);
@@ -806,7 +1197,7 @@ function reorderNode(id, toFront){
 }
 function addChildConcept(){
   const p = firstSelectedNode();
-  if (!p) return;
+  if (!p || p.type === "frame") return;
   const r = nodeRect(p);
   pushHistory();
   const siblings = state.edges.filter(e => e.from === p.id).length;
@@ -831,6 +1222,7 @@ board.addEventListener("pointerdown", ev => {
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   const fieldHandleEl = ev.target.closest("[data-fieldhandle]");
   const handleEl = ev.target.closest("[data-handle]");
+  const resizeEl = ev.target.closest("[data-frame-resize]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
@@ -846,6 +1238,16 @@ board.addEventListener("pointerdown", ev => {
     board.classList.add("connecting");
     return;
   }
+  if (resizeEl){
+    const id = resizeEl.getAttribute("data-frame-resize");
+    const n = nodeById(id);
+    if (!n || n.type !== "frame") return;
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    setSelection("node", id);
+    drag = { mode:"frame-resize", id, start:w, w:n.w || FRAME_DEFAULT.w, h:n.h || FRAME_DEFAULT.h, moved:false };
+    render();
+    return;
+  }
   if (nodeEl){
     const id = nodeEl.getAttribute("data-node");
     const n = nodeById(id);
@@ -857,11 +1259,13 @@ board.addEventListener("pointerdown", ev => {
       return;
     }
     if (!isSelected("node", id)) setSelection("node", id);
-    const ids = selectionIds("node");
+    const moveIds = new Set(selectionIds("node"));
+    if (n && n.type === "frame") for (const child of frameContainedNodes(n)) moveIds.add(child.id);
+    const ids = [...moveIds];
     drag = { mode:"node", id, start:w, starts: ids.map(nodeId => {
       const dn = nodeById(nodeId);
       return { id:nodeId, x:dn.x, y:dn.y };
-    }), moved:false };
+    }).filter(Boolean), moved:false };
     render();
     return;
   }
@@ -898,6 +1302,14 @@ board.addEventListener("pointermove", ev => {
       n.x = Math.round((start.x + dx)/4)*4;
       n.y = Math.round((start.y + dy)/4)*4;
     }
+    render();
+  } else if (drag.mode === "frame-resize"){
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    const n = nodeById(drag.id);
+    if (!n) return;
+    if (!drag.moved){ pushHistory(); drag.moved = true; }
+    n.w = Math.round(Math.max(120, drag.w + (w.x - drag.start.x)) / 4) * 4;
+    n.h = Math.round(Math.max(90, drag.h + (w.y - drag.start.y)) / 4) * 4;
     render();
   } else if (drag.mode === "marquee"){
     const w = clientToWorld(ev.clientX, ev.clientY);
@@ -1092,6 +1504,10 @@ function inlineEditorBox(kind, id){
     const n = nodeById(id);
     if (!n) return null;
     const r = nodeRect(n);
+    if (n.type === "frame"){
+      const p = worldToWrap(r.x + 12, r.y + 7);
+      return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:28, fontSize:13 };
+    }
     if (n.type === "concept"){
       const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
       return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:32, fontSize:Math.max(12, conceptFont(n)*view.k) };
@@ -1174,6 +1590,9 @@ function paletteItems(){
   for (const c of [
     ["addConcept", "Add concept"],
     ["addTable", "Add table"],
+    ["addFrame", "Add frame"],
+    ["layoutTree", "Layout concept tree"],
+    ["layoutSchema", "Layout table schema"],
     ["exportSQL", "Export SQL"],
     ["fit", "Fit diagram"],
     ["open", "Open"],
@@ -1208,6 +1627,9 @@ function activatePaletteItem(item){
   const c = viewCenter();
   if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
+  if (item.command === "addFrame") addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2);
+  if (item.command === "layoutTree") layoutMindMapTree();
+  if (item.command === "layoutSchema") layoutSchemaTables();
   if (item.command === "exportSQL") document.getElementById("btnExportSQL").click();
   if (item.command === "fit") fitView();
   if (item.command === "open") openDoc();
@@ -1293,14 +1715,21 @@ function renderInspector(){
     if (selectionCount("node") > 1){ renderMultiInspector(); return; }
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
-    inspTitle.textContent = n.type === "concept" ? "Concept node" : "Table node";
+    inspTitle.textContent = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame" : "Table node";
 
-    frow(n.type === "concept" ? "Title" : "Table name", () => {
+    frow(n.type === "table" ? "Table name" : "Title", () => {
       const i = mkInput(n.title, v => { n.title = v; drawOnly(); });
       i.id = "titleInput"; return i;
     });
 
-    if (n.type === "concept"){
+    if (n.type === "frame"){
+      frow("Color", () => swatches(TABLE_COLORS, n.color || FRAME_DEFAULT.color,
+        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+      frow("Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
+        (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
+      frow("Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
+        (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
+    } else if (n.type === "concept"){
       frow("Notes", () => {
         const t = document.createElement("textarea");
         t.value = n.notes || "";
@@ -1327,7 +1756,7 @@ function renderInspector(){
     const div = document.createElement("div");
     div.className = "rowbtns";
     div.appendChild(mkBtn("Duplicate", duplicateSelection));
-    div.appendChild(mkBtn("Add linked concept  ⇥", addChildConcept));
+    if (n.type !== "frame") div.appendChild(mkBtn("Add linked concept  ⇥", addChildConcept));
     inspBody.appendChild(div);
     inspBody.appendChild(mkBtn("Delete node", deleteSelection, "dangerbtn"));
 
@@ -1357,6 +1786,22 @@ function renderInspector(){
       s.addEventListener("change", () => { pushHistory(); e.kind = s.value; render(); });
       return s;
     });
+    frow("Routing", () => {
+      const s = document.createElement("select");
+      for (const k of ["curve","ortho"]){
+        const o = document.createElement("option");
+        o.value = k; o.textContent = k === "curve" ? "curved" : "orthogonal";
+        if ((e.routing || "curve") === k) o.selected = true;
+        s.appendChild(o);
+      }
+      s.addEventListener("change", () => {
+        pushHistory();
+        if (s.value === "ortho") e.routing = "ortho";
+        else delete e.routing;
+        render();
+      });
+      return s;
+    });
     attachRow("From", a, e, "fromField");
     attachRow("To",   b, e, "toField");
     frow("Label (optional)", () => mkInput(e.label, v => { e.label = v; drawOnly(); }));
@@ -1378,6 +1823,7 @@ function renderInspector(){
 
 function renderMultiInspector(){
   const nodes = selectedNodes();
+  const nonFrames = nodes.filter(n => n.type !== "frame");
   inspTitle.textContent = `${nodes.length} nodes selected`;
   const helper = document.createElement("div");
   helper.className = "helper";
@@ -1389,18 +1835,20 @@ function renderMultiInspector(){
       for (const n of nodes) n.color = c;
       commit ? render() : drawOnly();
     }));
-  frow("Text size", () => sizeStepper(nodes[0].type === "concept" ? conceptFont(nodes[0]) : tableMetrics(nodes[0]).base,
-    8, 48, 1, (v, commit) => {
-      pushHistory("fs:multi");
-      for (const n of nodes) n.fontSize = n.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
-      commit ? render() : drawOnly();
-    }));
-  frow("Text color", () => swatches(FONT_COLORS, nodes[0].fontColor || "#16232F",
-    (c, commit) => {
-      pushHistory("fc:multi");
-      for (const n of nodes) n.fontColor = c;
-      commit ? render() : drawOnly();
-    }));
+  if (nonFrames.length === nodes.length){
+    frow("Text size", () => sizeStepper(nodes[0].type === "concept" ? conceptFont(nodes[0]) : tableMetrics(nodes[0]).base,
+      8, 48, 1, (v, commit) => {
+        pushHistory("fs:multi");
+        for (const n of nodes) n.fontSize = n.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
+        commit ? render() : drawOnly();
+      }));
+    frow("Text color", () => swatches(FONT_COLORS, nodes[0].fontColor || "#16232F",
+      (c, commit) => {
+        pushHistory("fc:multi");
+        for (const n of nodes) n.fontColor = c;
+        commit ? render() : drawOnly();
+      }));
+  }
   const div = document.createElement("div");
   div.className = "rowbtns";
   div.appendChild(mkBtn("Duplicate", duplicateSelection));
@@ -1662,9 +2110,11 @@ function mkFlag(txt, on, set){
 }
 /* redraw canvas without rebuilding inspector (keeps input focus) */
 function drawOnly(){
-  edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
+  frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
+  for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
   for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) drawNode(n);
+  for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  renderMinimap();
 }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
@@ -1750,6 +2200,8 @@ function newDoc(){
   undoStack.length = 0;
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
+  applyTheme("light", { render:false });
+  setPngAsShown(false);
   render();
   syncHistoryButtons();
   updateDocLabel();
@@ -1789,6 +2241,11 @@ document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
+document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
+document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
+document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
+document.getElementById("btnTheme").addEventListener("click", toggleTheme);
+document.getElementById("pngAsShown").addEventListener("change", ev => setPngAsShown(ev.target.checked));
 
 /* --------------------------- SQL export --------------------------- */
 function ident(s){
@@ -1860,23 +2317,29 @@ document.getElementById("btnDownloadSQL").addEventListener("click", () =>
   download("schematic-schema.sql", document.getElementById("sqlOut").textContent, "text/plain"));
 
 /* --------------------------- PNG export --------------------------- */
+function cloneBoardForPng(asShown = pngAsShown){
+  const exportTheme = asShown ? docTheme : "light";
+  const previousTheme = docTheme;
+  if (previousTheme !== exportTheme) applyTheme(exportTheme, { render:true });
+  const clone = board.cloneNode(true);
+  if (previousTheme !== exportTheme) applyTheme(previousTheme, { render:true });
+  return { clone, themeName:exportTheme };
+}
 document.getElementById("btnExportPNG").addEventListener("click", () => {
   if (!state.nodes.length){ alert("Nothing to export yet."); return; }
-  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
-  for (const n of state.nodes){
-    const r = nodeRect(n);
-    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
-    x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
-  }
+  const bounds = documentBounds();
+  const x0 = bounds.x, y0 = bounds.y, x1 = bounds.x + bounds.w, y1 = bounds.y + bounds.h;
   const pad = 40, W = x1 - x0 + pad*2, H = y1 - y0 + pad*2;
-  const clone = board.cloneNode(true);
+  const png = cloneBoardForPng(pngAsShown);
+  const clone = png.clone;
   clone.setAttribute("width", W); clone.setAttribute("height", H);
   clone.setAttribute("viewBox", `${x0-pad} ${y0-pad} ${W} ${H}`);
   const g = clone.querySelector("#world");
   g.removeAttribute("transform");
   const bg = g.querySelector("[data-bg]");
-  if (bg) bg.setAttribute("fill", "#FFFFFF");
-  clone.querySelectorAll("[data-handle], [data-fieldhandle]").forEach(h => h.remove());
+  const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
+  if (bg) bg.setAttribute("fill", bgColor);
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize]").forEach(h => h.remove());
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
@@ -1884,7 +2347,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
     const cv = document.createElement("canvas");
     cv.width = W*2; cv.height = H*2;
     const ctx = cv.getContext("2d");
-    ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0,0,cv.width,cv.height);
+    ctx.fillStyle = bgColor; ctx.fillRect(0,0,cv.width,cv.height);
     ctx.drawImage(img, 0, 0, cv.width, cv.height);
     URL.revokeObjectURL(url);
     cv.toBlob(b => {
@@ -1971,17 +2434,19 @@ function nodeMenu(n, x, y){
     for (const t of targets) fn(t);
   };
   showCtx(x, y, m => {
-    ctxLabel(m, n.type === "concept" ? "Color" : "Header color");
+    ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color" : "Header color");
     ctxSwatches(m, n.type === "concept" ? CONCEPT_COLORS : TABLE_COLORS, n.color,
       (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
-    ctxLabel(m, "Text size");
-    ctxSizeRow(m, n, targets);
-    ctxLabel(m, "Text color");
-    ctxSwatches(m, FONT_COLORS, n.fontColor || "#16232F",
-      (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
+    if (n.type !== "frame"){
+      ctxLabel(m, "Text size");
+      ctxSizeRow(m, n, targets);
+      ctxLabel(m, "Text color");
+      ctxSwatches(m, FONT_COLORS, n.fontColor || "#16232F",
+        (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
+    }
     ctxSep(m);
     ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
-    ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
+    if (n.type !== "frame") ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table"){
       ctxItem(m, "Add related table (1:N)", () => addRelatedTable(n.id));
       ctxItem(m, "Add field", () => {
@@ -2024,6 +2489,22 @@ function edgeMenu(e, x, y){
       row.appendChild(b);
     }
     m.appendChild(row);
+    ctxLabel(m, "Routing");
+    const routeRow = document.createElement("div");
+    routeRow.className = "kindrow";
+    for (const k of ["curve","ortho"]){
+      const b = document.createElement("button");
+      b.textContent = k === "curve" ? "Curve" : "Ortho";
+      if ((e.routing || "curve") === k) b.className = "on";
+      b.addEventListener("click", () => {
+        hideCtx();
+        pushHistory();
+        if (k === "ortho") e.routing = "ortho"; else delete e.routing;
+        render();
+      });
+      routeRow.appendChild(b);
+    }
+    m.appendChild(routeRow);
     ctxSep(m);
     ctxItem(m, "Swap direction", () => {
       pushHistory();
@@ -2042,6 +2523,7 @@ function canvasMenu(w, x, y){
   showCtx(x, y, m => {
     ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
+    ctxItem(m, "Add frame here",   () => addNode("frame",   w.x - FRAME_DEFAULT.w/2, w.y - FRAME_DEFAULT.h/2));
     ctxSep(m);
     ctxItem(m, "Fit diagram", fitView, {kbd:"F"});
   });
@@ -2143,6 +2625,27 @@ window.__T = {
   generateSQL,
   render,
   nodeRect,
+  rectsOverlap,
+  documentBounds,
+  hitTest,
+  frameContainedNodes,
+  addNode,
+  addEdge,
+  edgeEndpoints,
+  edgePath,
+  layoutMindMapTree,
+  layoutSchemaTables,
+  conceptTreeScope,
+  schemaDagEdges,
+  minimapTransform,
+  centerViewOn,
+  applyTheme,
+  toggleTheme,
+  setPngAsShown,
+  cloneBoardForPng,
+  get docTheme(){ return docTheme; },
+  get pngAsShown(){ return pngAsShown; },
+  get THEME(){ return THEME; },
   get view(){ return view; },
   setView(next){ view = {...view, ...next}; applyView(); },
   get selection(){ return sel ? { kind:sel.kind, ids:[...sel.ids] } : null; },

@@ -152,6 +152,10 @@ Harness quirks you must respect:
   pan, drag-empty marquee select, dot-grid background), Fit view (`F`), 4px grid snap on
   node drag, arrow-key nudge (Shift = 24px), Esc deselect, no text-selection during drags.
 - Selection model: single node/edge plus multi-node selection; selection drives inspector.
+- Auto-layout tools: concept-tree layout from the selected/root concept and layered schema
+  layout for table relations; each layout is one undo step.
+- Minimap overlay with viewport rectangle and click/drag panning, skipped automatically
+  for very large documents.
 
 **Nodes**
 - Concept nodes: title, notes (dot indicator), fill color, per-node font size (9–48px)
@@ -159,6 +163,8 @@ Harness quirks you must respect:
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
+- Frame nodes: labeled subject-area rectangles drawn behind nodes; drag a frame to move
+  nodes contained by center point; resize via corner handle; frames are not edge targets.
 - Add via toolbar, keyboard (`C`/`T`), double-click empty canvas, command palette, or
   context menu ("here").
 - Duplicate (Ctrl+D, remaps node/field ids and internal edges), copy/cut/paste
@@ -173,6 +179,8 @@ Harness quirks you must respect:
   anchor dots on bound ends, inspector attachment dropdowns per end).
 - Auto-orientation on field↔field drags (PK side becomes "from"), swap direction
   (carries bindings), inline-editable labels, duplicate rejection at field granularity.
+- Per-edge routing: curved default or orthogonal Manhattan routing via inspector/context menu;
+  routing round-trips in JSON and keeps crow's-foot notation.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).
@@ -190,6 +198,8 @@ Harness quirks you must respect:
   the inspector and context menus (normalized, deduped, capped at 8, presets excluded);
   stored in the document (`meta.recentColors`, written only when non-empty) and mirrored
   to localStorage when available; document colors win on import merge.
+- Dark theme: status-bar toggle persisted in `meta.theme`; SVG draw code reads a `THEME`
+  lookup so document colors and dark chrome render/export consistently.
 - Undo/redo: 100-step snapshot stack with time+key coalescing for continuous edits.
 
 **I/O (all local, no server)**
@@ -209,10 +219,12 @@ Harness quirks you must respect:
 - SQL DDL export: `CREATE TABLE` with NOT NULL/PK; FK constraints from field-bound edges
   (exact) or FK-flag heuristics (fallback, `-- TODO` comment when unresolvable);
   junction-table suggestions for N:M; copy + `.sql` download.
-- PNG export: 2× raster of content bounding box, white background, handles stripped.
+- PNG export: 2× raster of content bounding box, handles stripped; exports light by default
+  with an "as shown" option for the current theme.
 
 **Testing** — Node/jsdom harness covering Phase A lifecycle behavior, Phase B editing
-workflows, and key rendering regressions; suite ends `ALL TESTS PASSED`.
+workflows, Phase E layout/visualization behavior, and key rendering regressions; suite
+ends `ALL TESTS PASSED`.
 
 ---
 
@@ -580,9 +592,11 @@ not `split(",")`); tests on the pure function.
 
 ### Phase E — Layout & visualization (P2–P3)
 
+Status: implemented and tested on 2026-07-08.
+
 ---
 
-**SCH-040 · Auto-layout: mind-map tree · P2 · L**
+**SCH-040 · Auto-layout: mind-map tree · P2 · L · Done 2026-07-08**
 
 "Layout" toolbar menu → "Tree (concepts)". Scope: the `link`-edge subgraph reachable from
 the selected concept (or the concept with most outgoing links if none selected). Tidy-tree
@@ -595,7 +609,7 @@ non-intersection); undo restores prior positions in one step.
 
 ---
 
-**SCH-041 · Auto-layout: schema (layered) · P2 · L**
+**SCH-041 · Auto-layout: schema (layered) · P2 · L · Done 2026-07-08**
 
 "Layout → Schema (tables)". Longest-path layering on relation edges (parents left),
 within-layer ordering by barycenter of neighbors (2 sweeps is enough), x by layer using
@@ -607,7 +621,7 @@ produces finite coordinates. Non-overlap assertion.
 
 ---
 
-**SCH-042 · Orthogonal edge routing option · P3 · M**
+**SCH-042 · Orthogonal edge routing option · P3 · M · Done 2026-07-08**
 
 Per-edge `routing: "curve"|"ortho"` (default curve). Ortho: 3-segment Manhattan path
 (H-V-H or V-H-V chosen by anchor sides), 12px stub before first turn; crow's feet already
@@ -618,7 +632,7 @@ round-trips the key.
 
 ---
 
-**SCH-043 · Minimap · P3 · M**
+**SCH-043 · Minimap · P3 · M · Done 2026-07-08**
 
 120×90 fixed overlay (bottom-right of `#canvasWrap`), redrawn on `render()`/`applyView()`:
 scaled node rects + viewport rectangle; click/drag to pan. Skip when >500 nodes (perf).
@@ -628,7 +642,7 @@ AC: viewport rect math inverse-matches `view`; click centers view. Pure helper
 
 ---
 
-**SCH-044 · Dark theme · P3 · M**
+**SCH-044 · Dark theme · P3 · M · Done 2026-07-08**
 
 Theme toggle (status bar; persisted in document `meta.theme`, default light). Because SVG
 uses presentation attributes (E5), introduce a `THEME` lookup object
@@ -643,7 +657,7 @@ THEME definition itself).
 
 ---
 
-**SCH-045 · Frames / subject areas · P3 · L**
+**SCH-045 · Frames / subject areas · P3 · L · Done 2026-07-08**
 
 New node type `frame`: a labeled rounded rect drawn **behind** nodes (own layer between
 background and edges). Dragging a frame moves nodes whose centers are inside it. Resize
@@ -708,4 +722,4 @@ most needs.
 - [ ] New behavior has assertions; count noted in the PR/summary.
 - [ ] JSON documents from before the change still import (backward compatibility test).
 - [ ] §3 of this PLAN.md updated; backlog item marked `✅ done YYYY-MM-DD`.
-- [ ] Deliverable remains a single `schematic.html`.
+- [ ] Deliverable remains static `index.html`, `styles.css`, and `app.js` files.

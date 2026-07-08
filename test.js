@@ -35,9 +35,10 @@ function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}
     fillRect(){},
     drawImage(){}
   });
-  window.SVGElement.prototype.getBoundingClientRect = () => ({
-    left: 0, top: 0, width: 1200, height: 800, right: 1200, bottom: 800
-  });
+  window.SVGElement.prototype.getBoundingClientRect = function getBoundingClientRect(){
+    if (this.id === "minimap") return { left: 0, top: 0, width: 120, height: 90, right: 120, bottom: 90 };
+    return { left: 0, top: 0, width: 1200, height: 800, right: 1200, bottom: 800 };
+  };
   window.SVGElement.prototype.setPointerCapture = () => {};
   window.SVGElement.prototype.releasePointerCapture = () => {};
   window.URL.createObjectURL = () => "blob:test";
@@ -114,6 +115,20 @@ function firePointer(window, target, type, opts = {}){
   Object.defineProperty(ev, "pointerId", { configurable: true, value: 1 });
   target.dispatchEvent(ev);
   return ev;
+}
+
+function assertNoOverlaps(rects, msg){
+  for (let i = 0; i < rects.length; i++){
+    for (let j = i + 1; j < rects.length; j++){
+      const a = rects[i], b = rects[j];
+      assert(!(a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y),
+        `${msg}: ${i} overlaps ${j}`);
+    }
+  }
+}
+
+function closeEnough(a, b, msg){
+  assert(Math.abs(a - b) < 1e-6, `${msg}: expected ${b}, got ${a}`);
 }
 
 (async () => {
@@ -264,7 +279,8 @@ function firePointer(window, target, type, opts = {}){
     const T = window.__T;
     T.importDocText(JSON.stringify({ version: 1, nextId: 2, nodes: [], edges: [] }));
     const parsed = JSON.parse(T.serializeDocument());
-    assert(!("meta" in parsed), "documents without custom colors round-trip without a meta key");
+    assert.strictEqual(parsed.meta.theme, "light", "documents without custom colors still persist the default theme");
+    assert(!("recentColors" in parsed.meta), "documents without custom colors omit meta.recentColors");
   }
 
   {
@@ -452,6 +468,168 @@ function firePointer(window, target, type, opts = {}){
       assert(text.includes(s.keys), `shortcut modal includes ${s.keys}`);
     window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"?", bubbles:true }));
     assert(window.document.querySelector(".shortcut-modal"), "? opens the shortcut modal");
+  }
+
+  /* SCH-040 — auto-layout: mind-map tree */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const strategy = T.state.nodes.find(n => n.title === "Loyalty program launch");
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    T.setSelection("node", strategy.id);
+    const scope = T.conceptTreeScope(strategy.id);
+    const before = new Map(scope.ids.map(id => {
+      const n = T.state.nodes.find(x => x.id === id);
+      return [id, { x:n.x, y:n.y }];
+    }));
+    const untouched = { x:customers.x, y:customers.y };
+    const beforeDepth = T.undoDepth;
+    assert.strictEqual(T.layoutMindMapTree(), true, "tree layout runs on selected concept");
+    assert.strictEqual(T.undoDepth, beforeDepth + 1, "tree layout creates one undo entry");
+    const rects = scope.ids.map(id => T.nodeRect(T.state.nodes.find(n => n.id === id)));
+    assertNoOverlaps(rects, "tree layout concept subtree has no overlaps");
+    assert.deepStrictEqual({ x:customers.x, y:customers.y }, untouched, "tree layout leaves out-of-scope table alone");
+    T.undo();
+    for (const [id, pos] of before){
+      const n = T.state.nodes.find(x => x.id === id);
+      assert.deepStrictEqual({ x:n.x, y:n.y }, pos, "undo restores tree-layout node positions");
+    }
+  }
+
+  /* SCH-041 — auto-layout: schema layered */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    assert.strictEqual(T.layoutSchemaTables(), true, "schema layout runs on seeded tables");
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const orders = T.state.nodes.find(n => n.title === "orders");
+    const rewards = T.state.nodes.find(n => n.title === "reward_events");
+    assert(customers.x < orders.x, "schema layout places customers left of orders");
+    assert(customers.x < rewards.x, "schema layout places customers left of reward events");
+    assertNoOverlaps([customers, orders, rewards].map(T.nodeRect), "schema layout tables have no overlaps");
+
+    T.importDocText(JSON.stringify({ version:1, nextId:10, nodes:[
+      { id:"n1", type:"table", x:0, y:0, title:"a", color:"#16232F", notes:"", fields:[{id:"f1", name:"id", type:"INT", pk:true, fk:false, nullable:false}] },
+      { id:"n2", type:"table", x:40, y:20, title:"b", color:"#2456E6", notes:"", fields:[{id:"f2", name:"id", type:"INT", pk:true, fk:false, nullable:false}] },
+      { id:"n3", type:"table", x:80, y:40, title:"c", color:"#1E7A4F", notes:"", fields:[{id:"f3", name:"id", type:"INT", pk:true, fk:false, nullable:false}] }
+    ], edges:[
+      { id:"e1", from:"n1", to:"n2", kind:"1:N", label:"" },
+      { id:"e2", from:"n2", to:"n3", kind:"1:N", label:"" },
+      { id:"e3", from:"n3", to:"n1", kind:"1:N", label:"" }
+    ] }));
+    assert.strictEqual(T.layoutSchemaTables(), true, "schema layout terminates on a cycle");
+    const cyclicRects = T.state.nodes.map(T.nodeRect);
+    assert(cyclicRects.every(r => Number.isFinite(r.x) && Number.isFinite(r.y)), "cyclic schema layout produces finite coordinates");
+    assertNoOverlaps(cyclicRects, "cyclic schema layout tables have no overlaps");
+  }
+
+  /* SCH-042 — orthogonal edge routing */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const edge = T.state.edges.find(e => e.kind !== "link");
+    edge.routing = "ortho";
+    T.render();
+    const ep = T.edgeEndpoints(edge);
+    const d = T.edgePath(edge, ep.pa, ep.pb);
+    assert(!d.includes("C"), "orthogonal edge path does not use cubic curves");
+    assert(/^[MLHV0-9 .-]+$/.test(d), "orthogonal edge path uses only M/L/H/V commands and numbers");
+    const edgeGroup = window.document.querySelector(`[data-edge="${edge.id}"]`);
+    assert(edgeGroup.querySelectorAll("line").length > 0, "orthogonal relation still renders notation");
+    const parsed = JSON.parse(T.serializeDocument());
+    assert.strictEqual(parsed.edges.find(e => e.id === edge.id).routing, "ortho", "routing key serializes");
+    T.importDocText(JSON.stringify(parsed));
+    assert.strictEqual(T.state.edges.find(e => e.id === edge.id).routing, "ortho", "routing key imports");
+  }
+
+  /* SCH-043 — minimap */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const bounds = { x:0, y:0, w:1000, h:500 };
+    const view = { x:-200, y:-100, k:2 };
+    const tx = T.minimapTransform(bounds, view, { w:120, h:90, viewportW:1200, viewportH:800 });
+    const worldPoint = { x:345, y:210 };
+    const miniPoint = tx.toMini(worldPoint);
+    const roundTrip = tx.toWorld(miniPoint);
+    closeEnough(roundTrip.x, worldPoint.x, "minimap x inverse");
+    closeEnough(roundTrip.y, worldPoint.y, "minimap y inverse");
+    closeEnough(tx.viewport.x, (-view.x / view.k) * tx.scale + tx.ox, "viewport rect x matches view");
+    closeEnough(tx.viewport.y, (-view.y / view.k) * tx.scale + tx.oy, "viewport rect y matches view");
+
+    T.setView({ x:0, y:0, k:1 });
+    T.render();
+    const liveBounds = T.documentBounds();
+    const liveTx = T.minimapTransform(liveBounds, T.view, { w:120, h:90, viewportW:1200, viewportH:800 });
+    const target = { x:liveBounds.cx, y:liveBounds.cy };
+    const click = liveTx.toMini(target);
+    firePointer(window, window.document.getElementById("minimap"), "pointerdown", { clientX:click.x, clientY:click.y });
+    closeEnough(T.view.x, 600 - target.x, "minimap click centers view x");
+    closeEnough(T.view.y, 400 - target.y, "minimap click centers view y");
+  }
+
+  /* SCH-044 — dark theme */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.applyTheme("dark", { render:true, dirty:true });
+    assert.strictEqual(T.docTheme, "dark", "theme switches to dark");
+    assert.strictEqual(window.document.documentElement.dataset.theme, "dark", "dark theme updates chrome data attribute");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).meta.theme, "dark", "theme persists in document metadata");
+    const defaultPng = T.cloneBoardForPng(false);
+    assert.strictEqual(defaultPng.themeName, "light", "PNG defaults to light export");
+    assert.strictEqual(T.docTheme, "dark", "default light PNG clone restores dark document theme");
+    T.setPngAsShown(true);
+    const shownPng = T.cloneBoardForPng(true);
+    assert.strictEqual(shownPng.themeName, "dark", "PNG as shown uses the current dark theme");
+    const drawStart = script.indexOf("function drawEdge");
+    const drawEnd = script.indexOf("/* ------------------------- Mutations");
+    assert(!script.slice(drawStart, drawEnd).includes("#16232F"), "draw code routes ink through THEME instead of literal #16232F");
+  }
+
+  /* SCH-045 — frames / subject areas */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version:1, nextId:4, nodes:[
+      { id:"n1", type:"frame", x:0, y:0, title:"Area", color:"#2456E6", w:300, h:220 },
+      { id:"n2", type:"concept", x:60, y:70, title:"Inside", notes:"", color:"#FFE9A8" },
+      { id:"n3", type:"concept", x:420, y:70, title:"Outside", notes:"", color:"#CFE8FF" }
+    ], edges:[] }));
+    T.setView({ x:0, y:0, k:1 });
+    T.render();
+    const frame = T.state.nodes.find(n => n.id === "n1");
+    const inside = T.state.nodes.find(n => n.id === "n2");
+    const outside = T.state.nodes.find(n => n.id === "n3");
+    sameList(T.frameContainedNodes(frame).map(n => n.id), ["n2"], "frame detects contained node centers");
+    const beforeDepth = T.undoDepth;
+    const before = { frameX:frame.x, insideX:inside.x, outsideX:outside.x };
+    firePointer(window, window.document.querySelector('[data-frame="n1"]'), "pointerdown", { clientX:10, clientY:10 });
+    firePointer(window, window.document.getElementById("board"), "pointermove", { clientX:90, clientY:10 });
+    firePointer(window, window.document.getElementById("board"), "pointerup", { clientX:90, clientY:10 });
+    assert.strictEqual(T.undoDepth, beforeDepth + 1, "frame drag creates one undo entry");
+    assert(frame.x > before.frameX && inside.x > before.insideX, "frame drag moves frame and contained node");
+    assert.strictEqual(outside.x, before.outsideX, "frame drag leaves outside nodes alone");
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(n => n.id === "n1").x, before.frameX, "undo restores frame position");
+    assert.strictEqual(T.state.nodes.find(n => n.id === "n2").x, before.insideX, "undo restores contained node position");
+
+    T.render();
+    const frameAfterUndo = T.state.nodes.find(n => n.id === "n1");
+    const oldW = frameAfterUndo.w, oldH = frameAfterUndo.h;
+    firePointer(window, window.document.querySelector('[data-frame-resize="n1"]'), "pointerdown", { clientX:oldW, clientY:oldH });
+    firePointer(window, window.document.getElementById("board"), "pointermove", { clientX:oldW + 60, clientY:oldH + 44 });
+    firePointer(window, window.document.getElementById("board"), "pointerup", { clientX:oldW + 60, clientY:oldH + 44 });
+    assert(frameAfterUndo.w > oldW && frameAfterUndo.h > oldH, "frame resize handle changes dimensions");
+    const layerIds = [...window.document.querySelector("#world").children].map(el => el.id || el.getAttribute("data-bg") || "");
+    assert.deepStrictEqual(layerIds.slice(1, 4), ["frameLayer", "edgeLayer", "nodeLayer"], "frame layer renders behind edges and nodes");
+    assert.strictEqual(T.hitTest({ x:260, y:190 }), null, "hitTest ignores frames for edge targeting");
+    T.addEdge({ id:"n1" }, { id:"n2" });
+    assert.strictEqual(T.state.edges.length, 0, "frames cannot be edge endpoints");
+    const parsed = JSON.parse(T.serializeDocument());
+    assert(parsed.nodes.some(n => n.type === "frame" && n.w && n.h), "frame JSON round-trips dimensions");
+    T.importDocText(JSON.stringify(parsed));
+    assert(T.state.nodes.some(n => n.type === "frame" && n.title === "Area"), "frame imports from JSON");
   }
 
   {
