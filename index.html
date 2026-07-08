@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schematic — Mind Map + Data Model Canvas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <div class="brand"><b>SCHEMATIC</b><span>mind map · data model</span></div>
+
+  <div class="tgroup">
+    <span class="tlabel">Add</span>
+    <button id="btnAddConcept" class="primary" title="Add a concept node (C)">+ Concept</button>
+    <button id="btnAddTable" title="Add a table / entity node (T)">+ Table</button>
+  </div>
+
+  <div class="tgroup">
+    <span class="tlabel">Edit</span>
+    <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <button id="btnFit" title="Fit diagram in view (F)">Fit</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="tgroup">
+    <span class="tlabel">File</span>
+    <button id="btnExportJSON" title="Download diagram as JSON">JSON ↓</button>
+    <button id="btnImportJSON" title="Load a diagram from JSON">Import</button>
+    <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL</button>
+    <button id="btnExportPNG" title="Download diagram as PNG">PNG ↓</button>
+    <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear</button>
+  </div>
+  <input type="file" id="fileInput" accept="application/json,.json" hidden>
+</header>
+
+<main>
+  <div id="canvasWrap">
+    <svg id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <aside id="inspector">
+    <div class="head"><h2 id="inspTitle">Inspector</h2></div>
+    <div class="body" id="inspBody"></div>
+  </aside>
+</main>
+
+<footer>
+  <span id="zoomLabel">100%</span>
+  <span id="countLabel">0 nodes · 0 edges</span>
+  <span class="hint spacer">Drag to pan · scroll to zoom · drag ○ from a node or field row to connect · double-click to edit · right-click for actions</span>
+</footer>
+
+<div class="modal" id="sqlModal">
+  <div class="card">
+    <h3>SQL DDL — draft generated from table nodes</h3>
+    <pre id="sqlOut"></pre>
+    <div class="actions">
+      <button id="btnCopySQL">Copy</button>
+      <button id="btnDownloadSQL">Download .sql</button>
+      <button id="btnCloseSQL" class="primary">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
