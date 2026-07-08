@@ -17,7 +17,7 @@ function makeStorage(throwing = false){
   };
 }
 
-function makeDom({ fsa = false, storageThrows = false } = {}){
+function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}){
   const dom = new JSDOM(html, {
     runScripts: "outside-only",
     url: "http://localhost/",
@@ -27,6 +27,7 @@ function makeDom({ fsa = false, storageThrows = false } = {}){
   const downloads = [];
   const alerts = [];
   const storage = makeStorage(storageThrows);
+  if (storageSeed) for (const [k, v] of Object.entries(storageSeed)) storage.setItem(k, v);
 
   Object.defineProperty(window, "localStorage", { configurable: true, value: storage });
   window.HTMLCanvasElement.prototype.getContext = () => ({
@@ -90,6 +91,10 @@ function makeDom({ fsa = false, storageThrows = false } = {}){
 
 async function delay(ms){
   await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function sameList(actual, expected, msg){
+  assert.strictEqual(JSON.stringify(actual), JSON.stringify(expected), msg);
 }
 
 (async () => {
@@ -186,6 +191,83 @@ async function delay(ms){
     assert.strictEqual(window.__T.RECOVERY, false, "throwing localStorage disables recovery without blocking startup");
     window.__T.setDocDirty(true);
     assert.strictEqual(window.__T.doc.dirty, true, "app still tracks dirty without localStorage");
+  }
+
+  /* SCH-017 — persistent custom color palette */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    sameList(T.pushRecentColor([], "AB12CD"), ["#ab12cd"], "pushRecentColor normalizes and prepends");
+    sameList(T.pushRecentColor(["#ab12cd"], "#abc"), ["#aabbcc", "#ab12cd"], "3-digit shorthand expands");
+    sameList(T.pushRecentColor(["#aabbcc", "#ab12cd"], "ab12cd"), ["#ab12cd", "#aabbcc"], "re-entering a color moves it to the front without duplicating");
+    const full = ["#000001","#000002","#000003","#000004","#000005","#000006","#000007","#000008"];
+    const capped = T.pushRecentColor(full, "#000009");
+    assert.strictEqual(capped.length, 8, "palette is capped at 8 entries");
+    assert.strictEqual(capped[0], "#000009", "newest color is first");
+    assert(!capped.includes("#000008"), "oldest color drops off when capped");
+    const list = ["#ab12cd"];
+    assert.strictEqual(T.pushRecentColor(list, "#FFE9A8"), list, "preset colors are never recorded");
+    assert.strictEqual(T.pushRecentColor(list, "not-a-color"), list, "invalid hex is ignored");
+    sameList(T.mergeRecentColors(["#111111"], ["#222222", "#111111"]),
+      ["#111111", "#222222"], "merge dedupes with document colors winning on order");
+  }
+
+  {
+    const { window, storage } = makeDom();
+    const T = window.__T;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    const hex = window.document.querySelector("#inspector .hexinput");
+    hex.value = "ab12cd";
+    hex.dispatchEvent(new window.Event("input"));
+    hex.dispatchEvent(new window.Event("blur"));
+    sameList(T.recentColors, ["#ab12cd"], "committed custom hex joins the palette");
+    assert.strictEqual(concept.color, "#ab12cd", "committed custom hex is applied to the node");
+    const recentSwatches = [...window.document.querySelectorAll("#inspector .swatches.recent .swatch")]
+      .map(b => b.title);
+    assert(recentSwatches.includes("#ab12cd"), "recent swatch row shows the committed color");
+    sameList(JSON.parse(storage.getItem("schematic.recentColors")), ["#ab12cd"],
+      "palette is mirrored to localStorage");
+    const parsed = JSON.parse(T.serializeDocument());
+    sameList(parsed.meta.recentColors, ["#ab12cd"], "palette serializes into meta.recentColors");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version: 1, nextId: 2, nodes: [], edges: [],
+      meta: { recentColors: ["#123456"] } }));
+    sameList(T.recentColors, ["#123456"], "import adopts the document palette");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({ version: 1, nextId: 2, nodes: [], edges: [] }));
+    const parsed = JSON.parse(T.serializeDocument());
+    assert(!("meta" in parsed), "documents without custom colors round-trip without a meta key");
+  }
+
+  {
+    const { window } = makeDom({ storageSeed: { "schematic.recentColors": JSON.stringify(["#123456"]) } });
+    sameList(window.__T.recentColors, ["#123456"], "stored palette loads at startup");
+  }
+
+  {
+    const { window } = makeDom({ storageThrows: true });
+    const T = window.__T;
+    T.recordRecentColor("#ab12cd");
+    sameList(T.recentColors, ["#ab12cd"], "palette works in memory when localStorage throws");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const depth = window.__T.state.nodes.length; // ensure history untouched by palette ops
+    const before = T.doc.dirty;
+    T.recordRecentColor("#ab12cd");
+    assert.strictEqual(T.doc.dirty, before, "recording a palette color alone does not dirty the document");
+    assert.strictEqual(T.state.nodes.length, depth, "palette ops leave canvas state alone");
   }
 
   {

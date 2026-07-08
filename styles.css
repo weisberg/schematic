@@ -66,6 +66,7 @@
   textarea{resize:vertical;min-height:56px}
   input:focus,textarea:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
   .swatches{display:flex;gap:6px;flex-wrap:wrap}
+  .swatches.recent{padding-top:6px;border-top:1px dashed var(--line)}
   .swatchgroup{display:flex;flex-direction:column;gap:8px}
   .hexrow{display:flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:6px;
           background:#FBFCFD;overflow:hidden;width:max-content}
@@ -146,6 +147,7 @@
   #ctxMenu .ctxlabel{font-size:10px;letter-spacing:.08em;text-transform:uppercase;
     color:var(--muted);padding:6px 10px 2px}
   #ctxMenu .swrow{display:flex;gap:5px;padding:4px 10px 6px}
+  #ctxMenu .swrow.recent{border-top:1px dashed var(--line);margin:0 10px;padding:6px 0}
   #ctxMenu .swrow .swatch{width:20px;height:20px;border-radius:5px}
   #ctxMenu .kindrow{display:flex;gap:4px;padding:4px 8px 6px}
   #ctxMenu .kindrow button{flex:1;font-family:var(--mono);font-size:10.5px;padding:4px 2px;border-radius:5px}

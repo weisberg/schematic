@@ -39,6 +39,48 @@ const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const SQL_TYPES = ["INT","BIGINT","SERIAL","VARCHAR(255)","TEXT","BOOLEAN","DATE",
                    "TIMESTAMP","DECIMAL(12,2)","NUMERIC","FLOAT","UUID","JSONB"];
 
+/* recent custom colors (SCH-017): live in the document (meta.recentColors) and are
+   mirrored to localStorage when available (RECOVERY doubles as the feature detect) */
+const RECENT_COLORS_KEY = "schematic.recentColors";
+const RECENT_COLORS_MAX = 8;
+const PRESET_COLOR_SET = new Set(
+  [...CONCEPT_COLORS, ...TABLE_COLORS, ...FONT_COLORS].map(c => c.toLowerCase()));
+function pushRecentColor(list, hex){
+  const n = normalizeHex(hex);
+  if (!n || PRESET_COLOR_SET.has(n)) return list;
+  return [n, ...list.filter(c => c !== n)].slice(0, RECENT_COLORS_MAX);
+}
+/* dedupe + normalize both lists into one; docList wins on order */
+function mergeRecentColors(docList, storedList){
+  const merged = [];
+  for (const c of [...(docList || []), ...(storedList || [])]){
+    const n = normalizeHex(c);
+    if (!n || PRESET_COLOR_SET.has(n) || merged.includes(n)) continue;
+    merged.push(n);
+    if (merged.length >= RECENT_COLORS_MAX) break;
+  }
+  return merged;
+}
+function loadStoredRecentColors(){
+  if (!RECOVERY) return [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_COLORS_KEY) || "[]");
+    return Array.isArray(raw) ? mergeRecentColors(raw, []) : [];
+  } catch { return []; }
+}
+function persistRecentColors(){
+  if (!RECOVERY) return;
+  try { localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(recentColors)); } catch {}
+}
+/* palette membership is UI state, not a canvas mutation — no pushHistory here */
+function recordRecentColor(hex){
+  const next = pushRecentColor(recentColors, hex);
+  if (next === recentColors) return;
+  recentColors = next;
+  persistRecentColors();
+}
+let recentColors = loadStoredRecentColors();
+
 const uid = () => "n" + (state.nextId++);
 const nodeById = id => state.nodes.find(n => n.id === id);
 const edgeById = id => state.edges.find(e => e.id === id);
@@ -108,7 +150,9 @@ function syncHistoryButtons(){
 }
 
 function documentObject(){
-  return { version:DOC_VERSION, nodes:state.nodes, edges:state.edges, nextId:state.nextId };
+  const d = { version:DOC_VERSION, nodes:state.nodes, edges:state.edges, nextId:state.nextId };
+  if (recentColors.length) d.meta = { recentColors: recentColors.slice() };
+  return d;
 }
 function serializeDocument(){
   return JSON.stringify(documentObject(), null, 2);
@@ -129,7 +173,9 @@ function migrateDocument(d){
     out = migrate(out);
   }
   if (!Array.isArray(out.nodes) || !Array.isArray(out.edges)) throw new Error("bad shape");
-  return { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
+  const result = { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
+  if (out.meta && typeof out.meta === "object") result.meta = out.meta;
+  return result;
 }
 function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
@@ -137,6 +183,10 @@ function applyDocument(d, opts = {}){
   state.edges = migrated.edges;
   state.nextId = migrated.nextId;
   ensureFieldIds();
+  if (migrated.meta && Array.isArray(migrated.meta.recentColors)){
+    recentColors = mergeRecentColors(migrated.meta.recentColors, recentColors);
+    persistRecentColors();
+  }
   sel = null;
   if (opts.resetHistory !== false){
     undoStack.length = 0;
@@ -1033,7 +1083,7 @@ function customColorRow(current, apply, opts = {}){
   well.value = normalizeHex(current) || "#000000";
   well.title = "Pick a color";
   well.addEventListener("input",  () => { syncText(well.value); apply(well.value, false); });
-  well.addEventListener("change", () => { syncText(well.value); apply(well.value, true); if (opts.onCommit) opts.onCommit(); });
+  well.addEventListener("change", () => { syncText(well.value); recordRecentColor(well.value); apply(well.value, true); if (opts.onCommit) opts.onCommit(); });
 
   const hash = document.createElement("span");
   hash.className = "hexhash";
@@ -1056,7 +1106,7 @@ function customColorRow(current, apply, opts = {}){
   });
   const commit = () => {
     const n = normalizeHex(txt.value);
-    if (n){ txt.classList.remove("bad"); well.value = n; syncText(n); apply(n, true); return true; }
+    if (n){ txt.classList.remove("bad"); well.value = n; syncText(n); recordRecentColor(n); apply(n, true); return true; }
     if (txt.value.trim() !== ""){ txt.classList.add("bad"); return false; }
     return true;
   };
@@ -1102,20 +1152,25 @@ function sizeStepper(current, lo, hi, step, apply){
   return row;
 }
 
-function swatches(colors, current, apply){
+function swatchRow(colors, current, apply, className, onPick){
   const d = document.createElement("div");
-  d.className = "swatches";
+  d.className = className;
   for (const c of colors){
     const b = document.createElement("button");
     b.className = "swatch" + (c.toLowerCase() === (current||"").toLowerCase() ? " on" : "");
     b.style.background = c;
     b.title = c;
-    b.addEventListener("click", () => apply(c, true));
+    b.addEventListener("click", () => { apply(c, true); if (onPick) onPick(); });
     d.appendChild(b);
   }
+  return d;
+}
+function swatches(colors, current, apply){
   const wrap = document.createElement("div");
   wrap.className = "swatchgroup";
-  wrap.appendChild(d);
+  wrap.appendChild(swatchRow(colors, current, apply, "swatches"));
+  if (recentColors.length)
+    wrap.appendChild(swatchRow(recentColors, current, apply, "swatches recent"));
   wrap.appendChild(customColorRow(current, apply));
   return wrap;
 }
@@ -1408,17 +1463,9 @@ function ctxLabel(parent, txt){
   parent.appendChild(d);
 }
 function ctxSwatches(parent, colors, current, apply){
-  const row = document.createElement("div");
-  row.className = "swrow";
-  for (const c of colors){
-    const b = document.createElement("button");
-    b.className = "swatch" + (c.toLowerCase() === (current||"").toLowerCase() ? " on" : "");
-    b.style.background = c;
-    b.title = c;
-    b.addEventListener("click", () => { apply(c, true); hideCtx(); });
-    row.appendChild(b);
-  }
-  parent.appendChild(row);
+  parent.appendChild(swatchRow(colors, current, apply, "swrow", hideCtx));
+  if (recentColors.length)
+    parent.appendChild(swatchRow(recentColors, current, apply, "swrow recent", hideCtx));
   const hexWrap = document.createElement("div");
   hexWrap.className = "swrow";
   hexWrap.appendChild(customColorRow(current, apply, { onCommit: hideCtx }));
@@ -1592,5 +1639,10 @@ window.__T = {
   newDoc,
   pushHistory,
   setDocDirty,
-  generateSQL
+  generateSQL,
+  pushRecentColor,
+  mergeRecentColors,
+  recordRecentColor,
+  get recentColors(){ return recentColors; },
+  selectNode(id){ sel = { kind: "node", id }; render(); }
 };
