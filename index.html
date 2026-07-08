@@ -1,4 +1,11 @@
 <!DOCTYPE html>
+<!-- deployment
+  Schematic is a static browser app. Serve these files from any static host
+  or open index.html directly from disk. The File System Access API enables
+  true Open/Save/Save As only in Chromium secure contexts such as HTTPS or
+  http://localhost; over file:// and in unsupported browsers the app falls
+  back to upload and download. Diagram data never leaves the browser.
+-->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -9,9 +16,12 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<noscript>
+  <div class="banner danger">Schematic needs JavaScript enabled to run.</div>
+</noscript>
 
 <header>
-  <div class="brand"><b>SCHEMATIC</b><span>mind map · data model</span></div>
+  <div class="brand"><b>SCHEMATIC</b><span id="docLabel">untitled.schematic.json</span></div>
 
   <div class="tgroup">
     <span class="tlabel">Add</span>
@@ -30,14 +40,21 @@
 
   <div class="tgroup">
     <span class="tlabel">File</span>
+    <button id="btnNew" title="Start a new diagram">New</button>
+    <button id="btnOpen" title="Open a diagram from disk">Open</button>
+    <button id="btnSave" class="primary" title="Save the current diagram">Save</button>
+    <button id="btnSaveAs" title="Save this diagram as a new file">Save As</button>
     <button id="btnExportJSON" title="Download diagram as JSON">JSON ↓</button>
     <button id="btnImportJSON" title="Load a diagram from JSON">Import</button>
     <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL</button>
     <button id="btnExportPNG" title="Download diagram as PNG">PNG ↓</button>
     <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear</button>
   </div>
-  <input type="file" id="fileInput" accept="application/json,.json" hidden>
+  <input type="file" id="fileInput" accept="application/json,.json,.schematic" hidden>
 </header>
+
+<div class="banner" id="capabilityBanner" hidden></div>
+<div class="banner recovery" id="recoveryBanner" hidden></div>
 
 <main>
   <div id="canvasWrap">

@@ -8,13 +8,29 @@
 const SVGNS = "http://www.w3.org/2000/svg";
 const board = document.getElementById("board");
 const wrap  = document.getElementById("canvasWrap");
+const DOC_VERSION = 1;
+const MIGRATIONS = {};
+const FSA = "showOpenFilePicker" in window && "showSaveFilePicker" in window;
+const RECOVERY_KEY = "schematic.recovery";
+const RECOVERY_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const RECOVERY = (() => {
+  try {
+    localStorage.setItem("__schematic_test", "1");
+    localStorage.removeItem("__schematic_test");
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 /* ----------------------------- State ------------------------------ */
 let state = { nodes: [], edges: [], nextId: 1 };
 let view  = { x: 0, y: 0, k: 1 };            // pan / zoom
 let sel   = null;                             // {kind:'node'|'edge', id}
+let doc   = { handle: null, name: "untitled.schematic.json", dirty: false };
 let undoStack = [], redoStack = [];
 const MAX_HISTORY = 100;
+let recoveryTimer = null;
 
 const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"];
 const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B7683"];
@@ -74,6 +90,7 @@ function pushHistory(coalesceKey){
   undoStack.push(snapshot());
   if (undoStack.length > MAX_HISTORY) undoStack.shift();
   redoStack.length = 0;
+  setDocDirty(true);
   syncHistoryButtons();
 }
 function restore(json){
@@ -83,12 +100,143 @@ function restore(json){
   if (sel && sel.kind === "edge" && !edgeById(sel.id)) sel = null;
   render();
 }
-function undo(){ if(!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); syncHistoryButtons(); }
-function redo(){ if(!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); syncHistoryButtons(); }
+function undo(){ if(!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
+function redo(){ if(!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
 function syncHistoryButtons(){
   document.getElementById("btnUndo").disabled = !undoStack.length;
   document.getElementById("btnRedo").disabled = !redoStack.length;
 }
+
+function documentObject(){
+  return { version:DOC_VERSION, nodes:state.nodes, edges:state.edges, nextId:state.nextId };
+}
+function serializeDocument(){
+  return JSON.stringify(documentObject(), null, 2);
+}
+function nextIdFromDocument(d){
+  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges)
+    .map(x => parseInt(String(x.id).replace(/\D/g,"")) || 0)) + 1);
+}
+function migrateDocument(d){
+  if (!d || typeof d !== "object") throw new Error("bad shape");
+  const version = d.version == null ? 1 : Number(d.version);
+  if (!Number.isInteger(version) || version < 1) throw new Error("bad version");
+  if (version > DOC_VERSION) throw new Error("newer version");
+  let out = d;
+  for (let v = version; v < DOC_VERSION; v++){
+    const migrate = MIGRATIONS[v];
+    if (typeof migrate !== "function") throw new Error("missing migration");
+    out = migrate(out);
+  }
+  if (!Array.isArray(out.nodes) || !Array.isArray(out.edges)) throw new Error("bad shape");
+  return { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
+}
+function applyDocument(d, opts = {}){
+  const migrated = migrateDocument(d);
+  state.nodes = migrated.nodes;
+  state.edges = migrated.edges;
+  state.nextId = migrated.nextId;
+  ensureFieldIds();
+  sel = null;
+  if (opts.resetHistory !== false){
+    undoStack.length = 0;
+    redoStack.length = 0;
+    syncHistoryButtons();
+  }
+  render();
+  fitView();
+}
+function importDocText(text, opts = {}){
+  const parsed = JSON.parse(text);
+  applyDocument(parsed, { resetHistory: opts.resetHistory !== false });
+  if (opts.name) doc.name = opts.name;
+  doc.handle = opts.handle || null;
+  setDocDirty(Boolean(opts.dirty));
+  return true;
+}
+function updateDocLabel(){
+  const label = document.getElementById("docLabel");
+  const name = doc.name || "untitled.schematic.json";
+  const shown = (doc.dirty ? "● " : "") + name;
+  if (label){
+    label.textContent = shown;
+    label.title = name;
+  }
+  document.title = shown + " — Schematic";
+}
+function setDocDirty(dirty){
+  doc.dirty = dirty;
+  updateDocLabel();
+  if (dirty) scheduleRecoverySave();
+  else clearRecoverySave();
+}
+function clearRecoverySave(){
+  if (recoveryTimer){
+    clearTimeout(recoveryTimer);
+    recoveryTimer = null;
+  }
+  if (RECOVERY){
+    try { localStorage.removeItem(RECOVERY_KEY); } catch {}
+  }
+}
+function scheduleRecoverySave(){
+  if (!RECOVERY) return;
+  if (recoveryTimer) clearTimeout(recoveryTimer);
+  recoveryTimer = setTimeout(() => {
+    recoveryTimer = null;
+    try {
+      localStorage.setItem(RECOVERY_KEY, JSON.stringify({
+        savedAt: Date.now(),
+        name: doc.name,
+        json: serializeDocument()
+      }));
+    } catch {}
+  }, 2000);
+}
+function showCapabilityBanner(){
+  const banner = document.getElementById("capabilityBanner");
+  if (!banner) return;
+  const unsupported = !("onpointerdown" in window) || !window.SVGElement;
+  if (!unsupported) return;
+  banner.textContent = "This browser is missing required canvas capabilities. Use a current browser with SVG and Pointer Events support.";
+  banner.hidden = false;
+}
+function maybeShowRecovery(){
+  if (!RECOVERY) return;
+  let record;
+  try { record = JSON.parse(localStorage.getItem(RECOVERY_KEY) || "null"); } catch { return; }
+  if (!record || !record.json || !record.savedAt || Date.now() - record.savedAt > RECOVERY_MAX_AGE) return;
+  const banner = document.getElementById("recoveryBanner");
+  if (!banner) return;
+  const date = new Date(record.savedAt).toLocaleString();
+  banner.innerHTML = "";
+  const msg = document.createElement("span");
+  msg.textContent = `Recover unsaved diagram "${record.name || "untitled.schematic.json"}" from ${date}?`;
+  const restoreBtn = document.createElement("button");
+  restoreBtn.textContent = "Restore";
+  restoreBtn.addEventListener("click", () => {
+    try {
+      importDocText(record.json, { name: record.name || "untitled.schematic.json", dirty: true });
+      banner.hidden = true;
+    } catch {
+      banner.hidden = true;
+      try { localStorage.removeItem(RECOVERY_KEY); } catch {}
+    }
+  });
+  const discardBtn = document.createElement("button");
+  discardBtn.textContent = "Discard";
+  discardBtn.addEventListener("click", () => {
+    try { localStorage.removeItem(RECOVERY_KEY); } catch {}
+    banner.hidden = true;
+  });
+  banner.append(msg, restoreBtn, discardBtn);
+  banner.hidden = false;
+}
+window.addEventListener("beforeunload", ev => {
+  if (!doc.dirty) return;
+  ev.preventDefault();
+  ev.returnValue = "";
+});
 
 /* --------------------------- Geometry ----------------------------- */
 function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; return Math.min(hi, Math.max(lo, v)); }
@@ -586,6 +734,12 @@ window.addEventListener("keydown", ev => {
   if (mod && ev.key.toLowerCase() === "z"){ ev.preventDefault(); ev.shiftKey ? redo() : undo(); return; }
   if (mod && ev.key.toLowerCase() === "y"){ ev.preventDefault(); redo(); return; }
   if (typing) return;
+  if (mod && ev.key.toLowerCase() === "o"){ ev.preventDefault(); openDoc(); return; }
+  if (mod && ev.key.toLowerCase() === "s"){
+    ev.preventDefault();
+    ev.shiftKey ? saveAsDoc() : saveDoc();
+    return;
+  }
   if (ev.key === "Delete" || ev.key === "Backspace"){ ev.preventDefault(); deleteSelection(); }
   else if (ev.key === "Tab"){ ev.preventDefault(); addChildConcept(); }
   else if (mod && ev.key.toLowerCase() === "d"){ ev.preventDefault(); duplicateSelection(); }
@@ -596,6 +750,7 @@ window.addEventListener("keydown", ev => {
   else if (sel && sel.kind === "node" && ev.key.startsWith("Arrow")){
     ev.preventDefault();
     const n = nodeById(sel.id), step = ev.shiftKey ? 24 : 4;
+    pushHistory();
     if (ev.key === "ArrowLeft") n.x -= step;
     if (ev.key === "ArrowRight") n.x += step;
     if (ev.key === "ArrowUp") n.y -= step;
@@ -825,7 +980,7 @@ function renderHelp(){
     <p style="margin-top:12px"><b>Type &amp; color</b><br>
     Select a node to set fill, <b>text size</b>, and <b>text color</b> in this panel — or right-click for the same. Nodes grow to fit larger text.</p>
     <p style="margin-top:12px"><b>Persistence</b><br>
-    Nothing is saved automatically — use <b>JSON ↓</b> to save and <b>Import</b> to reload.
+    Use <b>Open</b>, <b>Save</b>, and <b>Save As</b> for local document workflow. Unsupported browsers fall back to <b>JSON ↓</b> downloads and <b>Import</b> uploads.
     <b>SQL</b> drafts CREATE TABLE statements from table nodes and 1:N edges.</p>`;
   inspBody.appendChild(h);
 }
@@ -987,25 +1142,105 @@ function download(name, text, mime){
   a.click();
   URL.revokeObjectURL(a.href);
 }
+function savePickerOptions(){
+  return {
+    suggestedName: doc.name || "untitled.schematic.json",
+    types: [{ description:"Schematic diagram", accept:{ "application/json":[".json",".schematic"] } }]
+  };
+}
+function openPickerOptions(){
+  return {
+    types: [{ description:"Schematic diagram", accept:{ "application/json":[".json",".schematic"] } }],
+    multiple: false
+  };
+}
+function fallbackOpen(){
+  document.getElementById("fileInput").click();
+}
+function fallbackSave(){
+  const name = doc.name || "untitled.schematic.json";
+  download(name, serializeDocument(), "application/json");
+  setDocDirty(false);
+}
+async function openDoc(){
+  if (!FSA){ fallbackOpen(); return; }
+  try {
+    const [handle] = await window.showOpenFilePicker(openPickerOptions());
+    if (!handle) return;
+    const file = await handle.getFile();
+    const text = await file.text();
+    importDocText(text, { name: file.name || handle.name || doc.name, handle, dirty: false });
+  } catch(err){
+    if (err && err.name === "AbortError") return;
+    if (err && err.message === "newer version") alert("Could not read that file — it was made with a newer Schematic.");
+    else alert("Could not open that file — expected JSON exported by this app.");
+  }
+}
+async function writeHandle(handle, text){
+  const writable = await handle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+async function saveAsDoc(){
+  if (!FSA){ fallbackSave(); return; }
+  try {
+    const handle = await window.showSaveFilePicker(savePickerOptions());
+    if (!handle) return;
+    await writeHandle(handle, serializeDocument());
+    doc.handle = handle;
+    doc.name = handle.name || doc.name;
+    setDocDirty(false);
+  } catch(err){
+    if (err && err.name === "AbortError") return;
+    alert("Could not save that file.");
+  }
+}
+async function saveDoc(){
+  if (!FSA){ fallbackSave(); return; }
+  if (!doc.handle){ await saveAsDoc(); return; }
+  try {
+    await writeHandle(doc.handle, serializeDocument());
+    setDocDirty(false);
+  } catch(err){
+    if (err && err.name === "AbortError") return;
+    if (err && err.name === "NotAllowedError"){ await saveAsDoc(); return; }
+    alert("Could not save that file.");
+  }
+}
+function newDoc(){
+  if (doc.dirty && !confirm("Discard unsaved changes and start a new diagram?")) return;
+  state.nodes = [];
+  state.edges = [];
+  state.nextId = 1;
+  sel = null;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  doc = { handle: null, name: "untitled.schematic.json", dirty: false };
+  render();
+  syncHistoryButtons();
+  updateDocLabel();
+  clearRecoverySave();
+}
 document.getElementById("btnExportJSON").addEventListener("click", () =>
-  download("schematic-diagram.json", JSON.stringify({version:1, ...JSON.parse(snapshot())}, null, 2), "application/json"));
+  download(doc.name || "schematic-diagram.json", serializeDocument(), "application/json"));
 
 document.getElementById("btnImportJSON").addEventListener("click", () =>
-  document.getElementById("fileInput").click());
+  fallbackOpen());
+document.getElementById("btnOpen").addEventListener("click", openDoc);
+document.getElementById("btnSave").addEventListener("click", saveDoc);
+document.getElementById("btnSaveAs").addEventListener("click", saveAsDoc);
+document.getElementById("btnNew").addEventListener("click", newDoc);
 document.getElementById("fileInput").addEventListener("change", ev => {
   const f = ev.target.files[0];
   if (!f) return;
   f.text().then(txt => {
     try {
-      const d = JSON.parse(txt);
-      if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) throw new Error("bad shape");
       pushHistory();
-      state.nodes = d.nodes; state.edges = d.edges;
-      state.nextId = d.nextId || (Math.max(0, ...d.nodes.concat(d.edges)
-        .map(x => parseInt(String(x.id).replace(/\D/g,"")) || 0)) + 1);
-      ensureFieldIds();
-      sel = null; render(); fitView();
-    } catch(err){ alert("Could not read that file — expected JSON exported by this app."); }
+      importDocText(txt, { name: f.name, dirty: false });
+    } catch(err){
+      if (err && err.message === "newer version") alert("Could not read that file — it was made with a newer Schematic.");
+      else alert("Could not read that file — expected JSON exported by this app.");
+    }
   });
   ev.target.value = "";
 });
@@ -1336,5 +1571,26 @@ seed();
 ensureFieldIds();
 render();
 syncHistoryButtons();
+updateDocLabel();
+showCapabilityBanner();
+maybeShowRecovery();
 requestAnimationFrame(fitView);
 window.addEventListener("resize", () => {/* view persists; nothing needed */});
+
+window.__T = {
+  DOC_VERSION,
+  FSA,
+  RECOVERY,
+  get state(){ return state; },
+  get doc(){ return doc; },
+  serializeDocument,
+  migrateDocument,
+  importDocText,
+  openDoc,
+  saveDoc,
+  saveAsDoc,
+  newDoc,
+  pushHistory,
+  setDocDirty,
+  generateSQL
+};
