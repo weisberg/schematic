@@ -993,6 +993,219 @@ function closeEnough(a, b, msg){
     assert(styles.includes("header,aside,footer") && styles.includes("display:none"), "print stylesheet hides chrome");
   }
 
+  /* SCH-060 — to-do node type: model, rendering, item editing */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    assert(T.SHORTCUTS.some(s => s.keys === "D" && /to-do/i.test(s.title)), "D shortcut is registered for to-do lists");
+
+    const todo = T.addNode("todo", 1300, 60);
+    assert.strictEqual(todo.type, "todo", "addNode creates a todo node");
+    assert.strictEqual(todo.items.length, 1, "new to-do list seeds one item");
+    assert(todo.items[0].id, "seed item has an id");
+    assert(!("done" in todo.items[0]), "new items do not write done:false");
+
+    T.pushHistory();
+    todo.title = "My list";
+    todo.items.push({ id:"it_ship", text:"Ship the feature" }, { id:"it_test", text:"Write tests" });
+    T.render();
+    let checkboxes = window.document.querySelectorAll(`[data-todonode="${todo.id}"]`);
+    assert.strictEqual(checkboxes.length, 3, "each item renders a checkbox group");
+    assert.strictEqual(checkboxes[1].getAttribute("role"), "checkbox", "checkbox groups carry a checkbox role");
+    assert(checkboxes[1].getAttribute("aria-label").includes("Ship the feature"), "checkbox aria-label names the item");
+
+    const undoBefore = T.undoDepth;
+    firePointer(window, checkboxes[1], "pointerdown");
+    assert.strictEqual(todo.items[1].done, true, "checkbox pointerdown toggles the item done");
+    assert.strictEqual(T.undoDepth, undoBefore + 1, "a toggle is exactly one undo step");
+    const texts = [...window.document.querySelectorAll(`[data-node="${todo.id}"] text`)];
+    assert(texts.some(t => t.textContent === "1/3"), "header shows done/total progress");
+    assert.strictEqual(texts.filter(t => t.getAttribute("text-decoration") === "line-through").length, 1,
+      "done items render struck through");
+
+    checkboxes = window.document.querySelectorAll(`[data-todonode="${todo.id}"]`);
+    firePointer(window, checkboxes[1], "pointerdown");
+    assert(!("done" in todo.items[1]), "untoggling removes the done key entirely");
+
+    T.undo();
+    let live = T.state.nodes.find(n => n.title === "My list");
+    assert.strictEqual(live.items[1].done, true, "undo restores the previous checked state");
+    T.redo();
+    live = T.state.nodes.find(n => n.title === "My list");
+    assert(!live.items[1].done, "redo re-applies the toggle");
+
+    const json = JSON.parse(T.serializeDocument());
+    const serialized = json.nodes.find(n => n.title === "My list");
+    assert.strictEqual(serialized.items.length, 3, "items serialize into the document");
+    assert(!("done" in serialized.items[1]), "absent done keys stay absent in the document");
+    T.importDocText(JSON.stringify(json));
+    live = T.state.nodes.find(n => n.title === "My list");
+    assert(live && live.items.length === 3 && live.items[2].id === "it_test", "items round-trip through import");
+
+    const m = T.tableMetrics(live);
+    const r = T.nodeRect(live);
+    const hitRow = T.hitTest({ x: r.x + 20, y: r.y + m.headerH + m.rowH * 1.5 });
+    assert(hitRow && hitRow.field && hitRow.field.id === live.items[1].id, "hitTest resolves the item row");
+
+    T.pushHistory();
+    live.collapsed = true;
+    T.render();
+    assert(!window.document.querySelector(`[data-todonode="${live.id}"]`), "collapsed list hides item rows");
+    const rc = T.nodeRect(live);
+    const hitCollapsed = T.hitTest({ x: rc.x + 10, y: rc.y + rc.h - 2 });
+    assert(hitCollapsed && hitCollapsed.node.id === live.id && !hitCollapsed.field, "hitTest returns no item when collapsed");
+    const collapsedTexts = [...window.document.querySelectorAll(`[data-node="${live.id}"] text`)].map(t => t.textContent);
+    assert(collapsedTexts.includes("3 items"), "collapsed list shows the item count");
+    live.collapsed = false;
+    T.render();
+
+    T.setSelection("node", live.id);
+    T.duplicateSelection();
+    const copy = T.state.nodes[T.state.nodes.length - 1];
+    assert.strictEqual(copy.type, "todo", "duplicate creates a todo copy");
+    assert.strictEqual(copy.items.length, 3, "duplicate copies all items");
+    assert(copy.items.every(it => !live.items.some(orig => orig.id === it.id)), "duplicate remaps item ids");
+  }
+
+  /* SCH-061 — edges to to-do lists and items */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const todo = T.addNode("todo", 1300, 400);
+    T.pushHistory();
+    todo.items.push({ id:"it_a", text:"Design" }, { id:"it_b", text:"Build" });
+    T.render();
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    const customers = T.state.nodes.find(n => n.title === "customers");
+
+    const edgesBefore = T.state.edges.length;
+    T.addEdge({ id: concept.id }, { id: todo.id, fieldId:"it_a" });
+    assert.strictEqual(T.state.edges.length, edgesBefore + 1, "concept→item edge is created");
+    const e1 = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(e1.kind, "link", "edges touching a todo default to the link kind");
+    assert.strictEqual(e1.toField, "it_a", "the item binding is stored in the existing toField key");
+
+    let ep = T.edgeEndpoints(e1);
+    assert(ep.boundB, "item-bound end reports bound");
+    assert.strictEqual(ep.pb.y, T.fieldRowCenterY(todo, 1), "edge anchors at the item row center");
+
+    [todo.items[1], todo.items[2]] = [todo.items[2], todo.items[1]];
+    T.render();
+    ep = T.edgeEndpoints(e1);
+    assert.strictEqual(ep.pb.y, T.fieldRowCenterY(todo, 2), "binding follows the item id after reorder");
+
+    todo.collapsed = true;
+    T.render();
+    ep = T.edgeEndpoints(e1);
+    assert(!ep.boundB, "collapsed list re-anchors bound edges to the node boundary");
+    todo.collapsed = false;
+    T.render();
+
+    T.addEdge({ id: todo.id, fieldId:"it_b" }, { id: customers.id, fieldId: customers.fields[0].id });
+    const e2 = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(e2.kind, "link", "item→table-field edges stay links");
+    assert.strictEqual(e2.fromField, "it_b", "item side binds through fromField");
+    assert.strictEqual(e2.toField, customers.fields[0].id, "field side binds through toField");
+
+    const count = T.state.edges.length;
+    T.addEdge({ id: todo.id, fieldId:"it_b" }, { id: customers.id, fieldId: customers.fields[0].id });
+    assert.strictEqual(T.state.edges.length, count, "duplicate item edges are rejected");
+    T.addEdge({ id: todo.id, fieldId:"it_a" }, { id: customers.id, fieldId: customers.fields[0].id });
+    assert.strictEqual(T.state.edges.length, count + 1, "a different item to the same field is allowed");
+
+    T.cleanFieldRefs("it_b");
+    assert(!("fromField" in e2), "deleting an item cleans its edge bindings");
+  }
+
+  /* SCH-062 — interop: exports, lint, palette */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const sqlBefore = T.generateSQL();
+    const mmdBefore = T.generateMermaid();
+    const todo = T.addNode("todo", 1400, 500);
+    T.pushHistory();
+    todo.title = "Launch checklist";
+    todo.items = [{ id:"li_1", text:"Approve copy", done:true }, { id:"li_2", text:"Load test" }];
+    T.render();
+    assert.strictEqual(T.generateSQL(), sqlBefore, "SQL output is byte-identical after adding an unconnected to-do list");
+    assert.strictEqual(T.generateMermaid(), mmdBefore, "Mermaid output is byte-identical after adding an unconnected to-do list");
+    assert(mmdBefore.includes("to-do lists are omitted"), "Mermaid header notes the omission");
+    assert(sqlBefore.includes("to-do lists are not exported"), "SQL header notes the omission");
+
+    let outline = T.generateMarkdownOutline();
+    assert(outline.split("\n").includes("- Launch checklist"), "standalone to-do list is an outline root");
+    assert(outline.includes("  - [x] Approve copy"), "outline marks done items checked");
+    assert(outline.includes("  - [ ] Load test"), "outline marks open items unchecked");
+
+    const strategy = T.state.nodes.find(n => n.title === "Loyalty program launch");
+    T.addEdge({ id: strategy.id }, { id: todo.id });
+    outline = T.generateMarkdownOutline();
+    assert(!outline.split("\n").includes("- Launch checklist"), "linked to-do list is no longer a root");
+    assert(outline.includes("  - Launch checklist"), "linked to-do list nests under its concept");
+
+    const lint = T.lintDocument({
+      nodes: [
+        { id:"td_e", type:"todo", x:0, y:0, title:"Empty", items:[] },
+        { id:"td_f", type:"todo", x:0, y:0, title:"Full", items:[{ id:"i1", text:"x" }] },
+        { id:"t1", type:"table", x:0, y:0, title:"t1", fields:[{ id:"f1", name:"id", type:"INT", pk:true, fk:false, nullable:false }] }
+      ],
+      edges: [
+        { id:"e1", from:"t1", to:"td_f", kind:"1:N", label:"" },
+        { id:"e2", from:"t1", to:"td_f", kind:"link", label:"" }
+      ]
+    });
+    assert(lint.some(i => i.level === "warning" && i.nodeId === "td_e"), "lint warns on an empty to-do list");
+    assert(lint.some(i => i.level === "error" && i.edgeId === "e1"), "lint errors on a relation kind touching a to-do list");
+    assert(!lint.some(i => i.edgeId === "e2"), "link edges to to-do lists pass lint");
+
+    const items = T.paletteItems();
+    assert(items.some(i => i.type === "item" && i.label === "Launch checklist.Load test"), "palette indexes list items");
+    assert(items.some(i => i.type === "command" && i.label === "Add to-do list"), "palette offers the add-to-do command");
+  }
+
+  /* SCH-063 — platform parity */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const drawStart = script.indexOf("function drawEdge");
+    const drawEnd = script.indexOf("/* ------------------------- Mutations");
+    assert(script.slice(drawStart, drawEnd).includes("data-todocheck"),
+      "todo drawing lives inside the THEME-checked draw section");
+
+    const todo = T.addNode("todo", 1500, 600);
+    T.pushHistory();
+    todo.items.push({ id:"cp_a", text:"Wire copy" });
+    T.render();
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.addEdge({ id: concept.id }, { id: todo.id, fieldId:"cp_a" });
+    T.setSelection("node", [concept.id, todo.id]);
+    T.copySelection(false);
+    const nodesBefore = T.state.nodes.length, edgesBefore = T.state.edges.length;
+    T.pasteSelection();
+    assert.strictEqual(T.state.nodes.length, nodesBefore + 2, "paste adds both nodes");
+    assert.strictEqual(T.state.edges.length, edgesBefore + 1, "paste preserves the item-bound edge");
+    const pastedTodo = T.state.nodes[T.state.nodes.length - 1];
+    const pastedEdge = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(pastedTodo.type, "todo", "pasted list is a todo");
+    const newItem = pastedTodo.items.find(it => it.text === "Wire copy");
+    assert(newItem && newItem.id !== "cp_a", "pasted item ids are remapped");
+    assert.strictEqual(pastedEdge.to, pastedTodo.id, "pasted edge points at the pasted list");
+    assert.strictEqual(pastedEdge.toField, newItem.id, "pasted edge binding follows the remapped item id");
+
+    const strategy = T.state.nodes.find(n => n.title === "Loyalty program launch");
+    T.addEdge({ id: strategy.id }, { id: todo.id });
+    todo.x = strategy.x; todo.y = strategy.y;
+    T.setSelection("node", strategy.id);
+    T.layoutMindMapTree();
+    const laidOut = T.state.nodes.find(n => n.id === todo.id);
+    assert(laidOut.x > strategy.x, "tree layout places link-connected to-do lists in the tree");
+
+    const svg = T.serializedSvg(true);
+    assert(!svg.includes("data-fieldhandle"), "SVG export strips row handles");
+    assert(svg.includes("data-todocheck"), "SVG export keeps rendered checkboxes");
+  }
+
   {
     const { window } = makeDom();
     const fonts = [...window.document.querySelectorAll("svg text")]

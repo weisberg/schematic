@@ -39,6 +39,7 @@ const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B76
 const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A3A"];
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
+const TODO_COLOR_DEFAULT = "#E9E2F8";
 const THEME = {
   light: {
     paper:"#EEF1F4", panel:"#FFFFFF", control:"#FBFCFD", ink:"#16232F",
@@ -79,6 +80,7 @@ const SHORTCUTS = [
   { id:"help", keys:"?", title:"Shortcut cheat sheet" },
   { id:"concept", keys:"C", title:"Add concept" },
   { id:"table", keys:"T", title:"Add table" },
+  { id:"todo", keys:"D", title:"Add to-do list" },
   { id:"child", keys:"Tab", title:"Add linked child concept" },
   { id:"delete", keys:"Delete/Backspace", title:"Delete selection" },
   { id:"fit", keys:"F", title:"Fit diagram" },
@@ -201,7 +203,7 @@ function describeSelection(){
   const count = sel.ids.size;
   if (sel.kind === "node" && count === 1){
     const n = nodeById([...sel.ids][0]);
-    return n ? `Selected ${n.type} ${n.title || n.id}` : "Selected node";
+    return n ? `Selected ${n.type === "todo" ? "to-do list" : n.type} ${n.title || n.id}` : "Selected node";
   }
   if (sel.kind === "edge" && count === 1) return "Selected edge";
   return `Selected ${count} ${sel.kind}s`;
@@ -232,10 +234,20 @@ function pruneSelection(){
   sel = ids.length ? makeSelection(sel.kind, ids) : null;
 }
 
-/* field-level references: edges may carry fromField / toField (field ids) */
+/* shared row accessor: table fields and to-do items ride the same row
+   machinery (geometry, anchors, handles, id hygiene) */
+function nodeRows(n){
+  if (n.type === "table") return n.fields;
+  if (n.type === "todo") return n.items;
+  return null;
+}
+/* field-level references: edges may carry fromField / toField (row ids) */
 function ensureFieldIds(){
-  for (const n of state.nodes)
-    if (n.fields) for (const f of n.fields) if (!f.id) f.id = uid();
+  for (const n of state.nodes){
+    if (n.type === "todo" && !Array.isArray(n.items)) n.items = [];
+    const rows = nodeRows(n);
+    if (rows) for (const f of rows) if (!f.id) f.id = uid();
+  }
 }
 function cleanFieldRefs(fid){
   for (const e of state.edges){
@@ -247,18 +259,19 @@ function cleanFieldRefs(fid){
     }
   }
 }
-/* topmost node (and field row, for tables) under a world point */
+/* topmost node (and row, for tables/todos) under a world point */
 function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
     if (n.type === "frame") continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
     let field = null;
-    if (n.type === "table" && !n.collapsed && n.fields.length){
+    const rows = n.collapsed ? null : nodeRows(n);
+    if (rows && rows.length){
       const m = tableMetrics(n);
       if (w.y > r.y + m.headerH){
-        const idx = Math.min(n.fields.length - 1, Math.floor((w.y - r.y - m.headerH) / m.rowH));
-        if (idx >= 0) field = n.fields[idx];
+        const idx = Math.min(rows.length - 1, Math.floor((w.y - r.y - m.headerH) / m.rowH));
+        if (idx >= 0) field = rows[idx];
       }
     }
     return { node: n, field };
@@ -524,6 +537,19 @@ function nodeSize(n){
     const h = Math.max(40, Math.round(fs * 2.2 + 17.2));
     return { w: Math.min(w, 420), h };
   }
+  if (n.type === "todo"){
+    const m = tableMetrics(n);
+    const headW = textW(n.title || "To-do list", `700 ${m.headerSize}px Archivo, sans-serif`) + 96;
+    if (n.collapsed) return { w: Math.min(Math.max(190, headW), 460), h: m.headerH + 10 };
+    let maxRow = 150;
+    for (const it of n.items){
+      const rw = m.nameX + textW(it.text || "", `500 ${m.nameSize}px Archivo, sans-serif`) + 24;
+      if (rw > maxRow) maxRow = rw;
+    }
+    const w = Math.min(Math.max(190, headW, maxRow), 460);
+    const h = m.headerH + Math.max(1, n.items.length) * m.rowH + 8;
+    return { w, h };
+  }
   // table node
   const m = tableMetrics(n);
   const headW = textW(n.title || "table", `700 ${m.headerSize}px Archivo, sans-serif`) + 56;
@@ -761,8 +787,10 @@ function edgeEndpoints(e){
   const firstPair = edgeFieldPairs(e)[0] || {};
   const fromField = firstPair.fromField || e.fromField;
   const toField = firstPair.toField || e.toField;
-  const ia = (fromField && a.type === "table" && !a.collapsed) ? a.fields.findIndex(f => f.id === fromField) : -1;
-  const ib = (toField   && b.type === "table" && !b.collapsed) ? b.fields.findIndex(f => f.id === toField)   : -1;
+  const rowsA = a.collapsed ? null : nodeRows(a);
+  const rowsB = b.collapsed ? null : nodeRows(b);
+  const ia = (fromField && rowsA) ? rowsA.findIndex(f => f.id === fromField) : -1;
+  const ib = (toField   && rowsB) ? rowsB.findIndex(f => f.id === toField)   : -1;
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
@@ -884,6 +912,59 @@ function drawNode(n){
                 "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
     titleText.textContent = truncate(n.title || "Untitled", r.w - 34, `600 ${fs}px Archivo, sans-serif`);
     if (n.notes) el("circle", {cx:r.w - 12, cy:12, r:3.2, fill:t.ink, opacity:.55}, g);
+  } else if (n.type === "todo"){
+    const m = tableMetrics(n);
+    const fc = n.fontColor || t.ink;
+    const total = n.items.length;
+    const doneCount = n.items.filter(it => it.done).length;
+    el("rect", {width:r.w, height:r.h, rx:10, fill:t.tableFill,
+                stroke: selected ? t.accent : t.ink,
+                "stroke-width": selected ? 2.2 : 1.3}, g);
+    el("path", {d:`M 0 10 Q 0 0 10 0 H ${r.w-10} Q ${r.w} 0 ${r.w} 10 V ${m.headerH} H 0 Z`,
+                fill: n.color || TODO_COLOR_DEFAULT}, g);
+    const ht = el("text", {x:12, y:m.headerBaseline, fill:fc, "font-family":"Archivo, sans-serif",
+                "font-size":m.headerSize, "font-weight":700}, g);
+    ht.textContent = truncate(n.title || "To-do list", r.w - 96, `700 ${m.headerSize}px Archivo, sans-serif`);
+    if (n.notes) el("circle", {cx:r.w - 62, cy:Math.max(10, m.headerH/2), r:3.2, fill:fc, opacity:.55}, g);
+    el("text", {x:r.w - 34, y:m.headerBaseline, "text-anchor":"end", fill:fc, opacity:.75,
+                "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(8, m.base - 1)}, g)
+      .textContent = `${doneCount}/${total}`;
+    const cg = el("g", {"data-collapse":n.id, cursor:"pointer"}, g);
+    el("rect", {x:r.w - 24, y:0, width:24, height:m.headerH, fill:"transparent"}, cg);
+    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"middle", fill:fc, opacity:.85,
+                "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(10, m.base)}, cg)
+      .textContent = n.collapsed ? "▸" : "▾";
+    if (n.collapsed){
+      el("text", {x:12, y:m.headerH + 2, fill:t.muted, "font-family":"'IBM Plex Mono', monospace",
+                  "font-size":Math.max(8, m.base - 1)}, g)
+        .textContent = `${total} items`;
+    } else {
+      const cbSize = Math.max(9, Math.round(m.badgeH * 1.05));
+      n.items.forEach((it, i) => {
+        const rowTop = m.headerH + i*m.rowH;
+        const cy = rowTop + m.rowH/2;
+        if (i > 0) el("line", {x1:8, y1:rowTop, x2:r.w-8, y2:rowTop, stroke:t.rowLine, "stroke-width":1}, g);
+        const cb = el("g", {"data-todocheck": it.id, "data-todonode": n.id, cursor:"pointer",
+                            role:"checkbox", "aria-checked": it.done ? "true" : "false",
+                            "aria-label": `${it.done ? "Done" : "Not done"}: ${it.text || "item"}`}, g);
+        el("rect", {x:4, y:rowTop + 1, width:m.nameX - 6, height:m.rowH - 2, fill:"transparent"}, cb);
+        el("rect", {x:8, y:cy - cbSize/2, width:cbSize, height:cbSize, rx:3,
+                    fill: it.done ? t.accent : t.tableFill,
+                    stroke: it.done ? t.accent : t.ink, "stroke-width":1.1}, cb);
+        if (it.done)
+          el("path", {d:`M ${8 + cbSize*0.22} ${cy + cbSize*0.02} L ${8 + cbSize*0.42} ${cy + cbSize*0.24} L ${8 + cbSize*0.8} ${cy - cbSize*0.26}`,
+                      stroke:t.tableFill, "stroke-width":1.6, fill:"none",
+                      "stroke-linecap":"round", "stroke-linejoin":"round"}, cb);
+        const label = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill: it.done ? t.muted : fc,
+                    "font-family":"Archivo, sans-serif", "font-size":m.nameSize, "font-weight":500}, g);
+        if (it.done) label.setAttribute("text-decoration", "line-through");
+        label.textContent = truncate(it.text || "…", r.w - m.nameX - 16, `500 ${m.nameSize}px Archivo, sans-serif`);
+      });
+      if (!n.items.length)
+        el("text", {x:12, y:m.headerH + 16, fill:t.empty, "font-family":"Archivo, sans-serif",
+                    "font-size":11.5, "font-style":"italic"}, g).textContent = "no items yet";
+      drawRowHandles(g, n, n.items, r, t);
+    }
   } else {
     const m = tableMetrics(n);
     const fc = n.fontColor || t.ink;
@@ -936,17 +1017,7 @@ function drawNode(n){
       el("text", {x:12, y:m.headerH + 16, fill:t.empty, "font-family":"Archivo, sans-serif",
                   "font-size":11.5, "font-style":"italic"}, g).textContent = "no fields yet";
 
-    /* per-field connect handles (left + right of each row) */
-    n.fields.forEach((f, i) => {
-      const y = m.headerH + i*m.rowH + m.rowH/2;
-      for (const x of [0, r.w]){
-        const fh = el("g", {class:"fieldhandle", "data-fieldhandle": f.id,
-                            "data-fieldnode": n.id, cursor:"crosshair"}, g);
-        el("circle", {cx:x, cy:y, r:14, fill:"transparent"}, fh);
-        el("circle", {cx:x, cy:y, r:3.6, fill:t.tableFill,
-                      stroke:t.accent, "stroke-width":1.4}, fh);
-      }
-    });
+    drawRowHandles(g, n, n.fields, r, t);
     }
   }
 
@@ -956,6 +1027,20 @@ function drawNode(n){
   el("circle", {cx:r.w, cy:r.h/2, r:5.5, fill:t.tableFill,
                 stroke: selected ? t.accent : t.ink, "stroke-width":1.6,
                 opacity: selected ? 1 : .55}, hg);
+}
+/* per-row connect handles (left + right of each row) — tables and todos */
+function drawRowHandles(g, n, rows, r, t){
+  const m = tableMetrics(n);
+  rows.forEach((f, i) => {
+    const y = m.headerH + i*m.rowH + m.rowH/2;
+    for (const x of [0, r.w]){
+      const fh = el("g", {class:"fieldhandle", "data-fieldhandle": f.id,
+                          "data-fieldnode": n.id, cursor:"crosshair"}, g);
+      el("circle", {cx:x, cy:y, r:14, fill:"transparent"}, fh);
+      el("circle", {cx:x, cy:y, r:3.6, fill:t.tableFill,
+                    stroke:t.accent, "stroke-width":1.4}, fh);
+    }
+  });
 }
 function truncate(str, maxW, font){
   if (textW(str, font) <= maxW) return str;
@@ -974,6 +1059,9 @@ function addNode(type, x, y){
   } else if (type === "frame"){
     n = { id: uid(), type, x, y, title:"Subject area", color:FRAME_DEFAULT.color,
           w:FRAME_DEFAULT.w, h:FRAME_DEFAULT.h };
+  } else if (type === "todo"){
+    n = { id: uid(), type, x, y, title:"To-do list", notes:"", color:TODO_COLOR_DEFAULT,
+          items:[{ id: uid(), text:"New item" }] };
   } else {
     n = { id: uid(), type:"table", x, y, title:"new_table", notes:"", color:themeColors("light").ink,
           fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
@@ -1051,8 +1139,9 @@ function remapPayload(payload, offset = 36){
     n.id = nodeMap.get(src.id);
     n.x += offset;
     n.y += offset;
-    if (n.fields){
-      for (const f of n.fields){
+    const rows = nodeRows(n);
+    if (rows){
+      for (const f of rows){
         const oldId = f.id;
         f.id = uid();
         fieldMap.set(oldId, f.id);
@@ -1150,7 +1239,7 @@ function distribute(entries, axis){
   }
 }
 function conceptTreeRoot(){
-  const selected = selectedNodes().find(n => n.type === "concept");
+  const selected = selectedNodes().find(n => n.type === "concept" || n.type === "todo");
   if (selected) return selected;
   const concepts = state.nodes.filter(n => n.type === "concept");
   if (!concepts.length) return null;
@@ -1161,7 +1250,7 @@ function conceptTreeRoot(){
   })[0];
 }
 function conceptTreeScope(rootId){
-  const conceptIds = new Set(state.nodes.filter(n => n.type === "concept").map(n => n.id));
+  const conceptIds = new Set(state.nodes.filter(n => n.type === "concept" || n.type === "todo").map(n => n.id));
   const childMap = new Map();
   const visited = new Set();
   const bySource = new Map();
@@ -1410,6 +1499,7 @@ board.addEventListener("pointerdown", ev => {
   closeInlineEditor(false);
   if (window.getSelection) window.getSelection().removeAllRanges();
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+  const todoCheckEl = ev.target.closest("[data-todocheck]");
   const fieldHandleEl = ev.target.closest("[data-fieldhandle]");
   const handleEl = ev.target.closest("[data-handle]");
   const collapseEl = ev.target.closest("[data-collapse]");
@@ -1430,6 +1520,18 @@ board.addEventListener("pointerdown", ev => {
     }
   }
 
+  if (todoCheckEl){
+    const n = nodeById(todoCheckEl.getAttribute("data-todonode"));
+    const it = n && n.items && n.items.find(i => i.id === todoCheckEl.getAttribute("data-todocheck"));
+    if (n && it){
+      pushHistory();
+      if (it.done) delete it.done; else it.done = true;  // absent means false — never write done:false
+      setSelection("node", n.id);
+      render();
+    }
+    drag = null;
+    return;
+  }
   if (fieldHandleEl){
     drag = { mode:"connect", from: { id: fieldHandleEl.getAttribute("data-fieldnode"),
                                      fieldId: fieldHandleEl.getAttribute("data-fieldhandle") } };
@@ -1444,7 +1546,7 @@ board.addEventListener("pointerdown", ev => {
   if (collapseEl){
     const id = collapseEl.getAttribute("data-collapse");
     const n = nodeById(id);
-    if (n && n.type === "table"){
+    if (n && (n.type === "table" || n.type === "todo")){
       pushHistory();
       n.collapsed = !n.collapsed;
       setSelection("node", id);
@@ -1552,7 +1654,8 @@ board.addEventListener("pointermove", ev => {
     const a = nodeById(drag.from.id), ra = nodeRect(a);
     let pa;
     if (drag.from.fieldId){
-      const idx = a.fields.findIndex(f => f.id === drag.from.fieldId);
+      const rowsA = nodeRows(a) || [];
+      const idx = rowsA.findIndex(f => f.id === drag.from.fieldId);
       pa = idx >= 0 ? fieldAnchor(a, idx, w.x) : anchorOnRect(ra, w.x, w.y);
     } else {
       pa = anchorOnRect(ra, w.x, w.y);
@@ -1565,7 +1668,7 @@ board.addEventListener("pointermove", ev => {
     if (hit && hit.node.id !== drag.from.id){
       const r = nodeRect(hit.node);
       if (hit.field){
-        const idx = hit.node.fields.indexOf(hit.field);
+        const idx = (nodeRows(hit.node) || []).indexOf(hit.field);
         const mm = tableMetrics(hit.node);
         el("rect", {x:r.x+2, y:r.y + mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
                     fill:"#2456E6", opacity:.16}, draftLayer);
@@ -1669,6 +1772,7 @@ function matchShortcut(ev, typing){
   if (ev.key === "Escape") return "escape";
   if (!mod && key === "c") return "concept";
   if (!mod && key === "t") return "table";
+  if (!mod && key === "d") return "todo";
   if (!mod && key === "f") return "fit";
   if (ev.key.startsWith("Arrow")) return "nudge";
   return null;
@@ -1690,6 +1794,7 @@ function runShortcut(id, ev){
   if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
   if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
   if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
+  if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
   if (id === "fit") return fitView();
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
 }
@@ -1848,10 +1953,15 @@ function paletteItems(){
       for (const f of n.fields)
         items.push({ type:"field", label:`${n.title || "table"}.${f.name}`, nodeId:n.id, fieldId:f.id });
     }
+    if (n.type === "todo"){
+      for (const it of n.items)
+        items.push({ type:"item", label:`${n.title || "list"}.${it.text || "(item)"}`, nodeId:n.id, itemId:it.id });
+    }
   }
   for (const c of [
     ["addConcept", "Add concept"],
     ["addTable", "Add table"],
+    ["addTodo", "Add to-do list"],
     ["addFrame", "Add frame"],
     ["layoutTree", "Layout concept tree"],
     ["layoutSchema", "Layout table schema"],
@@ -1880,7 +1990,7 @@ function centerNode(id){
 function activatePaletteItem(item){
   if (!item) return;
   closeCommandPalette();
-  if (item.type === "node" || item.type === "field"){
+  if (item.type === "node" || item.type === "field" || item.type === "item"){
     setSelection("node", item.nodeId);
     centerNode(item.nodeId);
     render();
@@ -1889,6 +1999,7 @@ function activatePaletteItem(item){
   const c = viewCenter();
   if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
+  if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);
   if (item.command === "addFrame") addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2);
   if (item.command === "layoutTree") layoutMindMapTree();
   if (item.command === "layoutSchema") layoutSchemaTables();
@@ -1977,7 +2088,8 @@ function renderInspector(){
     if (selectionCount("node") > 1){ renderMultiInspector(); return; }
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
-    inspTitle.textContent = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame" : "Table node";
+    inspTitle.textContent = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame"
+                          : n.type === "todo" ? "To-do list" : "Table node";
 
     frow(n.type === "table" ? "Table name" : "Title", () => {
       const i = mkInput(n.title, v => { n.title = v; drawOnly(); });
@@ -2005,6 +2117,25 @@ function renderInspector(){
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
       frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+    } else if (n.type === "todo"){
+      frow("Notes", () => {
+        const t = document.createElement("textarea");
+        t.value = n.notes || "";
+        t.addEventListener("focus", pushHistoryOnce());
+        t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
+        return t;
+      });
+      frow("Color", () => swatches(CONCEPT_COLORS, n.color || TODO_COLOR_DEFAULT,
+        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+      frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
+        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+      frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
+        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      frow("Collapsed", () => {
+        const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
+        return b;
+      });
+      renderItemEditor(n);
     } else {
       frow("Notes", () => {
         const t = document.createElement("textarea");
@@ -2038,9 +2169,11 @@ function renderInspector(){
     if (!e){ clearSelection(); renderHelp(); return; }
     inspTitle.textContent = "Edge";
     const a = nodeById(e.from), b = nodeById(e.to);
+    const touchesTodo = a.type === "todo" || b.type === "todo";
     const endName = (n, fid) => {
-      const f = fid && n.fields ? n.fields.find(x => x.id === fid) : null;
-      return escapeHtml(n.title) + (f ? "<span style='font-family:var(--mono);font-size:11px'>." + escapeHtml(f.name) + "</span>" : "");
+      const rows = fid ? nodeRows(n) : null;
+      const f = rows ? rows.find(x => x.id === fid) : null;
+      return escapeHtml(n.title) + (f ? "<span style='font-family:var(--mono);font-size:11px'>." + escapeHtml(f.name || f.text || f.id) + "</span>" : "");
     };
     const p = document.createElement("div");
     p.className = "helper";
@@ -2048,7 +2181,7 @@ function renderInspector(){
       (e.kind !== "link" ? `<br>Convention: <em>from</em> = the “one” side, <em>to</em> = the “many” side.` : "");
     inspBody.appendChild(p);
 
-    frow("Type", () => {
+    if (!touchesTodo) frow("Type", () => {
       const s = document.createElement("select");
       for (const k of ["link","1:1","1:N","N:M"]){
         const o = document.createElement("option");
@@ -2132,17 +2265,18 @@ function renderMultiInspector(){
   inspBody.appendChild(div);
 }
 
-/* choose whole-table vs. specific field for one end of an edge */
+/* choose whole-node vs. specific row (field/item) for one end of an edge */
 function attachRow(which, node, e, key){
-  if (node.type !== "table" || !node.fields.length) return;
+  const rows = nodeRows(node);
+  if (!rows || !rows.length) return;
   frow(which + " attaches to", () => {
     const s = document.createElement("select");
     const o0 = document.createElement("option");
-    o0.value = ""; o0.textContent = "(whole table)";
+    o0.value = ""; o0.textContent = node.type === "todo" ? "(whole list)" : "(whole table)";
     s.appendChild(o0);
-    for (const f of node.fields){
+    for (const f of rows){
       const o = document.createElement("option");
-      o.value = f.id; o.textContent = f.name;
+      o.value = f.id; o.textContent = f.name || f.text || f.id;
       if (e[key] === f.id) o.selected = true;
       s.appendChild(o);
     }
@@ -2279,20 +2413,53 @@ function renderFieldEditor(n){
   }
 }
 function moveField(n, i, d){
+  const rows = nodeRows(n);
   const j = i + d;
-  if (j < 0 || j >= n.fields.length) return;
+  if (!rows || j < 0 || j >= rows.length) return;
   pushHistory();
-  [n.fields[i], n.fields[j]] = [n.fields[j], n.fields[i]];
+  [rows[i], rows[j]] = [rows[j], rows[i]];
   render();
+}
+
+function renderItemEditor(n){
+  const wrapD = document.createElement("div");
+  const lab = document.createElement("label");
+  lab.textContent = "Items";
+  lab.style.cssText = "font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px";
+  wrapD.appendChild(lab);
+
+  n.items.forEach((it, i) => {
+    const row = document.createElement("div");
+    row.className = "fieldrow";
+    const textI = mkInput(it.text, v => { it.text = v; drawOnly(); });
+    const del = mkBtn("✕", () => { pushHistory(); const iid = it.id; n.items.splice(i,1); cleanFieldRefs(iid); render(); }, "mini del");
+    row.append(textI, del);
+    wrapD.appendChild(row);
+
+    const flags = document.createElement("div");
+    flags.className = "flags";
+    flags.appendChild(mkFlag("DONE", !!it.done, v => { if (v) it.done = true; else delete it.done; render(); }));
+    flags.appendChild(mkBtn("↑", () => moveField(n, i, -1), "mini"));
+    flags.appendChild(mkBtn("↓", () => moveField(n, i, +1), "mini"));
+    wrapD.appendChild(flags);
+  });
+
+  wrapD.appendChild(mkBtn("+ Add item", () => {
+    pushHistory();
+    n.items.push({ id: uid(), text:"New item" });
+    render();
+  }));
+  inspBody.appendChild(wrapD);
 }
 
 function renderHelp(){
   const h = document.createElement("div");
   h.className = "helper";
   h.innerHTML = `
-    <p><b>Two node types, one canvas.</b><br>
-    Concepts sketch the business thinking; tables carry the data model. Link them freely —
-    an idea can point at the entity, or the exact column, that will store it.</p>
+    <p><b>Three node types, one canvas.</b><br>
+    Concepts sketch the business thinking, tables carry the data model, and to-do lists
+    track the work. Link them freely — an idea can point at the entity, the exact column,
+    or the task that will deliver it.</p>
     <p style="margin-top:10px"><b>Field-level connections.</b><br>
     Hover a table to reveal ○ handles on each field row. Drag from a row to another
     field or node — drop-target rows highlight as you go. Field-bound relations export
@@ -2600,6 +2767,7 @@ document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
+document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
 document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
 document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
@@ -2681,7 +2849,8 @@ function generateSQL(dialect = docDialect){
   const tables = state.nodes.filter(n => n.type === "table");
   if (!tables.length) return "-- No table nodes on the canvas.\n-- Add a Table node, give it fields, then export again.";
   dialect = SQL_DIALECTS.includes(dialect) ? dialect : "ansi";
-  const lines = [`-- Draft ${dialect.toUpperCase()} DDL generated by Schematic — review types & constraints before use.`,""];
+  const lines = [`-- Draft ${dialect.toUpperCase()} DDL generated by Schematic — review types & constraints before use.`,
+    "-- Table nodes only; concepts and to-do lists are not exported.",""];
   for (const t of tables){
     const tn = qident(t.title, dialect);
     const cols = t.fields.map(f => columnLine(f, dialect));
@@ -2770,9 +2939,17 @@ function lintDocument(docState = state){
   for (const c of concepts){
     if (!String(c.title || "").trim()) issues.push({level:"error", msg:"Concept has an empty title", nodeId:c.id});
   }
+  for (const td of nodes.filter(n => n.type === "todo")){
+    if (!(td.items || []).length)
+      issues.push({level:"warning", msg:`To-do list ${td.title || "(untitled)"} has no items`, nodeId:td.id});
+  }
   for (const e of edges){
     if (e.kind === "link") continue;
     const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to);
+    if ((a && a.type === "todo") || (b && b.type === "todo")){
+      issues.push({level:"error", msg:`Relation ${e.kind} touches a to-do list — use a link edge`, edgeId:e.id});
+      continue;
+    }
     if (!a || !b || a.type !== "table" || b.type !== "table") continue;
     if (e.kind === "N:M"){
       const expected = ident(a.title) + "_" + ident(b.title);
@@ -2962,7 +3139,7 @@ function importDDLText(text){
   return {...parsed, imported:ok};
 }
 function generateMermaid(){
-  const lines = ["erDiagram"];
+  const lines = ["erDiagram", "  %% Tables and relations only — concepts, links, and to-do lists are omitted."];
   const tables = state.nodes.filter(n => n.type === "table");
   for (const t of tables){
     lines.push(`  ${ident(t.title)} {`);
@@ -2979,9 +3156,9 @@ function generateMermaid(){
   return lines.join("\n");
 }
 function generateMarkdownOutline(){
-  const concepts = state.nodes.filter(n => n.type === "concept");
+  const outlineRoots = state.nodes.filter(n => n.type === "concept" || n.type === "todo");
   const incoming = new Set(state.edges.filter(e => e.kind === "link").map(e => e.to));
-  const roots = concepts.filter(n => !incoming.has(n.id)).sort((a, b) => a.y - b.y || a.x - b.x);
+  const roots = outlineRoots.filter(n => !incoming.has(n.id)).sort((a, b) => a.y - b.y || a.x - b.x);
   const childEdges = id => state.edges.filter(e => e.kind === "link" && e.from === id)
     .sort((a, b) => (nodeById(a.to)?.y || 0) - (nodeById(b.to)?.y || 0));
   const lines = [];
@@ -2991,6 +3168,11 @@ function generateMarkdownOutline(){
     const indent = "  ".repeat(depth);
     if (seen.has(id)){ lines.push(`${indent}- (→ see ${n.title || id})`); return; }
     if (n.type === "table") lines.push(`${indent}- **${n.title || "table"}**`);
+    else if (n.type === "todo"){
+      lines.push(`${indent}- ${n.title || "To-do list"}`);
+      if (n.notes) lines.push(`${indent}  > ${n.notes}`);
+      for (const it of n.items) lines.push(`${indent}  - [${it.done ? "x" : " "}] ${it.text || ""}`);
+    }
     else {
       lines.push(`${indent}- ${n.title || "(untitled)"}`);
       if (n.notes) lines.push(`${indent}  > ${n.notes}`);
@@ -3253,8 +3435,9 @@ function nodeMenu(n, x, y){
     for (const t of targets) fn(t);
   };
   showCtx(x, y, m => {
-    ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color" : "Header color");
-    ctxSwatches(m, n.type === "concept" ? CONCEPT_COLORS : TABLE_COLORS, n.color,
+    ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
+              : n.type === "todo" ? "List color" : "Header color");
+    ctxSwatches(m, (n.type === "concept" || n.type === "todo") ? CONCEPT_COLORS : TABLE_COLORS, n.color,
       (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
     if (n.type !== "frame"){
       ctxLabel(m, "Text size");
@@ -3280,6 +3463,18 @@ function nodeMenu(n, x, y){
         render();
       });
     }
+    if (n.type === "todo"){
+      ctxItem(m, n.collapsed ? "Expand items" : "Collapse items", () => {
+        pushHistory();
+        n.collapsed = !n.collapsed;
+        render();
+      });
+      ctxItem(m, "Add item", () => {
+        pushHistory();
+        n.items.push({id: uid(), text:"New item"});
+        render();
+      });
+    }
     ctxItem(m, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
     if (targets.length >= 2){
       ctxSep(m);
@@ -3301,18 +3496,22 @@ function nodeMenu(n, x, y){
   });
 }
 function edgeMenu(e, x, y){
+  const a = nodeById(e.from), b = nodeById(e.to);
+  const touchesTodo = (a && a.type === "todo") || (b && b.type === "todo");
   showCtx(x, y, m => {
-    ctxLabel(m, "Relation type");
-    const row = document.createElement("div");
-    row.className = "kindrow";
-    for (const k of ["link","1:1","1:N","N:M"]){
-      const b = document.createElement("button");
-      b.textContent = k;
-      if (e.kind === k) b.className = "on";
-      b.addEventListener("click", () => { hideCtx(); pushHistory(); e.kind = k; render(); });
-      row.appendChild(b);
+    if (!touchesTodo){
+      ctxLabel(m, "Relation type");
+      const row = document.createElement("div");
+      row.className = "kindrow";
+      for (const k of ["link","1:1","1:N","N:M"]){
+        const btn = document.createElement("button");
+        btn.textContent = k;
+        if (e.kind === k) btn.className = "on";
+        btn.addEventListener("click", () => { hideCtx(); pushHistory(); e.kind = k; render(); });
+        row.appendChild(btn);
+      }
+      m.appendChild(row);
     }
-    m.appendChild(row);
     ctxLabel(m, "Routing");
     const routeRow = document.createElement("div");
     routeRow.className = "kindrow";
@@ -3347,6 +3546,7 @@ function canvasMenu(w, x, y){
   showCtx(x, y, m => {
     ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
+    ctxItem(m, "Add to-do list here", () => addNode("todo", w.x - 90, w.y - 30), {kbd:"D"});
     ctxItem(m, "Add frame here",   () => addNode("frame",   w.x - FRAME_DEFAULT.w/2, w.y - FRAME_DEFAULT.h/2));
     ctxSep(m);
     ctxItem(m, "Fit diagram", fitView, {kbd:"F"});
@@ -3465,6 +3665,10 @@ window.__T = {
   generateSQL,
   render,
   nodeRect,
+  nodeRows,
+  tableMetrics,
+  fieldRowCenterY,
+  cleanFieldRefs,
   rectsOverlap,
   documentBounds,
   hitTest,
