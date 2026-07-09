@@ -73,7 +73,8 @@ Add new code inside the matching section.
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
       "title": "Loyalty program launch", "notes": "…",
-      "color": "#FFE9A8", "fontSize": 14, "fontColor": "#16232F" },
+      "color": "#FFE9A8", "fontSize": 14, "fontColor": "#16232F",
+      "shape": "decision" },
     { "id": "n5", "type": "table", "x": 640, "y": 60,
       "title": "customers", "notes": "", "color": "#16232F",
       "fontSize": 11.5, "fontColor": "#16232F", "collapsed": false,
@@ -96,6 +97,9 @@ Add new code inside the matching section.
   "notes": "", "color": "#E9E2F8", "items": [ { "id": "n13", "text": "Approve copy", "done": true } ] }`
   — `done` is optional (absent = false, never written as `false`); item ids share the node
   id namespace and are referenced by `fromField`/`toField` exactly like table field ids.
+- Concept nodes may include optional `shape` ∈ `process|decision|terminator|data|document|manualInput`.
+  It is presentation-only, applies only to concept nodes, and is absent for the default
+  `process` rectangle so all older documents render unchanged.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
   kinds are table↔table only; edges touching a to-do list are always `link`.
 - `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
@@ -292,6 +296,9 @@ Harness quirks you must respect:
   the inspector and context menus (normalized, deduped, capped at 8, presets excluded);
   stored in the document (`meta.recentColors`, written only when non-empty) and mirrored
   to localStorage when available; document colors win on import merge.
+- Concept nodes support standard flowchart shapes: Process, Decision, Terminator, Data
+  (input/output), Document, and Manual input. The Inspector also applies a shape to a
+  multi-selection of concept nodes; Decision anchors follow the diamond perimeter.
 - Dark theme: status-bar toggle persisted in `meta.theme`; SVG draw code reads a `THEME`
   lookup so document colors and dark chrome render/export consistently.
 - Undo/redo: 100-step snapshot stack with time+key coalescing for continuous edits.
@@ -807,6 +814,15 @@ in tests); memoization returns identical values.
 
 `@media print`: hide chrome, scale the fitted diagram to page. Low priority; PNG covers
 most needs.
+
+**SCH-054 · Standard flowchart shapes for concept nodes · P2 · M · Done 2026-07-09**
+
+Add the optional concept-only `shape` key with six standard symbols: Process, Decision,
+Terminator, Data (input/output), Document, and Manual input. Expose it through the
+Inspector for individual concept nodes and concept-only multi-selections. Keep the default
+Process shape absent from JSON for backward-compatible compact documents; Decision's
+anchor points must lie on its diamond perimeter. Add jsdom coverage for selection,
+rendering, geometry, and JSON round-tripping.
 
 ---
 

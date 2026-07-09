@@ -37,10 +37,19 @@ let inlineEditor = null;
 const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"];
 const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B7683"];
 const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A3A"];
+const FLOWCHART_SHAPES = [
+  ["process", "Process"],
+  ["decision", "Decision"],
+  ["terminator", "Terminator"],
+  ["data", "Data (input/output)"],
+  ["document", "Document"],
+  ["manualInput", "Manual input"]
+];
+const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.3.1";
+const APP_VERSION = "v1.3.2";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -553,6 +562,18 @@ window.addEventListener("beforeunload", ev => {
 /* --------------------------- Geometry ----------------------------- */
 function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; return Math.min(hi, Math.max(lo, v)); }
 function conceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
+/* Concept shape is intentionally optional in the document model: old documents and a
+   selected Process both render as the conventional rectangular process symbol. */
+function conceptShape(n){ return n && n.type === "concept" && FLOWCHART_SHAPE_SET.has(n.shape) ? n.shape : "process"; }
+function setConceptShape(n, shape){
+  if (!n || n.type !== "concept") return;
+  const next = FLOWCHART_SHAPE_SET.has(shape) ? shape : "process";
+  if (next === "process") delete n.shape;
+  else n.shape = next;
+}
+function conceptTextWidth(shape, w){
+  return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
+}
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
   const base = clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28);
@@ -574,8 +595,15 @@ function nodeSize(n){
   }
   if (n.type === "concept"){
     const fs = conceptFont(n);
-    const w = Math.max(130, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) + 44);
-    const h = Math.max(40, Math.round(fs * 2.2 + 17.2));
+    const shape = conceptShape(n);
+    if (shape === "decision"){
+      const h = Math.max(80, Math.round(fs * 3.15 + 38));
+      const w = Math.max(160, h * 1.6, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) + 72);
+      return { w: Math.min(w, 420), h };
+    }
+    const w = Math.max(130, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) +
+      (shape === "data" || shape === "manualInput" ? 56 : 44));
+    const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 8 : 0);
     return { w: Math.min(w, 420), h };
   }
   if (n.type === "todo"){
@@ -661,6 +689,20 @@ function anchorPointsForRect(r){
     bl:{x:r.x,     y:r.y+r.h},   bc:{x:r.cx, y:r.y+r.h},   br:{x:r.x+r.w, y:r.y+r.h}
   };
 }
+/* Diamond anchors sit on the diamond itself rather than its bounding box. */
+function conceptBoundaryPoint(n, r, ref){
+  if (conceptShape(n) !== "decision") return { x:ref.x, y:ref.y };
+  const dx = ref.x - r.cx, dy = ref.y - r.cy;
+  if (!dx && !dy) return { x:r.cx, y:r.cy };
+  const scale = 1 / (Math.abs(dx) / (r.w/2) + Math.abs(dy) / (r.h/2));
+  return { x:r.cx + dx * scale, y:r.cy + dy * scale };
+}
+function anchorPointsForNode(n, r = nodeRect(n)){
+  const pts = anchorPointsForRect(r);
+  if (conceptShape(n) !== "decision") return pts;
+  for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key]);
+  return pts;
+}
 /* outward side of an anchor point, for curve control points and crow's feet;
    corners and the center pick the dominant axis toward the reference point */
 function anchorSideFor(key, p, ref){
@@ -677,8 +719,16 @@ function anchorSideFor(key, p, ref){
 }
 function nodeAnchor(n, key, ref){
   const r = nodeRect(n);
-  const pts = anchorPointsForRect(r);
+  const pts = anchorPointsForNode(n, r);
   let k = key && pts[key] ? key : null;
+  /* Unpinned Decision connections use the actual diamond intersection, so an edge
+     never appears to begin in the empty corner of its rectangular bounding box. */
+  if (!k && conceptShape(n) === "decision"){
+    const p = conceptBoundaryPoint(n, r, ref);
+    const dx = ref.x - r.cx, dy = ref.y - r.cy;
+    const horiz = Math.abs(dx) / r.w >= Math.abs(dy) / r.h;
+    return { x:p.x, y:p.y, side:horiz ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n"), key:null };
+  }
   if (!k){
     let bd = Infinity;
     for (const cand of PERIMETER_ANCHORS){
@@ -692,7 +742,7 @@ function nodeAnchor(n, key, ref){
 }
 /* nearest perimeter point within tolerance — used to pin the drop end of a drag */
 function nearestAnchorWithin(n, w, tol = 16){
-  const pts = anchorPointsForRect(nodeRect(n));
+  const pts = anchorPointsForNode(n);
   let best = null, bd = tol*tol;
   for (const key of PERIMETER_ANCHORS){
     const p = pts[key];
@@ -996,6 +1046,22 @@ function drawFrame(n){
   el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
               stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
 }
+function drawConceptShape(g, n, r, attrs){
+  const shape = conceptShape(n);
+  const common = { ...attrs, "data-node-shape":shape, "stroke-linejoin":"round" };
+  if (shape === "process") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
+  if (shape === "terminator") return el("rect", {width:r.w, height:r.h, rx:r.h/2, ...common}, g);
+  if (shape === "decision")
+    return el("path", {d:`M ${r.w/2} 0 L ${r.w} ${r.h/2} L ${r.w/2} ${r.h} L 0 ${r.h/2} Z`, ...common}, g);
+  if (shape === "data")
+    return el("path", {d:`M 18 0 H ${r.w} L ${r.w-18} ${r.h} H 0 Z`, ...common}, g);
+  if (shape === "document"){
+    const wave = Math.min(12, Math.max(7, r.h * .18));
+    return el("path", {d:`M 0 0 H ${r.w} V ${r.h-wave} C ${r.w*.82} ${r.h+wave*.25}, ${r.w*.66} ${r.h-wave*.35}, ${r.w/2} ${r.h-wave*.02} C ${r.w*.33} ${r.h+wave*.32}, ${r.w*.16} ${r.h-wave*.28}, 0 ${r.h-wave*.02} Z`, ...common}, g);
+  }
+  /* Manual input: the sloped leading edge is the conventional flowchart symbol. */
+  return el("path", {d:`M 20 0 H ${r.w} L ${r.w-14} ${r.h} H 0 Z`, ...common}, g);
+}
 function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
@@ -1005,13 +1071,18 @@ function drawNode(n){
   if (n.type === "concept"){
     const fs = conceptFont(n);
     const fc = n.fontColor || t.ink;
-    el("rect", {width:r.w, height:r.h, rx:14, fill:n.color || CONCEPT_COLORS[0],
+    const shape = conceptShape(n);
+    drawConceptShape(g, n, r, {fill:n.color || CONCEPT_COLORS[0],
                 stroke: selected ? t.accent : t.ink,
-                "stroke-width": selected ? 2.2 : 1.2}, g);
+                "stroke-width": selected ? 2.2 : 1.2});
     const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
                 "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
-    titleText.textContent = truncate(n.title || "Untitled", r.w - 34, `600 ${fs}px Archivo, sans-serif`);
-    if (n.notes) el("circle", {cx:r.w - 12, cy:12, r:3.2, fill:t.ink, opacity:.55}, g);
+    titleText.textContent = truncate(n.title || "Untitled", conceptTextWidth(shape, r.w), `600 ${fs}px Archivo, sans-serif`);
+    if (n.notes){
+      const noteAtSide = shape === "decision" || shape === "terminator";
+      el("circle", {cx:noteAtSide ? r.w - 14 : r.w - 12, cy:noteAtSide ? r.h/2 : 12,
+                    r:3.2, fill:t.ink, opacity:.55}, g);
+    }
   } else if (n.type === "todo"){
     const m = tableMetrics(n);
     const fc = n.fontColor || t.ink;
@@ -1126,7 +1197,7 @@ function drawNode(n){
   /* 9 attachment points (3×3): drag from a point to pin the connection to it.
      mr stays always-visible as the primary connect affordance; the rest reveal
      on hover (anchorhandle class — stripped from PNG/SVG via [data-handle]). */
-  const anchorPts = anchorPointsForRect({ x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
+  const anchorPts = anchorPointsForNode(n, { x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
   for (const key of NODE_ANCHORS){
     const p = anchorPts[key];
     const hg = el("g", {class: key === "mr" ? "" : "anchorhandle",
@@ -2458,6 +2529,18 @@ function renderInspector(){
       frow("Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
         (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
     } else if (n.type === "concept"){
+      frow("Shape", () => {
+        const s = document.createElement("select");
+        s.setAttribute("aria-label", "Flowchart shape");
+        for (const [value, label] of FLOWCHART_SHAPES){
+          const o = document.createElement("option");
+          o.value = value; o.textContent = label;
+          if (conceptShape(n) === value) o.selected = true;
+          s.appendChild(o);
+        }
+        s.addEventListener("change", () => { pushHistory(); setConceptShape(n, s.value); render(); });
+        return s;
+      });
       frow("Notes", () => {
         const t = document.createElement("textarea");
         t.value = n.notes || "";
@@ -2599,6 +2682,25 @@ function renderMultiInspector(){
       commit ? render() : drawOnly();
     }));
   if (nonFrames.length === nodes.length){
+    if (nodes.every(n => n.type === "concept")){
+      frow("Shape", () => {
+        const s = document.createElement("select");
+        s.setAttribute("aria-label", "Flowchart shape");
+        const current = conceptShape(nodes[0]);
+        for (const [value, label] of FLOWCHART_SHAPES){
+          const o = document.createElement("option");
+          o.value = value; o.textContent = label;
+          if (current === value) o.selected = true;
+          s.appendChild(o);
+        }
+        s.addEventListener("change", () => {
+          pushHistory();
+          for (const n of nodes) setConceptShape(n, s.value);
+          render();
+        });
+        return s;
+      });
+    }
     frow("Text size", () => sizeStepper(nodes[0].type === "concept" ? conceptFont(nodes[0]) : tableMetrics(nodes[0]).base,
       8, 48, 1, (v, commit) => {
         pushHistory("fs:multi");
@@ -4059,6 +4161,10 @@ window.__T = {
   generateSQL,
   render,
   nodeRect,
+  conceptShape,
+  setConceptShape,
+  get FLOWCHART_SHAPES(){ return FLOWCHART_SHAPES.map(([id, label]) => ({id, label})); },
+  nodeAnchor,
   nodeRows,
   tableMetrics,
   fieldRowCenterY,

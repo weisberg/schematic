@@ -1285,5 +1285,52 @@ function closeEnough(a, b, msg){
     assert(fonts.every(font => font.includes(",")), "every SVG text font-family includes a generic fallback");
   }
 
+  /* SCH-054 — standard flowchart symbols on concept nodes */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    assert.strictEqual(T.conceptShape(concept), "process", "legacy concepts default to the Process shape");
+    assert.strictEqual(Object.hasOwn(concept, "shape"), false, "default Process stays absent from legacy document data");
+
+    T.selectNode(concept.id);
+    let selector = window.document.querySelector('#inspector select[aria-label="Flowchart shape"]');
+    assert(selector, "concept inspector exposes a flowchart-shape selector");
+    assert.strictEqual(selector.value, "process", "inspector starts on the Process shape");
+    selector.value = "decision";
+    selector.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(concept.shape, "decision", "shape selector writes the additive decision shape");
+    assert(window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="decision"]`),
+      "decision renders as its own SVG node shape");
+    assert(T.nodeRect(concept).h >= 80, "decision uses a tall enough bounding box for readable text");
+
+    const target = T.addNode("concept", concept.x + 450, concept.y + 300);
+    const endpoint = T.nodeAnchor(concept, null, T.nodeRect(target));
+    assert(endpoint.x < T.nodeRect(concept).x + T.nodeRect(concept).w,
+      "automatic decision edge anchors land on the diamond boundary rather than its bounding-box corner");
+
+    T.selectNode(concept.id);
+    selector = window.document.querySelector('#inspector select[aria-label="Flowchart shape"]');
+    selector.value = "document";
+    selector.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(concept.shape, "document", "shape selector switches to a document symbol");
+    assert(window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="document"]`),
+      "document renders as its own SVG node shape");
+    for (const { id } of T.FLOWCHART_SHAPES){
+      T.setConceptShape(concept, id);
+      T.render();
+      assert(window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="${id}"]`),
+        `${id} renders as a standard flowchart symbol`);
+    }
+    T.setConceptShape(concept, "document");
+    T.render();
+    const saved = JSON.parse(T.serializeDocument());
+    assert.strictEqual(saved.nodes.find(n => n.id === concept.id).shape, "document",
+      "selected flowchart shapes round-trip through the document JSON");
+
+    T.setConceptShape(concept, "process");
+    assert.strictEqual(Object.hasOwn(concept, "shape"), false, "switching back to Process removes the optional shape key");
+  }
+
   console.log("ALL TESTS PASSED");
 })();
