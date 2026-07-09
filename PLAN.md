@@ -99,6 +99,10 @@ Add new code inside the matching section.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
   kinds are table↔table only; edges touching a to-do list are always `link`.
 - `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
+- `fromAnchor`/`toAnchor` (v1.3, additive) optionally pin a whole-node edge end to one of
+  the 9 attachment points ∈ `tl|tc|tr|ml|mc|mr|bl|bc|br` (3×3: top/middle/bottom ×
+  left/center/right). Absent = auto: the end snaps to the nearest perimeter point toward
+  the other end. Ignored when that end is row-bound.
 - `pairs` is optional and supersedes `fromField`/`toField` for composite relations; for
   one-pair relations, both shapes may be written for backward compatibility.
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
@@ -245,6 +249,20 @@ Harness quirks you must respect:
   that collide (by `ident()` key) show a notice modal and revert; new/related/pasted/
   duplicated tables auto-uniquify (`name_2`, `name_3`, …).
 - The app version (`APP_VERSION`) is shown at the right end of the header.
+
+**Attachment points (v1.3.0)**
+- Every non-frame node exposes 9 attachment points (3×3 grid; corners, edge midpoints,
+  center). Whole-node edge ends snap to the nearest perimeter point automatically and
+  re-snap as nodes move.
+- Hovering a node reveals the point handles (the right-middle one stays visible as the
+  primary connect affordance); dragging from a specific point pins that end
+  (`fromAnchor`), and dropping within 16px of a target's point pins the other end
+  (`toAnchor`) — pinned ends draw an anchor dot. Drops elsewhere stay on auto.
+- The edge inspector offers "From point"/"To point" selectors ((auto) + the 9 points,
+  center included) for ends without a row binding; Swap direction carries pinned points;
+  copy/paste/duplicate preserve them; JSON round-trips them (`swapEdgeDirection`,
+  `nodeAnchor`, `anchorPointsForRect`, `nearestAnchorWithin`).
+- Row-level (field/item) anchoring is unchanged and takes precedence over node points.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).

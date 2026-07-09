@@ -67,6 +67,9 @@
   .fieldhandle{opacity:0;transition:opacity .12s}
   g[data-node]:hover .fieldhandle{opacity:1}
   svg#board.connecting .fieldhandle{opacity:1}
+  .anchorhandle{opacity:0;transition:opacity .12s}
+  g[data-node]:hover .anchorhandle{opacity:1}
+  svg#board.connecting .anchorhandle{opacity:1}
   #minimap{position:absolute;right:14px;bottom:14px;width:120px;height:90px;z-index:4;
            background:var(--panel);border:1px solid var(--line);border-radius:6px;
            box-shadow:0 8px 24px rgba(10,20,30,.18);cursor:crosshair;touch-action:none}

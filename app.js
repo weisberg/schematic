@@ -40,7 +40,7 @@ const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.2.0";
+const APP_VERSION = "v1.3.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -350,6 +350,8 @@ function cleanEdgeForDocument(e){
       out.toField = out.pairs[0].toField || out.toField;
     }
   }
+  if (!out.fromAnchor) delete out.fromAnchor;
+  if (!out.toAnchor) delete out.toAnchor;
   if (!out.fromField) delete out.fromField;
   if (!out.toField) delete out.toField;
   if (!out.routing || out.routing === "curve") delete out.routing;
@@ -643,6 +645,62 @@ function anchorOnRect(r, px, py){
   if (s === sx) side = dx > 0 ? "e" : "w"; else side = dy > 0 ? "s" : "n";
   return { x, y, side };
 }
+
+/* 9 node attachment points (3×3): top/middle/bottom × left/center/right.
+   Whole-node edge ends snap to the nearest perimeter point automatically;
+   an explicit point is stored on the edge as fromAnchor/toAnchor (additive, E8). */
+const NODE_ANCHORS = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
+const PERIMETER_ANCHORS = ["tl","tc","tr","ml","mr","bl","bc","br"];
+const ANCHOR_LABELS = { tl:"Top left", tc:"Top center", tr:"Top right",
+                        ml:"Middle left", mc:"Center", mr:"Middle right",
+                        bl:"Bottom left", bc:"Bottom center", br:"Bottom right" };
+function anchorPointsForRect(r){
+  return {
+    tl:{x:r.x,     y:r.y},       tc:{x:r.cx, y:r.y},       tr:{x:r.x+r.w, y:r.y},
+    ml:{x:r.x,     y:r.cy},      mc:{x:r.cx, y:r.cy},      mr:{x:r.x+r.w, y:r.cy},
+    bl:{x:r.x,     y:r.y+r.h},   bc:{x:r.cx, y:r.y+r.h},   br:{x:r.x+r.w, y:r.y+r.h}
+  };
+}
+/* outward side of an anchor point, for curve control points and crow's feet;
+   corners and the center pick the dominant axis toward the reference point */
+function anchorSideFor(key, p, ref){
+  if (key === "tc") return "n";
+  if (key === "bc") return "s";
+  if (key === "ml") return "w";
+  if (key === "mr") return "e";
+  const horiz = Math.abs(ref.x - p.x) >= Math.abs(ref.y - p.y);
+  if (key === "tl") return horiz ? "w" : "n";
+  if (key === "tr") return horiz ? "e" : "n";
+  if (key === "bl") return horiz ? "w" : "s";
+  if (key === "br") return horiz ? "e" : "s";
+  return horiz ? (ref.x - p.x > 0 ? "e" : "w") : (ref.y - p.y > 0 ? "s" : "n"); // mc
+}
+function nodeAnchor(n, key, ref){
+  const r = nodeRect(n);
+  const pts = anchorPointsForRect(r);
+  let k = key && pts[key] ? key : null;
+  if (!k){
+    let bd = Infinity;
+    for (const cand of PERIMETER_ANCHORS){
+      const p = pts[cand];
+      const d = (p.x - ref.x)**2 + (p.y - ref.y)**2;
+      if (d < bd){ bd = d; k = cand; }
+    }
+  }
+  const p = pts[k];
+  return { x:p.x, y:p.y, side:anchorSideFor(k, p, ref), key:k };
+}
+/* nearest perimeter point within tolerance — used to pin the drop end of a drag */
+function nearestAnchorWithin(n, w, tol = 16){
+  const pts = anchorPointsForRect(nodeRect(n));
+  let best = null, bd = tol*tol;
+  for (const key of PERIMETER_ANCHORS){
+    const p = pts[key];
+    const d = (p.x - w.x)**2 + (p.y - w.y)**2;
+    if (d <= bd){ bd = d; best = { key, x:p.x, y:p.y }; }
+  }
+  return best;
+}
 function clientToWorld(cx, cy){
   const b = board.getBoundingClientRect();
   return { x: (cx - b.left - view.x)/view.k, y: (cy - b.top - view.y)/view.k };
@@ -833,9 +891,10 @@ function edgeEndpoints(e){
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
-  const pa = ia >= 0 ? fieldAnchor(a, ia, refB.x) : anchorOnRect(ra, refB.x, refB.y);
-  const pb = ib >= 0 ? fieldAnchor(b, ib, refA.x) : anchorOnRect(rb, refA.x, refA.y);
-  return { pa, pb, boundA: ia >= 0, boundB: ib >= 0 };
+  const pa = ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, e.fromAnchor, refB);
+  const pb = ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, e.toAnchor, refA);
+  return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
+           pinnedA: ia < 0 && !!e.fromAnchor, pinnedB: ib < 0 && !!e.toAnchor };
 }
 function curveEdgePath(pa, pb){
   const dx = Math.max(40, Math.abs(pb.x - pa.x) * 0.45);
@@ -902,8 +961,8 @@ function drawEdge(e){
     drawNotation(g, ep.pa, gf, color);
     drawNotation(g, ep.pb, gt, color);
   }
-  if (ep.boundA) el("circle", {cx:ep.pa.x, cy:ep.pa.y, r:3, fill:color}, g);
-  if (ep.boundB) el("circle", {cx:ep.pb.x, cy:ep.pb.y, r:3, fill:color}, g);
+  if (ep.boundA || ep.pinnedA) el("circle", {cx:ep.pa.x, cy:ep.pa.y, r:3, fill:color}, g);
+  if (ep.boundB || ep.pinnedB) el("circle", {cx:ep.pb.x, cy:ep.pb.y, r:3, fill:color}, g);
   let label = e.label || (isLink ? "" : e.kind);
   const pairCount = edgeFieldPairs(e).length;
   if (!isLink && pairCount > 1) label += ` · ${pairCount} cols`;
@@ -1062,12 +1121,19 @@ function drawNode(n){
     }
   }
 
-  /* connect handle (right edge) */
-  const hg = el("g", {"data-handle": n.id, cursor:"crosshair"}, g);
-  el("circle", {cx:r.w, cy:r.h/2, r:14, fill:"transparent"}, hg);
-  el("circle", {cx:r.w, cy:r.h/2, r:5.5, fill:t.tableFill,
-                stroke: selected ? t.accent : t.ink, "stroke-width":1.6,
-                opacity: selected ? 1 : .55}, hg);
+  /* 9 attachment points (3×3): drag from a point to pin the connection to it.
+     mr stays always-visible as the primary connect affordance; the rest reveal
+     on hover (anchorhandle class — stripped from PNG/SVG via [data-handle]). */
+  const anchorPts = anchorPointsForRect({ x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
+  for (const key of NODE_ANCHORS){
+    const p = anchorPts[key];
+    const hg = el("g", {class: key === "mr" ? "" : "anchorhandle",
+                        "data-handle": n.id, "data-anchor": key, cursor:"crosshair"}, g);
+    el("circle", {cx:p.x, cy:p.y, r: key === "mc" ? 8 : 12, fill:"transparent"}, hg);
+    el("circle", {cx:p.x, cy:p.y, r: key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
+                  stroke: selected ? t.accent : t.ink, "stroke-width":1.4,
+                  opacity: selected ? 1 : .55}, hg);
+  }
 }
 /* per-row connect handles (left + right of each row) — tables and todos */
 function drawRowHandles(g, n, rows, r, t){
@@ -1135,6 +1201,8 @@ function addEdge(from, to){
   const e = { id: uid(), from: from.id, to: to.id, kind, label:"" };
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;
+  if (!e.fromField && from.anchor) e.fromAnchor = from.anchor;
+  if (!e.toField && to.anchor)     e.toAnchor   = to.anchor;
   if (kind !== "link" && (e.fromField || e.toField)) e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
   state.edges.push(e);
   setSelection("edge", e.id);
@@ -1623,7 +1691,8 @@ board.addEventListener("pointerdown", ev => {
     return;
   }
   if (handleEl){
-    drag = { mode:"connect", from: { id: handleEl.getAttribute("data-handle") } };
+    drag = { mode:"connect", from: { id: handleEl.getAttribute("data-handle"),
+                                     anchor: handleEl.getAttribute("data-anchor") || undefined } };
     board.classList.add("connecting");
     return;
   }
@@ -1780,9 +1849,9 @@ board.addEventListener("pointermove", ev => {
     if (drag.from.fieldId){
       const rowsA = nodeRows(a) || [];
       const idx = rowsA.findIndex(f => f.id === drag.from.fieldId);
-      pa = idx >= 0 ? fieldAnchor(a, idx, w.x) : anchorOnRect(ra, w.x, w.y);
+      pa = idx >= 0 ? fieldAnchor(a, idx, w.x) : nodeAnchor(a, null, w);
     } else {
-      pa = anchorOnRect(ra, w.x, w.y);
+      pa = nodeAnchor(a, drag.from.anchor, w);
     }
     el("path", {d:`M ${pa.x} ${pa.y} L ${w.x} ${w.y}`, stroke:"#2456E6",
                 "stroke-width":1.8, "stroke-dasharray":"4 4", fill:"none"}, draftLayer);
@@ -1799,6 +1868,8 @@ board.addEventListener("pointermove", ev => {
       } else {
         el("rect", {x:r.x-3, y:r.y-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
                     stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, draftLayer);
+        const na = nearestAnchorWithin(hit.node, w);
+        if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:"#2456E6"}, draftLayer);
       }
     }
   }
@@ -1829,7 +1900,11 @@ board.addEventListener("pointerup", ev => {
     draftLayer.innerHTML = "";
     const w = clientToWorld(ev.clientX, ev.clientY);
     const hit = hitTest(w);
-    if (hit) addEdge(drag.from, { id: hit.node.id, fieldId: hit.field ? hit.field.id : undefined });
+    if (hit){
+      const na = !hit.field ? nearestAnchorWithin(hit.node, w) : null;
+      addEdge(drag.from, { id: hit.node.id, fieldId: hit.field ? hit.field.id : undefined,
+                           anchor: na ? na.key : undefined });
+    }
   }
   board.classList.remove("panning","connecting");
   drag = null;
@@ -2388,16 +2463,16 @@ function renderInspector(){
       attachRow("From", a, e, "fromField");
       attachRow("To",   b, e, "toField");
     }
+    const firstPair = edgeFieldPairs(e)[0] || {};
+    if (!(firstPair.fromField || e.fromField)) anchorRow("From", e, "fromAnchor");
+    if (!(firstPair.toField || e.toField)) anchorRow("To", e, "toAnchor");
     frow("Label (optional)", () => mkInput(e.label, v => { e.label = v; drawOnly(); }));
 
     const div = document.createElement("div");
     div.className = "rowbtns";
     div.appendChild(mkBtn("Swap direction", () => {
       pushHistory();
-      const t = e.from; e.from = e.to; e.to = t;
-      const tf = e.fromField;
-      if (e.toField !== undefined) e.fromField = e.toField; else delete e.fromField;
-      if (tf !== undefined) e.toField = tf; else delete e.toField;
+      swapEdgeDirection(e);
       render();
     }));
     div.appendChild(mkBtn("Delete edge", deleteSelection, "dangerbtn"));
@@ -2440,6 +2515,37 @@ function renderMultiInspector(){
   inspBody.appendChild(div);
 }
 
+/* swap an edge's direction, carrying row bindings and pinned anchor points */
+function swapEdgeDirection(e){
+  const t = e.from; e.from = e.to; e.to = t;
+  const tf = e.fromField;
+  if (e.toField !== undefined) e.fromField = e.toField; else delete e.fromField;
+  if (tf !== undefined) e.toField = tf; else delete e.toField;
+  const ta = e.fromAnchor;
+  if (e.toAnchor !== undefined) e.fromAnchor = e.toAnchor; else delete e.fromAnchor;
+  if (ta !== undefined) e.toAnchor = ta; else delete e.toAnchor;
+}
+/* pick one of the 9 attachment points for a whole-node edge end */
+function anchorRow(which, e, key){
+  frow(which + " point", () => {
+    const s = document.createElement("select");
+    const o0 = document.createElement("option");
+    o0.value = ""; o0.textContent = "(auto — nearest point)";
+    s.appendChild(o0);
+    for (const k of NODE_ANCHORS){
+      const o = document.createElement("option");
+      o.value = k; o.textContent = ANCHOR_LABELS[k];
+      if (e[key] === k) o.selected = true;
+      s.appendChild(o);
+    }
+    s.addEventListener("change", () => {
+      pushHistory();
+      if (s.value) e[key] = s.value; else delete e[key];
+      render();
+    });
+    return s;
+  });
+}
 /* choose whole-node vs. specific row (field/item) for one end of an edge */
 function attachRow(which, node, e, key){
   const rows = nodeRows(node);
@@ -3710,10 +3816,7 @@ function edgeMenu(e, x, y){
     ctxSep(m);
     ctxItem(m, "Swap direction", () => {
       pushHistory();
-      const t = e.from; e.from = e.to; e.to = t;
-      const tf = e.fromField;
-      if (e.toField !== undefined) e.fromField = e.toField; else delete e.fromField;
-      if (tf !== undefined) e.toField = tf; else delete e.toField;
+      swapEdgeDirection(e);
       render();
     });
     ctxItem(m, "Edit label", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
