@@ -373,9 +373,9 @@ function closeEnough(a, b, msg){
     const pasted = T.selectedNodes();
     assert.strictEqual(pasted.length, 2, "paste selects the pasted nodes");
     assert(pasted.every(n => n.id !== customers.id && n.id !== orders.id), "pasted nodes get new ids");
-    const pastedCustomers = pasted.find(n => n.title === "customers");
-    const pastedOrders = pasted.find(n => n.title === "orders");
-    assert(pastedCustomers && pastedOrders, "pasted tables preserve titles");
+    const pastedCustomers = pasted.find(n => n.title === "customers_2");
+    const pastedOrders = pasted.find(n => n.title === "orders_2");
+    assert(pastedCustomers && pastedOrders, "pasted tables get unique names (issue #46)");
     const pastedEdge = T.state.edges.find(e => e.from === pastedCustomers.id && e.to === pastedOrders.id);
     assert(pastedEdge, "internal edge is preserved on paste");
     assert.notStrictEqual(pastedEdge.fromField, customers.fields[0].id, "fromField binding is remapped");
@@ -713,8 +713,8 @@ function closeEnough(a, b, msg){
     T.copySelection();
     T.pasteSelection();
     const pasted = T.selectedNodes();
-    const pastedAccounts = pasted.find(n => n.title === "accounts");
-    const pastedUsage = pasted.find(n => n.title === "usage_events");
+    const pastedAccounts = pasted.find(n => n.title === "accounts_2");
+    const pastedUsage = pasted.find(n => n.title === "usage_events_2");
     const pastedEdge = T.state.edges.find(e => e.from === pastedAccounts.id && e.to === pastedUsage.id);
     assert(pastedEdge.pairs.every(p => !["acct_id","acct_org","usage_acct","usage_org"].includes(p.fromField) &&
       !["acct_id","acct_org","usage_acct","usage_org"].includes(p.toField)),

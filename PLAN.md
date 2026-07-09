@@ -207,8 +207,9 @@ Harness quirks you must respect:
 **To-do lists (v1.1)**
 - Third node type `todo`: titled list of checkable items with a `done/total` progress
   header, checkbox toggle on canvas (one undo step each), strikethrough + muted done
-  items, per-node color/font size/font color, notes, collapse (header + `n items`),
-  "no items yet" empty state.
+  items, per-node color/font size/font color (`fontColor` styles the header only — item
+  rows always use theme ink so a light header color cannot blank them, issue #44), notes,
+  collapse (header + `n items`), "no items yet" empty state.
 - Item editing in the inspector (text, DONE flag, reorder ↑↓, delete with edge-ref
   cleanup, add) and context menu (add item, collapse/expand); add via toolbar "+ To-do",
   keyboard `D`, canvas context menu, or the command palette.
@@ -231,6 +232,19 @@ Harness quirks you must respect:
   `list.item text`; copy/paste and duplicate remap item ids and preserve item-bound
   edges; tree auto-layout includes link-connected to-dos; SVG/PNG exports render
   checkboxes and strip handles.
+
+**Canvas & workflow (v1.2.0, issues #40/#41/#43/#46/#47)**
+- Snap to grid: a "Snap" toolbar toggle makes drags snap to the 24px dot grid (off =
+  fine 4px grid as before); "Clean Up" snaps every node to the dot grid in one undo step.
+- Space+drag pans the canvas regardless of what is under the cursor (space is ignored
+  while typing; listed in the shortcut cheat sheet).
+- Auto-save: a status-bar toggle debounce-saves every change (including undo/redo, via
+  the `setDocDirty` choke point) back to the open FSA file handle; enabling it without a
+  handle runs Save As first, and it is unavailable without the File System Access API.
+- Duplicate table names are rejected: renames via the inspector or the inline editor
+  that collide (by `ident()` key) show a notice modal and revert; new/related/pasted/
+  duplicated tables auto-uniquify (`name_2`, `name_3`, …).
+- The app version (`APP_VERSION`) is shown at the right end of the header.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).

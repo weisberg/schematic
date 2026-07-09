@@ -153,6 +153,7 @@
   footer{display:flex;align-items:center;gap:18px;padding:6px 16px;background:var(--panel);
          border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);font-family:var(--mono)}
   footer .hint{font-family:var(--ui)}
+  .appversion{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
   .statusbtn{font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:5px}
   .statuscheck{display:flex;align-items:center;gap:6px;white-space:nowrap;color:var(--muted)}
   .statuscheck input{accent-color:var(--accent)}
