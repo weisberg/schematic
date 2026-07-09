@@ -43,6 +43,8 @@
     <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema</button>
     <button id="btnAddFrame" title="Add a subject-area frame">Frame</button>
     <button id="btnLint" title="Run schema lint checks">Lint</button>
+    <button id="btnSnap" title="Snap dragged nodes to the dot grid">Snap</button>
+    <button id="btnCleanup" title="Snap every node to the dot grid now">Clean Up</button>
   </div>
 
   <div class="spacer"></div>
@@ -64,6 +66,7 @@
     <button id="btnExportPNG" title="Download diagram as PNG">PNG ↓</button>
     <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear</button>
   </div>
+  <span id="appVersion" class="appversion"></span>
   <input type="file" id="fileInput" accept="application/json,.json,.schematic" hidden>
 </header>
 
@@ -84,6 +87,7 @@
   <span id="zoomLabel">100%</span>
   <span id="countLabel">0 nodes · 0 edges</span>
   <label class="statuscheck" title="SQL dialect"><span>SQL</span><select id="dialectSelect"><option value="ansi">ANSI</option><option value="postgres">Postgres</option><option value="mysql">MySQL</option><option value="athena">Athena</option></select></label>
+  <label class="statuscheck" title="Automatically save every change to the open file"><input type="checkbox" id="autoSaveToggle"> Auto-save</label>
   <button id="btnTheme" class="statusbtn" title="Toggle light/dark theme">Dark</button>
   <label class="statuscheck" title="Export PNG using the current theme"><input type="checkbox" id="pngAsShown"> PNG as shown</label>
   <span class="hint spacer">Drag empty canvas to select · Alt-drag to pan · scroll to zoom · drag ○ to connect · double-click to edit · right-click for actions</span>

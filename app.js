@@ -40,6 +40,8 @@ const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
+const APP_VERSION = "v1.2.0";
+const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
     paper:"#EEF1F4", panel:"#FFFFFF", control:"#FBFCFD", ink:"#16232F",
@@ -56,6 +58,9 @@ const THEME = {
 };
 let docTheme = "light";
 let pngAsShown = false;
+let snapToGrid = false;
+let spaceHeld = false;
+let autoSave = false, autoSaveTimer = null;
 let docDialect = "ansi";
 const SQL_DIALECTS = ["ansi","postgres","mysql","athena"];
 const SQL_TYPES_BY_DIALECT = {
@@ -86,7 +91,8 @@ const SHORTCUTS = [
   { id:"fit", keys:"F", title:"Fit diagram" },
   { id:"escape", keys:"Esc", title:"Close menu or clear selection" },
   { id:"nudge", keys:"Arrow keys", title:"Nudge selected nodes" },
-  { id:"nudgeLarge", keys:"Shift+Arrow keys", title:"Nudge selected nodes by 24px" }
+  { id:"nudgeLarge", keys:"Shift+Arrow keys", title:"Nudge selected nodes by 24px" },
+  { id:"spacePan", keys:"Space+drag", title:"Pan the canvas" }
 ];
 
 /* recent custom colors (SCH-017): live in the document (meta.recentColors) and are
@@ -432,8 +438,41 @@ function updateDocLabel(){
 function setDocDirty(dirty){
   doc.dirty = dirty;
   updateDocLabel();
-  if (dirty) scheduleRecoverySave();
+  if (dirty){
+    scheduleRecoverySave();
+    scheduleAutoSave();   // undo/redo also land here, so reverted states auto-save too
+  }
   else clearRecoverySave();
+}
+/* auto-save (issue #43): debounced write-back to the current FSA handle */
+function scheduleAutoSave(){
+  if (!autoSave || !doc.handle) return;
+  if (autoSaveTimer) clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    autoSaveTimer = null;
+    if (autoSave && doc.handle && doc.dirty) saveDoc();
+  }, 800);
+}
+function updateAutoSaveControl(){
+  const cb = document.getElementById("autoSaveToggle");
+  if (cb) cb.checked = autoSave;
+}
+async function setAutoSave(on){
+  if (!on){
+    autoSave = false;
+    if (autoSaveTimer){ clearTimeout(autoSaveTimer); autoSaveTimer = null; }
+    updateAutoSaveControl();
+    return;
+  }
+  if (!FSA){
+    alert("Auto-save needs the File System Access API — use a Chromium browser over HTTPS or localhost.");
+    updateAutoSaveControl();
+    return;
+  }
+  if (!doc.handle) await saveAsDoc();   // pick the file to keep saving into
+  autoSave = !!doc.handle;
+  updateAutoSaveControl();
+  if (autoSave && doc.dirty) scheduleAutoSave();
 }
 function clearRecoverySave(){
   if (recoveryTimer){
@@ -955,7 +994,9 @@ function drawNode(n){
           el("path", {d:`M ${8 + cbSize*0.22} ${cy + cbSize*0.02} L ${8 + cbSize*0.42} ${cy + cbSize*0.24} L ${8 + cbSize*0.8} ${cy - cbSize*0.26}`,
                       stroke:t.tableFill, "stroke-width":1.6, fill:"none",
                       "stroke-linecap":"round", "stroke-linejoin":"round"}, cb);
-        const label = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill: it.done ? t.muted : fc,
+        /* item text keeps the theme ink (issue #44): n.fontColor styles only the header,
+           otherwise a light header color would blank out every item row */
+        const label = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill: it.done ? t.muted : t.ink,
                     "font-family":"Archivo, sans-serif", "font-size":m.nameSize, "font-weight":500}, g);
         if (it.done) label.setAttribute("text-decoration", "line-through");
         label.textContent = truncate(it.text || "…", r.w - m.nameX - 16, `500 ${m.nameSize}px Archivo, sans-serif`);
@@ -1063,7 +1104,7 @@ function addNode(type, x, y){
     n = { id: uid(), type, x, y, title:"To-do list", notes:"", color:TODO_COLOR_DEFAULT,
           items:[{ id: uid(), text:"New item" }] };
   } else {
-    n = { id: uid(), type:"table", x, y, title:"new_table", notes:"", color:themeColors("light").ink,
+    n = { id: uid(), type:"table", x, y, title:uniqueTableTitle("new_table"), notes:"", color:themeColors("light").ink,
           fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
   }
   state.nodes.push(n);
@@ -1172,7 +1213,23 @@ function pastePayload(payload, offset = 36, mutate = true){
   if (mutate) pushHistory();
   state.nodes.push(...remapped.nodes);
   state.edges.push(...remapped.edges);
+  /* duplicated/pasted tables must not collide with existing names (issue #46) */
+  for (const n of remapped.nodes)
+    if (n.type === "table") n.title = uniqueTableTitle(n.title, n);
   return remapped;
+}
+/* table names are unique by their SQL identifier (issue #46) */
+function tableNameConflict(node, title){
+  const key = ident(title);
+  return state.nodes.some(n => n !== node && n.type === "table" && ident(n.title) === key);
+}
+function uniqueTableTitle(base, node = null){
+  const conflict = t => state.nodes.some(n => n !== node && n.type === "table" && ident(n.title) === ident(t));
+  const title = base || "new_table";
+  if (!conflict(title)) return title;
+  let i = 2;
+  while (conflict(title + "_" + i)) i++;
+  return title + "_" + i;
 }
 function copySelection(cut = false){
   const ids = selectionIds("node");
@@ -1413,7 +1470,7 @@ function addRelatedTable(parentId){
   const ppk = p.fields.find(f => f.pk);
   const fkName = ident(p.title).replace(/s$/, "") + "_id";
   const n = { id: uid(), type:"table", x: r.x + r.w + 120, y: r.y,
-              title:"new_table", notes:"", color: p.color || "#16232F",
+              title:uniqueTableTitle("new_table"), notes:"", color: p.color || "#16232F",
               fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
   const fk = { id: uid(), name: fkName, type:"INT", pk:false, fk:true, nullable:false };
   n.fields.push(fk);
@@ -1495,6 +1552,31 @@ function startLongPress(ev){
 
 let lastPress = null; // {t, x, y} of the previous plain pointerdown, for double-press detection
 
+/* grid snapping (issue #40): drags always snap — to the visible dot grid when the
+   toggle is on, else to the fine 4px grid */
+function dragSnap(v){
+  const step = snapToGrid ? GRID_SNAP : 4;
+  return Math.round(v/step)*step;
+}
+function updateSnapControl(){
+  const b = document.getElementById("btnSnap");
+  if (b) b.classList.toggle("primary", snapToGrid);
+}
+function toggleSnapToGrid(){
+  snapToGrid = !snapToGrid;
+  updateSnapControl();
+}
+/* "Clean Up": snap every node to the dot grid without dragging */
+function cleanUpToGrid(){
+  if (!state.nodes.length) return;
+  pushHistory();
+  for (const n of state.nodes){
+    n.x = Math.round(n.x/GRID_SNAP)*GRID_SNAP;
+    n.y = Math.round(n.y/GRID_SNAP)*GRID_SNAP;
+  }
+  render();
+}
+
 board.addEventListener("pointerdown", ev => {
   if (ev.button === 2) return;
   ev.preventDefault();                       // stop native text-selection drags
@@ -1564,6 +1646,14 @@ board.addEventListener("pointerdown", ev => {
     setSelection("node", id);
     drag = { mode:"frame-resize", id, start:w, w:n.w || FRAME_DEFAULT.w, h:n.h || FRAME_DEFAULT.h, moved:false };
     render();
+    return;
+  }
+
+  /* space+drag pans regardless of what's under the cursor (issue #41) */
+  if (spaceHeld){
+    lastPress = null;
+    drag = { mode:"pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved:true };
+    board.classList.add("panning");
     return;
   }
 
@@ -1661,8 +1751,8 @@ board.addEventListener("pointermove", ev => {
     for (const start of drag.starts){
       const n = nodeById(start.id);
       if (!n) continue;
-      n.x = Math.round((start.x + dx)/4)*4;
-      n.y = Math.round((start.y + dy)/4)*4;
+      n.x = dragSnap(start.x + dx);
+      n.y = dragSnap(start.y + dy);
     }
     if (state.nodes.length > 150) fastDragRender(drag.starts.map(s => s.id));
     else render();
@@ -1838,6 +1928,11 @@ function nudgeSelection(key, step){
 window.addEventListener("keydown", ev => {
   const tag = document.activeElement && document.activeElement.tagName;
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  if (!typing && ev.key === " "){
+    ev.preventDefault();          // keep the page from scrolling while space-panning
+    spaceHeld = true;
+    return;
+  }
   if (!typing && document.activeElement === board && ev.key === "Tab"){
     ev.preventDefault();
     cycleNodeSelection(ev.shiftKey);
@@ -1856,6 +1951,8 @@ window.addEventListener("keydown", ev => {
     return;
   }
 });
+window.addEventListener("keyup", ev => { if (ev.key === " ") spaceHeld = false; });
+window.addEventListener("blur", () => { spaceHeld = false; });
 function viewCenter(){
   const b = board.getBoundingClientRect();
   return clientToWorld(b.left + b.width/2, b.top + b.height/2);
@@ -1959,6 +2056,11 @@ function closeInlineEditor(commit){
     const target = editor.kind === "row" ? inlineEditorRow(editor.id, editor.rowId)
                  : editor.kind === "node" ? nodeById(editor.id) : edgeById(editor.id);
     if (target){
+      if (editor.kind === "node" && target.type === "table" && tableNameConflict(target, value)){
+        showNoticeModal("Duplicate table name",
+          `A table named "${ident(value)}" already exists. Table names must be unique.`);
+        return;
+      }
       pushHistory();
       if (editor.kind === "row"){
         const n = nodeById(editor.id);
@@ -1970,6 +2072,24 @@ function closeInlineEditor(commit){
       render();
     }
   }
+}
+
+let noticeModal = null;
+function closeNoticeModal(){
+  if (noticeModal && noticeModal.parentNode) noticeModal.parentNode.removeChild(noticeModal);
+  noticeModal = null;
+}
+function showNoticeModal(title, message){
+  closeNoticeModal();
+  const modal = document.createElement("div");
+  modal.className = "modal open notice-modal";
+  modal.innerHTML = `<div class="card"><h3></h3><p class="helper"></p><div class="actions"><button class="primary" id="btnCloseNotice">OK</button></div></div>`;
+  modal.querySelector("h3").textContent = title;
+  modal.querySelector("p").textContent = message;
+  modal.addEventListener("click", ev => { if (ev.target === modal) closeNoticeModal(); });
+  document.body.appendChild(modal);
+  noticeModal = modal;
+  modal.querySelector("#btnCloseNotice").addEventListener("click", closeNoticeModal);
 }
 
 let paletteModal = null;
@@ -2132,7 +2252,23 @@ function renderInspector(){
 
     frow(n.type === "table" ? "Table name" : "Title", () => {
       const i = mkInput(n.title, v => { n.title = v; drawOnly(); });
-      i.id = "titleInput"; return i;
+      i.id = "titleInput";
+      if (n.type === "table"){
+        /* duplicate names are rejected on commit (issue #46); live typing may pass
+           through a conflicting prefix without nagging */
+        let prev = n.title;
+        i.addEventListener("focus", () => { prev = n.title; });
+        i.addEventListener("blur", () => {
+          if (tableNameConflict(n, n.title)){
+            showNoticeModal("Duplicate table name",
+              `A table named "${ident(n.title)}" already exists. Table names must be unique.`);
+            n.title = prev;
+            i.value = prev;
+            drawOnly();
+          }
+        });
+      }
+      return i;
     });
 
     if (n.type === "frame"){
@@ -2764,6 +2900,7 @@ function newDoc(){
   undoStack.length = 0;
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
+  setAutoSave(false);   // the new document has no file handle to save into
   applyTheme("light", { render:false });
   applyDialect("ansi", { render:false });
   setPngAsShown(false);
@@ -2807,6 +2944,9 @@ document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
 document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
+document.getElementById("btnSnap").addEventListener("click", toggleSnapToGrid);
+document.getElementById("btnCleanup").addEventListener("click", cleanUpToGrid);
+document.getElementById("autoSaveToggle").addEventListener("change", ev => setAutoSave(ev.target.checked));
 document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
 document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
@@ -3679,6 +3819,12 @@ syncHistoryButtons();
 updateDocLabel();
 syncAriaLabels();
 updateDialectControls();
+updateSnapControl();
+updateAutoSaveControl();
+{
+  const versionEl = document.getElementById("appVersion");
+  if (versionEl){ versionEl.textContent = APP_VERSION; versionEl.title = "Schematic " + APP_VERSION; }
+}
 showCapabilityBanner();
 maybeShowRecovery();
 requestAnimationFrame(fitView);
