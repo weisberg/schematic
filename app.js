@@ -49,7 +49,7 @@ const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.3.2";
+const APP_VERSION = "v1.3.3";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -3921,6 +3921,29 @@ function ctxSizeRow(parent, n, targets = [n]){
     }));
   parent.appendChild(wrap);
 }
+/* Standard concept symbols, kept compact enough to fit the right-click menu. */
+function ctxShapeRow(parent, n, targets = [n]){
+  const concepts = targets.filter(t => t.type === "concept");
+  if (n.type !== "concept" || !concepts.length) return;
+  const row = document.createElement("div");
+  row.className = "shaperow";
+  for (const [shape, label] of FLOWCHART_SHAPES){
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.title = label;
+    b.setAttribute("data-shape-option", shape);
+    b.setAttribute("aria-pressed", String(conceptShape(n) === shape));
+    if (conceptShape(n) === shape) b.className = "on";
+    b.addEventListener("click", () => {
+      hideCtx();
+      pushHistory(concepts.length > 1 ? "shape:multi" : "shape:" + n.id);
+      for (const target of concepts) setConceptShape(target, shape);
+      render();
+    });
+    row.appendChild(b);
+  }
+  parent.appendChild(row);
+}
 
 function nodeMenu(n, x, y){
   const targets = isSelected("node", n.id) ? selectedNodes() : [n];
@@ -3932,6 +3955,10 @@ function nodeMenu(n, x, y){
               : n.type === "todo" ? "List color" : "Header color");
     ctxSwatches(m, (n.type === "concept" || n.type === "todo") ? CONCEPT_COLORS : TABLE_COLORS, n.color,
       (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
+    if (n.type === "concept"){
+      ctxLabel(m, "Shape");
+      ctxShapeRow(m, n, targets);
+    }
     if (n.type !== "frame"){
       ctxLabel(m, "Text size");
       ctxSizeRow(m, n, targets);
@@ -4164,6 +4191,7 @@ window.__T = {
   conceptShape,
   setConceptShape,
   get FLOWCHART_SHAPES(){ return FLOWCHART_SHAPES.map(([id, label]) => ({id, label})); },
+  nodeMenu,
   nodeAnchor,
   nodeRows,
   tableMetrics,

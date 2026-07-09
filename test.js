@@ -1330,6 +1330,26 @@ function closeEnough(a, b, msg){
 
     T.setConceptShape(concept, "process");
     assert.strictEqual(Object.hasOwn(concept, "shape"), false, "switching back to Process removes the optional shape key");
+
+    T.setSelection("node", concept.id);
+    T.nodeMenu(concept, 10, 10);
+    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length, 6,
+      "concept context menu exposes every standard flowchart shape");
+    window.document.querySelector('#ctxMenu [data-shape-option="terminator"]').click();
+    assert.strictEqual(concept.shape, "terminator", "context-menu shape selection updates the concept");
+    assert.strictEqual(window.document.getElementById("ctxMenu").style.display, "none",
+      "context menu closes after choosing a shape");
+
+    T.setSelection("node", [concept.id, target.id]);
+    T.nodeMenu(concept, 10, 10);
+    window.document.querySelector('#ctxMenu [data-shape-option="manualInput"]').click();
+    assert.strictEqual(concept.shape, "manualInput", "context-menu selection updates the clicked concept");
+    assert.strictEqual(target.shape, "manualInput", "context-menu selection updates every selected concept");
+
+    const table = T.state.nodes.find(n => n.type === "table");
+    T.nodeMenu(table, 10, 10);
+    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length, 0,
+      "structural table nodes do not expose concept flowchart shapes");
   }
 
   console.log("ALL TESTS PASSED");
