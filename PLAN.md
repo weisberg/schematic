@@ -212,6 +212,10 @@ Harness quirks you must respect:
 - Item editing in the inspector (text, DONE flag, reorder ↑↓, delete with edge-ref
   cleanup, add) and context menu (add item, collapse/expand); add via toolbar "+ To-do",
   keyboard `D`, canvas context menu, or the command palette.
+- Inline row editing on canvas: double-click a table field row or a to-do item row to
+  edit the field name / item text in place (same overlay as SCH-013 — Enter commits as
+  one undo step, Esc cancels); double-click on the header, a concept, or an edge label
+  still edits title/label; checkbox/handle/collapse targets are excluded.
 - Connections at list or item granularity: per-row ○ handles reuse the field machinery
   via the shared `nodeRows(n)` accessor; bindings live in the existing
   `fromField`/`toField` keys; collapsed lists re-anchor bound edges to the node boundary;

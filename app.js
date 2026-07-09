@@ -1719,13 +1719,17 @@ board.addEventListener("pointercancel", ev => {
 });
 
 board.addEventListener("dblclick", ev => {
+  if (ev.target.closest("[data-todocheck], [data-fieldhandle], [data-handle], [data-collapse], [data-frame-resize]")) return;
   const nodeEl = ev.target.closest("[data-node]");
   const edgeEl = ev.target.closest("[data-edge]");
   if (nodeEl){
     const id = nodeEl.getAttribute("data-node");
     setSelection("node", id);
     render();
-    startInlineEditor("node", id);
+    /* a row under the cursor edits that field name / item text; anywhere else edits the title */
+    const hit = hitTest(clientToWorld(ev.clientX, ev.clientY));
+    if (hit && hit.node.id === id && hit.field) startInlineEditor("row", id, hit.field.id);
+    else startInlineEditor("node", id);
   } else if (edgeEl){
     const id = edgeEl.getAttribute("data-edge");
     setSelection("edge", id);
@@ -1866,7 +1870,18 @@ function worldToWrap(x, y){
   const wr = wrap.getBoundingClientRect();
   return { x: br.left - wr.left + view.x + x*view.k, y: br.top - wr.top + view.y + y*view.k };
 }
-function inlineEditorBox(kind, id){
+function inlineEditorBox(kind, id, rowId){
+  if (kind === "row"){
+    const n = nodeById(id);
+    const rows = n && !n.collapsed ? nodeRows(n) : null;
+    const idx = rows ? rows.findIndex(row => row.id === rowId) : -1;
+    if (idx < 0) return null;
+    const m = tableMetrics(n);
+    const r = nodeRect(n);
+    const p = worldToWrap(r.x + m.nameX - 4, r.y + m.headerH + idx*m.rowH + 1);
+    return { x:p.x, y:p.y, w:Math.max(100, (r.w - m.nameX - 8)*view.k),
+             h:Math.max(20, (m.rowH - 2)*view.k), fontSize:Math.max(11, m.nameSize*view.k) };
+  }
   if (kind === "node"){
     const n = nodeById(id);
     if (!n) return null;
@@ -1888,13 +1903,20 @@ function inlineEditorBox(kind, id){
   const p = worldToWrap((ep.pa.x + ep.pb.x)/2 - 70, (ep.pa.y + ep.pb.y)/2 - 16);
   return { x:p.x, y:p.y, w:140, h:30, fontSize:13 };
 }
-function startInlineEditor(kind, id){
+function inlineEditorRow(id, rowId){
+  const n = nodeById(id);
+  const rows = n ? nodeRows(n) : null;
+  return rows ? rows.find(row => row.id === rowId) || null : null;
+}
+function startInlineEditor(kind, id, rowId){
   closeInlineEditor(false);
-  const box = inlineEditorBox(kind, id);
+  const box = inlineEditorBox(kind, id, rowId);
   if (!box) return;
-  const target = kind === "node" ? nodeById(id) : edgeById(id);
+  const target = kind === "row" ? inlineEditorRow(id, rowId)
+               : kind === "node" ? nodeById(id) : edgeById(id);
   if (!target) return;
-  const original = kind === "node" ? target.title || "" : target.label || "";
+  const original = kind === "row" ? (target.name ?? target.text ?? "")
+                 : kind === "node" ? target.title || "" : target.label || "";
   const input = document.createElement("input");
   input.type = "text";
   input.className = "inline-editor";
@@ -1911,7 +1933,7 @@ function startInlineEditor(kind, id){
   });
   input.addEventListener("blur", () => closeInlineEditor(true));
   wrap.appendChild(input);
-  inlineEditor = { kind, id, input, original, closing:false };
+  inlineEditor = { kind, id, rowId, input, original, closing:false };
   input.focus();
   input.select();
 }
@@ -1923,10 +1945,16 @@ function closeInlineEditor(commit){
   const value = editor.input.value;
   if (editor.input.parentNode) editor.input.parentNode.removeChild(editor.input);
   if (commit && value !== editor.original){
-    const target = editor.kind === "node" ? nodeById(editor.id) : edgeById(editor.id);
+    const target = editor.kind === "row" ? inlineEditorRow(editor.id, editor.rowId)
+                 : editor.kind === "node" ? nodeById(editor.id) : edgeById(editor.id);
     if (target){
       pushHistory();
-      if (editor.kind === "node") target.title = value;
+      if (editor.kind === "row"){
+        const n = nodeById(editor.id);
+        if (n && n.type === "table") target.name = value;
+        else target.text = value;
+      }
+      else if (editor.kind === "node") target.title = value;
       else target.label = value;
       render();
     }

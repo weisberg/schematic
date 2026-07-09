@@ -1206,6 +1206,63 @@ function closeEnough(a, b, msg){
     assert(svg.includes("data-todocheck"), "SVG export keeps rendered checkboxes");
   }
 
+  /* inline row editing — dblclick edits field names and item texts in place */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.setView({ x:0, y:0, k:1 });
+
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const m = T.tableMetrics(customers);
+    const r = T.nodeRect(customers);
+    const rowPoint = { clientX: r.x + m.nameX + 10, clientY: r.y + m.headerH + m.rowH*1.5 };
+    window.document.querySelector(`[data-node="${customers.id}"]`)
+      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...rowPoint }));
+    let editor = window.document.querySelector(".inline-editor");
+    assert(editor, "dblclick on a field row opens the inline editor");
+    assert.strictEqual(editor.value, customers.fields[1].name, "row editor starts from the field name");
+    const depthBefore = T.undoDepth;
+    editor.value = "customer_email";
+    editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true, cancelable:true }));
+    assert.strictEqual(customers.fields[1].name, "customer_email", "Enter commits the field rename");
+    assert.strictEqual(T.undoDepth, depthBefore + 1, "a row commit is one undo step");
+    assert(!window.document.querySelector(".inline-editor"), "the editor closes on Enter");
+
+    const todo = T.addNode("todo", 1300, 700);
+    T.pushHistory();
+    todo.items.push({ id:"ie_b", text:"Polish copy" });
+    T.render();
+    const tm = T.tableMetrics(todo);
+    const tr = T.nodeRect(todo);
+    const itemPoint = { clientX: tr.x + tm.nameX + 10, clientY: tr.y + tm.headerH + tm.rowH*1.5 };
+    window.document.querySelector(`[data-node="${todo.id}"]`)
+      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...itemPoint }));
+    editor = window.document.querySelector(".inline-editor");
+    assert(editor, "dblclick on a to-do item row opens the inline editor");
+    assert.strictEqual(editor.value, "Polish copy", "row editor starts from the item text");
+    editor.value = "Polish microcopy";
+    editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true, cancelable:true }));
+    assert.strictEqual(todo.items[1].text, "Polish microcopy", "Enter commits the item text");
+
+    window.document.querySelector(`[data-node="${todo.id}"]`)
+      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...itemPoint }));
+    editor = window.document.querySelector(".inline-editor");
+    editor.value = "Discarded";
+    editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
+    assert.strictEqual(todo.items[1].text, "Polish microcopy", "Escape cancels a row edit");
+
+    window.document.querySelector(`[data-node="${todo.id}"]`)
+      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true,
+        clientX: tr.x + 12, clientY: tr.y + 5 }));
+    editor = window.document.querySelector(".inline-editor");
+    assert(editor && editor.value === todo.title, "dblclick on the header still edits the title");
+    editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
+
+    const cb = window.document.querySelector(`[data-todonode="${todo.id}"]`);
+    cb.dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, clientX:0, clientY:0 }));
+    assert(!window.document.querySelector(".inline-editor"), "dblclick on a checkbox does not open an editor");
+  }
+
   {
     const { window } = makeDom();
     const fonts = [...window.document.querySelectorAll("svg text")]
