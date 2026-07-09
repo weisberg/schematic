@@ -263,6 +263,12 @@ Harness quirks you must respect:
   copy/paste/duplicate preserve them; JSON round-trips them (`swapEdgeDirection`,
   `nodeAnchor`, `anchorPointsForRect`, `nearestAnchorWithin`).
 - Row-level (field/item) anchoring is unchanged and takes precedence over node points.
+- Endpoint editing (v1.3.1): selecting an edge shows a grip at each end (drawn in
+  `draftLayer` so they sit above the node anchor handles); dragging a grip moves that
+  end to another attachment point, a field/item row, or a different node entirely
+  (`reattachEdgeEnd` — duplicate/self-loop drops cancel, composite pairs collapse to the
+  simple binding, todo ends force `link`; drops just outside the rect are accepted via
+  `looseHit`). Grips are stripped from PNG/SVG exports via `[data-edgegrip]`.
 
 **Editing surfaces**
 - Right inspector (node/table/edge editors, help + legend when nothing selected).
