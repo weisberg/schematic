@@ -1314,8 +1314,19 @@ function closeEnough(a, b, msg){
     selector.value = "document";
     selector.dispatchEvent(new window.Event("change"));
     assert.strictEqual(concept.shape, "document", "shape selector switches to a document symbol");
-    assert(window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="document"]`),
+    const documentPath = window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="document"]`);
+    assert(documentPath,
       "document renders as its own SVG node shape");
+    assert((documentPath.getAttribute("d").match(/ C /g) || []).length >= 2,
+      "document uses a pronounced two-crest wavy lower edge");
+    assert(window.document.querySelector(`[data-node="${concept.id}"] [data-document-fold]`),
+      "document includes a folded corner so it does not read as a plain rectangle");
+    const documentHeight = T.nodeRect(concept).h;
+    T.setConceptShape(concept, "process");
+    assert(documentHeight > T.nodeRect(concept).h,
+      "document reserves extra height for its wavy lower silhouette");
+    T.setConceptShape(concept, "document");
+    T.render();
     for (const { id } of T.FLOWCHART_SHAPES){
       T.setConceptShape(concept, id);
       T.render();

@@ -603,7 +603,7 @@ function nodeSize(n){
     }
     const w = Math.max(130, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) +
       (shape === "data" || shape === "manualInput" ? 56 : 44));
-    const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 8 : 0);
+    const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 18 : 0);
     return { w: Math.min(w, 420), h };
   }
   if (n.type === "todo"){
@@ -1056,8 +1056,15 @@ function drawConceptShape(g, n, r, attrs){
   if (shape === "data")
     return el("path", {d:`M 18 0 H ${r.w} L ${r.w-18} ${r.h} H 0 Z`, ...common}, g);
   if (shape === "document"){
-    const wave = Math.min(12, Math.max(7, r.h * .18));
-    return el("path", {d:`M 0 0 H ${r.w} V ${r.h-wave} C ${r.w*.82} ${r.h+wave*.25}, ${r.w*.66} ${r.h-wave*.35}, ${r.w/2} ${r.h-wave*.02} C ${r.w*.33} ${r.h+wave*.32}, ${r.w*.16} ${r.h-wave*.28}, 0 ${r.h-wave*.02} Z`, ...common}, g);
+    /* Paper fold + two-crest lower edge keep this distinct from a rectangular process. */
+    const wave = Math.min(18, Math.max(12, r.h * .28));
+    const fold = Math.min(20, Math.max(14, r.h * .25));
+    const base = r.h - wave;
+    const outline = el("path", {d:`M 0 0 H ${r.w-fold} L ${r.w} ${fold} V ${base} C ${r.w*.86} ${r.h}, ${r.w*.68} ${base + wave*.1}, ${r.w/2} ${base + wave*.78} C ${r.w*.32} ${r.h}, ${r.w*.14} ${base + wave*.18}, 0 ${base + wave*.7} Z`, ...common}, g);
+    el("path", {d:`M ${r.w-fold} 0 V ${fold} H ${r.w}`, fill:"none", stroke:attrs.stroke,
+                "stroke-width":Math.max(1, Number(attrs["stroke-width"]) * .85),
+                "stroke-linejoin":"round", "pointer-events":"none", "data-document-fold":"1"}, g);
+    return outline;
   }
   /* Manual input: the sloped leading edge is the conventional flowchart symbol. */
   return el("path", {d:`M 20 0 H ${r.w} L ${r.w-14} ${r.h} H 0 Z`, ...common}, g);
@@ -1079,7 +1086,7 @@ function drawNode(n){
                 "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
     titleText.textContent = truncate(n.title || "Untitled", conceptTextWidth(shape, r.w), `600 ${fs}px Archivo, sans-serif`);
     if (n.notes){
-      const noteAtSide = shape === "decision" || shape === "terminator";
+      const noteAtSide = shape === "decision" || shape === "terminator" || shape === "document";
       el("circle", {cx:noteAtSide ? r.w - 14 : r.w - 12, cy:noteAtSide ? r.h/2 : 12,
                     r:3.2, fill:t.ink, opacity:.55}, g);
     }
