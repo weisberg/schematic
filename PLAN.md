@@ -298,7 +298,8 @@ Harness quirks you must respect:
   to localStorage when available; document colors win on import merge.
 - Concept nodes support standard flowchart shapes: Process, Decision, Terminator, Data
   (input/output), Document, and Manual input. The Inspector also applies a shape to a
-  multi-selection of concept nodes; Decision anchors follow the diamond perimeter.
+  multi-selection of concept nodes, and the concept-node context menu exposes the same
+  controls; Decision anchors follow the diamond perimeter.
 - Dark theme: status-bar toggle persisted in `meta.theme`; SVG draw code reads a `THEME`
   lookup so document colors and dark chrome render/export consistently.
 - Undo/redo: 100-step snapshot stack with time+key coalescing for continuous edits.
@@ -819,10 +820,10 @@ most needs.
 
 Add the optional concept-only `shape` key with six standard symbols: Process, Decision,
 Terminator, Data (input/output), Document, and Manual input. Expose it through the
-Inspector for individual concept nodes and concept-only multi-selections. Keep the default
-Process shape absent from JSON for backward-compatible compact documents; Decision's
-anchor points must lie on its diamond perimeter. Add jsdom coverage for selection,
-rendering, geometry, and JSON round-tripping.
+Inspector and concept-node context menu for individual concept nodes and concept-only
+multi-selections. Keep the default Process shape absent from JSON for backward-compatible
+compact documents; Decision's anchor points must lie on its diamond perimeter. Add jsdom
+coverage for selection, rendering, geometry, and JSON round-tripping.
 
 ---
 
