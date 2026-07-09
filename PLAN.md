@@ -216,6 +216,10 @@ Harness quirks you must respect:
   edit the field name / item text in place (same overlay as SCH-013 — Enter commits as
   one undo step, Esc cancels); double-click on the header, a concept, or an edge label
   still edits title/label; checkbox/handle/collapse targets are excluded.
+- Double-click detection is pointer-based (two plain presses within 400ms and 6px, per
+  E9), NOT the native `dblclick` event: the first press re-renders and replaces the SVG
+  element under the cursor, which makes browsers retarget or drop `dblclick` entirely.
+  Do not reintroduce a `dblclick` listener on the board.
 - Connections at list or item granularity: per-row ○ handles reuse the field machinery
   via the shared `nodeRows(n)` accessor; bindings live in the existing
   `fromField`/`toField` keys; collapsed lists re-anchor bound edges to the node boundary;

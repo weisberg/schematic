@@ -1493,6 +1493,8 @@ function startLongPress(ev){
   }, 500) };
 }
 
+let lastPress = null; // {t, x, y} of the previous plain pointerdown, for double-press detection
+
 board.addEventListener("pointerdown", ev => {
   if (ev.button === 2) return;
   ev.preventDefault();                       // stop native text-selection drags
@@ -1564,6 +1566,38 @@ board.addEventListener("pointerdown", ev => {
     render();
     return;
   }
+
+  /* double-press detection (E9): we cannot trust native dblclick because the first
+     press re-renders and replaces the SVG elements under the cursor, which makes the
+     browser retarget or drop the dblclick event entirely. */
+  const plainPress = !ev.shiftKey && !ev.altKey && ev.button !== 1;
+  const now = Date.now();
+  const doublePress = plainPress && lastPress && now - lastPress.t < 400 &&
+    Math.hypot(ev.clientX - lastPress.x, ev.clientY - lastPress.y) < 6;
+  lastPress = plainPress && !doublePress ? { t: now, x: ev.clientX, y: ev.clientY } : null;
+  if (doublePress){
+    drag = null;
+    board.classList.remove("panning","connecting");
+    if (nodeEl){
+      const id = nodeEl.getAttribute("data-node");
+      setSelection("node", id);
+      render();
+      /* a row under the cursor edits that field name / item text; anywhere else edits the title */
+      const hit = hitTest(clientToWorld(ev.clientX, ev.clientY));
+      if (hit && hit.node.id === id && hit.field) startInlineEditor("row", id, hit.field.id);
+      else startInlineEditor("node", id);
+    } else if (edgeEl){
+      const id = edgeEl.getAttribute("data-edge");
+      setSelection("edge", id);
+      render();
+      startInlineEditor("edge", id);
+    } else {
+      const w = clientToWorld(ev.clientX, ev.clientY);
+      addNode("concept", w.x - 65, w.y - 24);
+    }
+    return;
+  }
+
   if (nodeEl){
     const id = nodeEl.getAttribute("data-node");
     const n = nodeById(id);
@@ -1716,29 +1750,6 @@ board.addEventListener("pointercancel", ev => {
   if (activePointers.size < 2) touchGesture = null;
   drag = null;
   board.classList.remove("panning","connecting");
-});
-
-board.addEventListener("dblclick", ev => {
-  if (ev.target.closest("[data-todocheck], [data-fieldhandle], [data-handle], [data-collapse], [data-frame-resize]")) return;
-  const nodeEl = ev.target.closest("[data-node]");
-  const edgeEl = ev.target.closest("[data-edge]");
-  if (nodeEl){
-    const id = nodeEl.getAttribute("data-node");
-    setSelection("node", id);
-    render();
-    /* a row under the cursor edits that field name / item text; anywhere else edits the title */
-    const hit = hitTest(clientToWorld(ev.clientX, ev.clientY));
-    if (hit && hit.node.id === id && hit.field) startInlineEditor("row", id, hit.field.id);
-    else startInlineEditor("node", id);
-  } else if (edgeEl){
-    const id = edgeEl.getAttribute("data-edge");
-    setSelection("edge", id);
-    render();
-    startInlineEditor("edge", id);
-  } else {
-    const w = clientToWorld(ev.clientX, ev.clientY);
-    addNode("concept", w.x - 65, w.y - 24);
-  }
 });
 
 board.addEventListener("wheel", ev => {
