@@ -40,7 +40,7 @@ const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.3.0";
+const APP_VERSION = "v1.3.1";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -745,9 +745,11 @@ function render(){
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
+  draftLayer.innerHTML = "";
   for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
   for (const e of state.edges) drawEdge(e);
   for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  drawEdgeGrips();
   const frames = state.nodes.filter(n => n.type === "frame").length;
   const nodes = state.nodes.length - frames;
   document.getElementById("countLabel").textContent =
@@ -1620,6 +1622,90 @@ function startLongPress(ev){
 
 let lastPress = null; // {t, x, y} of the previous plain pointerdown, for double-press detection
 
+/* endpoint grips on the selected edge: drag one to move that end to another
+   attachment point, row, or node. Drawn in draftLayer so they sit above the
+   node layer's own anchor handles. */
+function drawEdgeGrips(){
+  const e = singleSelectedEdge();
+  if (!e) return;
+  const ep = edgeEndpoints(e);
+  if (!ep) return;
+  const t = themeColors();
+  for (const [end, p] of [["from", ep.pa], ["to", ep.pb]]){
+    const gg = el("g", {"data-edgegrip": e.id, "data-gripend": end, cursor:"move"}, draftLayer);
+    el("circle", {cx:p.x, cy:p.y, r:12, fill:"transparent"}, gg);
+    el("circle", {cx:p.x, cy:p.y, r:5, fill:t.panel, stroke:t.accent, "stroke-width":2}, gg);
+  }
+}
+/* hitTest, but tolerant of drops just outside a node's rect — attachment points
+   sit on the boundary, so precise drops often land a pixel or two outside */
+function looseHit(w, tol = 16){
+  const hit = hitTest(w);
+  if (hit) return hit;
+  for (let i = state.nodes.length - 1; i >= 0; i--){
+    const n = state.nodes[i];
+    if (n.type === "frame") continue;
+    const r = nodeRect(n);
+    if (w.x >= r.x - tol && w.x <= r.x + r.w + tol && w.y >= r.y - tol && w.y <= r.y + r.h + tol)
+      return { node: n, field: null };
+  }
+  return null;
+}
+/* shared drop-target preview for connect and reattach drags */
+function drawDropPreview(hit, w){
+  const r = nodeRect(hit.node);
+  if (hit.field){
+    const idx = (nodeRows(hit.node) || []).indexOf(hit.field);
+    const mm = tableMetrics(hit.node);
+    el("rect", {x:r.x+2, y:r.y + mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
+                fill:"#2456E6", opacity:.16}, draftLayer);
+  } else {
+    el("rect", {x:r.x-3, y:r.y-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
+                stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, draftLayer);
+    const na = nearestAnchorWithin(hit.node, w);
+    if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:"#2456E6"}, draftLayer);
+  }
+}
+/* move one end of an existing edge to a new attachment point / row / node */
+function reattachEdgeEnd(e, end, hit, w){
+  const isFrom = end === "from";
+  const n = hit.node;
+  const newFrom = isFrom ? n.id : e.from;
+  const newTo = isFrom ? e.to : n.id;
+  if (newFrom === newTo || n.type === "frame"){ render(); return; }
+  const newFromField = isFrom ? (hit.field ? hit.field.id : "") : (e.fromField || "");
+  const newToField = !isFrom ? (hit.field ? hit.field.id : "") : (e.toField || "");
+  const dup = state.edges.some(o => {
+    if (o === e) return false;
+    const of = o.from + ":" + (o.fromField || ""), ot = o.to + ":" + (o.toField || "");
+    const nf = newFrom + ":" + newFromField, nt = newTo + ":" + newToField;
+    return (of === nf && ot === nt) || (of === nt && ot === nf);
+  });
+  if (dup){ render(); return; }
+  const na = !hit.field ? nearestAnchorWithin(n, w) : null;
+  pushHistory();
+  if (isFrom) e.from = n.id; else e.to = n.id;
+  const fieldKey = isFrom ? "fromField" : "toField";
+  const anchorKey = isFrom ? "fromAnchor" : "toAnchor";
+  if (hit.field){
+    e[fieldKey] = hit.field.id;
+    delete e[anchorKey];
+  } else {
+    delete e[fieldKey];
+    if (na) e[anchorKey] = na.key; else delete e[anchorKey];
+  }
+  /* composite pairs cannot survive an endpoint move — collapse to the simple binding */
+  if (Array.isArray(e.pairs)){
+    if (e.kind !== "link" && (e.fromField || e.toField))
+      e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
+    else delete e.pairs;
+  }
+  const a = nodeById(e.from), b = nodeById(e.to);
+  if ((a && a.type === "todo") || (b && b.type === "todo")) e.kind = "link";
+  setSelection("edge", e.id);
+  render();
+}
+
 /* grid snapping (issue #40): drags always snap — to the visible dot grid when the
    toggle is on, else to the fine 4px grid */
 function dragSnap(v){
@@ -1723,6 +1809,16 @@ board.addEventListener("pointerdown", ev => {
     lastPress = null;
     drag = { mode:"pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved:true };
     board.classList.add("panning");
+    return;
+  }
+
+  /* drag a selected edge's endpoint grip to move that end to another point */
+  const gripEl = ev.target.closest("[data-edgegrip]");
+  if (gripEl){
+    lastPress = null;
+    drag = { mode:"reattach", edgeId: gripEl.getAttribute("data-edgegrip"),
+             end: gripEl.getAttribute("data-gripend") };
+    board.classList.add("connecting");
     return;
   }
 
@@ -1856,22 +1952,21 @@ board.addEventListener("pointermove", ev => {
     el("path", {d:`M ${pa.x} ${pa.y} L ${w.x} ${w.y}`, stroke:"#2456E6",
                 "stroke-width":1.8, "stroke-dasharray":"4 4", fill:"none"}, draftLayer);
     el("circle", {cx:w.x, cy:w.y, r:4, fill:"#2456E6"}, draftLayer);
-    /* drop-target preview */
-    const hit = hitTest(w);
-    if (hit && hit.node.id !== drag.from.id){
-      const r = nodeRect(hit.node);
-      if (hit.field){
-        const idx = (nodeRows(hit.node) || []).indexOf(hit.field);
-        const mm = tableMetrics(hit.node);
-        el("rect", {x:r.x+2, y:r.y + mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
-                    fill:"#2456E6", opacity:.16}, draftLayer);
-      } else {
-        el("rect", {x:r.x-3, y:r.y-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
-                    stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, draftLayer);
-        const na = nearestAnchorWithin(hit.node, w);
-        if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:"#2456E6"}, draftLayer);
-      }
-    }
+    const hit = looseHit(w);
+    if (hit && hit.node.id !== drag.from.id) drawDropPreview(hit, w);
+  } else if (drag.mode === "reattach"){
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    draftLayer.innerHTML = "";
+    const e = edgeById(drag.edgeId);
+    const ep = e && edgeEndpoints(e);
+    if (!ep) return;
+    const fixed = drag.end === "from" ? ep.pb : ep.pa;
+    el("path", {d:`M ${fixed.x} ${fixed.y} L ${w.x} ${w.y}`, stroke:"#2456E6",
+                "stroke-width":1.8, "stroke-dasharray":"4 4", fill:"none"}, draftLayer);
+    el("circle", {cx:w.x, cy:w.y, r:4, fill:"#2456E6"}, draftLayer);
+    const otherId = drag.end === "from" ? e.to : e.from;
+    const hit = looseHit(w);
+    if (hit && hit.node.id !== otherId) drawDropPreview(hit, w);
   }
 });
 
@@ -1899,12 +1994,21 @@ board.addEventListener("pointerup", ev => {
   } else if (drag.mode === "connect"){
     draftLayer.innerHTML = "";
     const w = clientToWorld(ev.clientX, ev.clientY);
-    const hit = hitTest(w);
+    const hit = looseHit(w);
     if (hit){
       const na = !hit.field ? nearestAnchorWithin(hit.node, w) : null;
       addEdge(drag.from, { id: hit.node.id, fieldId: hit.field ? hit.field.id : undefined,
                            anchor: na ? na.key : undefined });
+    } else {
+      render();   // restore any cleared grips
     }
+  } else if (drag.mode === "reattach"){
+    draftLayer.innerHTML = "";
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    const e = edgeById(drag.edgeId);
+    const hit = looseHit(w);
+    if (e && hit) reattachEdgeEnd(e, drag.end, hit, w);
+    else render();   // dropped on empty canvas: no change, redraw grips
   }
   board.classList.remove("panning","connecting");
   drag = null;
@@ -2917,9 +3021,11 @@ function mkFlag(txt, on, set){
 /* redraw canvas without rebuilding inspector (keeps input focus) */
 function drawOnly(){
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
+  draftLayer.innerHTML = "";
   for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
   for (const e of state.edges) drawEdge(e);
   for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  drawEdgeGrips();
   renderMinimap();
 }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -3481,7 +3587,7 @@ function serializedSvg(asShown = true){
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
   if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip]").forEach(h => h.remove());
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
   clone.insertBefore(style, clone.firstChild);
@@ -3625,7 +3731,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
   const bg = g.querySelector("[data-bg]");
   const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
   if (bg) bg.setAttribute("fill", bgColor);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip]").forEach(h => h.remove());
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
