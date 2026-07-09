@@ -1206,20 +1206,28 @@ function closeEnough(a, b, msg){
     assert(svg.includes("data-todocheck"), "SVG export keeps rendered checkboxes");
   }
 
-  /* inline row editing — dblclick edits field names and item texts in place */
+  /* inline row editing — double-press edits field names and item texts in place.
+     Uses real pointerdown/pointerup pairs (re-querying between presses) because the
+     first press re-renders and replaces the element under the cursor — the exact
+     reason native dblclick cannot be trusted on this canvas. */
   {
     const { window } = makeDom();
     const T = window.__T;
     T.setView({ x:0, y:0, k:1 });
+    const boardEl = window.document.getElementById("board");
+    const press = (sel, opts) => {
+      firePointer(window, window.document.querySelector(sel), "pointerdown", opts);
+      firePointer(window, boardEl, "pointerup", opts);
+    };
+    const doublePress = (sel, opts) => { press(sel, opts); press(sel, opts); };
 
     const customers = T.state.nodes.find(n => n.title === "customers");
     const m = T.tableMetrics(customers);
     const r = T.nodeRect(customers);
-    const rowPoint = { clientX: r.x + m.nameX + 10, clientY: r.y + m.headerH + m.rowH*1.5 };
-    window.document.querySelector(`[data-node="${customers.id}"]`)
-      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...rowPoint }));
+    doublePress(`[data-node="${customers.id}"]`,
+      { clientX: r.x + m.nameX + 10, clientY: r.y + m.headerH + m.rowH*1.5 });
     let editor = window.document.querySelector(".inline-editor");
-    assert(editor, "dblclick on a field row opens the inline editor");
+    assert(editor, "double-press on a field row opens the inline editor");
     assert.strictEqual(editor.value, customers.fields[1].name, "row editor starts from the field name");
     const depthBefore = T.undoDepth;
     editor.value = "customer_email";
@@ -1234,33 +1242,38 @@ function closeEnough(a, b, msg){
     T.render();
     const tm = T.tableMetrics(todo);
     const tr = T.nodeRect(todo);
+    const todoSel = `[data-node="${todo.id}"]`;
     const itemPoint = { clientX: tr.x + tm.nameX + 10, clientY: tr.y + tm.headerH + tm.rowH*1.5 };
-    window.document.querySelector(`[data-node="${todo.id}"]`)
-      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...itemPoint }));
+    doublePress(todoSel, itemPoint);
     editor = window.document.querySelector(".inline-editor");
-    assert(editor, "dblclick on a to-do item row opens the inline editor");
+    assert(editor, "double-press on a to-do item row opens the inline editor");
     assert.strictEqual(editor.value, "Polish copy", "row editor starts from the item text");
     editor.value = "Polish microcopy";
     editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true, cancelable:true }));
     assert.strictEqual(todo.items[1].text, "Polish microcopy", "Enter commits the item text");
 
-    window.document.querySelector(`[data-node="${todo.id}"]`)
-      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, ...itemPoint }));
+    doublePress(todoSel, itemPoint);
     editor = window.document.querySelector(".inline-editor");
     editor.value = "Discarded";
     editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
     assert.strictEqual(todo.items[1].text, "Polish microcopy", "Escape cancels a row edit");
 
-    window.document.querySelector(`[data-node="${todo.id}"]`)
-      .dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true,
-        clientX: tr.x + 12, clientY: tr.y + 5 }));
+    doublePress(todoSel, { clientX: tr.x + 12, clientY: tr.y + 5 });
     editor = window.document.querySelector(".inline-editor");
-    assert(editor && editor.value === todo.title, "dblclick on the header still edits the title");
+    assert(editor && editor.value === todo.title, "double-press on the header still edits the title");
     editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
 
-    const cb = window.document.querySelector(`[data-todonode="${todo.id}"]`);
-    cb.dispatchEvent(new window.MouseEvent("dblclick", { bubbles:true, cancelable:true, clientX:0, clientY:0 }));
-    assert(!window.document.querySelector(".inline-editor"), "dblclick on a checkbox does not open an editor");
+    doublePress(`[data-todonode="${todo.id}"]`, { clientX: 0, clientY: 0 });
+    assert(!window.document.querySelector(".inline-editor"), "double-press on a checkbox never opens an editor");
+    assert(!todo.items[0].done, "checkbox double-press toggles twice back to unchecked");
+
+    const nodesBefore = T.state.nodes.length;
+    doublePress("[data-bg]", { clientX: 3000, clientY: 3000 });
+    assert.strictEqual(T.state.nodes.length, nodesBefore + 1, "double-press on empty canvas still adds a concept");
+
+    press(todoSel, { clientX: tr.x + 12, clientY: tr.y + 5 });
+    press(todoSel, { clientX: tr.x + 120, clientY: tr.y + 5 });
+    assert(!window.document.querySelector(".inline-editor"), "two presses at different points do not open an editor");
   }
 
   {
