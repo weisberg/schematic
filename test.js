@@ -387,20 +387,51 @@ function closeEnough(a, b, msg){
   {
     const { window } = makeDom();
     const T = window.__T;
-    T.importDocText(JSON.stringify({ version:1, nextId:4, edges:[], nodes:[
+    const doc = () => JSON.stringify({ version:1, nextId:4, edges:[], nodes:[
       { id:"n1", type:"concept", x:10, y:10, title:"Alpha", notes:"", color:"#FFE9A8" },
-      { id:"n2", type:"concept", x:140, y:90, title:"Beta", notes:"", color:"#CFE8FF" },
-      { id:"n3", type:"concept", x:360, y:170, title:"Gamma", notes:"", color:"#D8F3DC" }
-    ] }));
-    T.setSelection("node", ["n1", "n2", "n3"]);
-    T.alignSelection("left");
-    assert.deepStrictEqual([...new Set(T.selectedNodes().map(n => n.x))], [10], "align left gives all nodes the same x");
-    T.importDocText(JSON.stringify({ version:1, nextId:4, edges:[], nodes:[
-      { id:"n1", type:"concept", x:10, y:10, title:"Alpha", notes:"", color:"#FFE9A8" },
-      { id:"n2", type:"concept", x:140, y:90, title:"Beta", notes:"", color:"#CFE8FF" },
-      { id:"n3", type:"concept", x:360, y:170, title:"Gamma", notes:"", color:"#D8F3DC" }
-    ] }));
-    T.setSelection("node", ["n1", "n2", "n3"]);
+      { id:"n2", type:"concept", x:140, y:90, title:"A much wider beta concept", notes:"", color:"#CFE8FF" },
+      { id:"n3", type:"note", x:360, y:170, title:"Gamma", content:"One\nTwo\nThree", color:"#D8F3DC", w:240 }
+    ] });
+    const selectAll = () => {
+      T.importDocText(doc());
+      T.setSelection("node", ["n1", "n2", "n3"]);
+      T.render();
+    };
+    const values = fn => T.selectedNodes().map(T.nodeRect).map(fn);
+    const allEqual = list => list.every(value => Math.abs(value - list[0]) < 1e-9);
+
+    assert.strictEqual(window.document.getElementById("btnAlignMenu").disabled, true,
+      "Align menu starts disabled without a multi-selection");
+    selectAll();
+    const menuButton = window.document.getElementById("btnAlignMenu");
+    assert.strictEqual(menuButton.disabled, false, "Align menu enables for two or more selected nodes");
+    menuButton.click();
+    assert(window.document.getElementById("alignMenu").classList.contains("open"),
+      "Align menu opens from the toolbar");
+
+    const cases = [
+      ["btnAlignTop", r => r.y, "top"],
+      ["btnAlignMiddle", r => r.cy, "middle"],
+      ["btnAlignBottom", r => r.y + r.h, "bottom"],
+      ["btnAlignLeft", r => r.x, "left"],
+      ["btnAlignCenter", r => r.cx, "center"],
+      ["btnAlignRight", r => r.x + r.w, "right"]
+    ];
+    for (const [id, measure, label] of cases){
+      selectAll();
+      const beforeUndo = T.undoDepth;
+      window.document.getElementById(id).click();
+      assert(allEqual(values(measure)), `toolbar ${label} aligns node rectangles`);
+      assert.strictEqual(T.undoDepth, beforeUndo + 1, `toolbar ${label} creates one history entry`);
+    }
+
+    T.clearSelection();
+    T.render();
+    assert.strictEqual(menuButton.disabled, true, "Align menu disables below two selected nodes");
+    assert(!window.document.getElementById("alignMenu").classList.contains("open"),
+      "Align menu closes when the multi-selection is cleared");
+
+    selectAll();
     T.alignSelection("distributeX");
     const rects = T.selectedNodes().map(T.nodeRect).sort((a, b) => a.x - b.x);
     const gap1 = rects[1].x - (rects[0].x + rects[0].w);
@@ -1716,12 +1747,14 @@ function closeEnough(a, b, msg){
                       "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
                       "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept",
                       "btnAddTable","btnAddTodo","btnAddFrame","btnUndo","btnRedo","btnFit",
-                      "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup"])
+                      "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup",
+                      "btnAlignMenu","btnAlignTop","btnAlignMiddle","btnAlignBottom",
+                      "btnAlignLeft","btnAlignCenter","btnAlignRight"])
       assert(doc.getElementById(id), `toolbar button #${id} still exists`);
 
     // menus: open, switch, outside-close, Escape-close without nuking selection
     const menus = [...doc.querySelectorAll("header .menu")];
-    assert.strictEqual(menus.length, 3, "toolbar exposes File / Export / Layout menus");
+    assert.strictEqual(menus.length, 4, "toolbar exposes File / Export / Layout / Align menus");
     const [fileMenu, exportMenu] = menus;
     fileMenu.querySelector(".menubtn").click();
     assert(fileMenu.classList.contains("open"), "clicking a menu trigger opens its panel");

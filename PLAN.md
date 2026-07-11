@@ -502,6 +502,10 @@ Context-menu section (visible when ≥2 nodes selected): Align left/right/top/bo
 Center horizontally/vertically, Distribute horizontally/vertically (equal gaps by rect
 edges). One `pushHistory()` per action.
 
+The toolbar also provides a dedicated Align menu when ≥2 nodes are selected, with the
+standard Top/Middle/Bottom and Left/Center/Right actions. The same geometry engine backs
+both entry points.
+
 AC: geometry assertions on 3 nodes for each operation.
 
 ---
@@ -1085,6 +1089,17 @@ Triggers, References, Causes, Calculates, and Validates—with their explanatory
 AC: exact supplied names/meanings/order are tested; existing custom labels select Custom
 text; preset selection renders, undoes/redoes, and serializes; arbitrary input returns the
 selector to Custom text; inspector and context-menu paths both work.
+
+---
+
+**SCH-069 · Selection alignment menu · P2 · S · Done 2026-07-11**
+
+Add a dedicated toolbar Align menu that enables when at least two nodes are selected.
+Expose Top, Middle, Bottom, Left, Center, and Right while retaining the equivalent
+right-click actions. Disable and close the menu whenever fewer than two nodes are selected.
+
+AC: menu availability follows selection count; all six actions align node rectangles on
+the requested edge or axis; each action remains one undo step; browser interaction QA passes.
 
 ---
 

@@ -69,7 +69,7 @@ const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.7.1";
+const APP_VERSION = "v1.7.2";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -721,6 +721,18 @@ function setupMenus(){
     }
   }, true);
 }
+function updateAlignMenu(){
+  const menu = document.getElementById("alignMenu");
+  const btn = document.getElementById("btnAlignMenu");
+  if (!menu || !btn) return;
+  const enabled = selectionIds("node").length >= 2;
+  btn.disabled = !enabled;
+  btn.setAttribute("aria-disabled", String(!enabled));
+  if (!enabled){
+    menu.classList.remove("open");
+    btn.setAttribute("aria-expanded", "false");
+  }
+}
 function maybeShowRecovery(){
   if (!RECOVERY) return;
   let record;
@@ -1117,6 +1129,7 @@ function render(){
            : `${nodes} nodes · ${state.edges.length} edges`;
   renderMinimap();
   renderInspector();
+  updateAlignMenu();
 }
 function fastDragRender(ids){
   renderStats.fast++;
@@ -3762,6 +3775,12 @@ document.getElementById("btnAddFrame").addEventListener("click", () => { const c
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
 document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
 document.getElementById("btnLint").addEventListener("click", openLintModal);
+document.getElementById("btnAlignTop").addEventListener("click", () => alignSelection("top"));
+document.getElementById("btnAlignMiddle").addEventListener("click", () => alignSelection("centerY"));
+document.getElementById("btnAlignBottom").addEventListener("click", () => alignSelection("bottom"));
+document.getElementById("btnAlignLeft").addEventListener("click", () => alignSelection("left"));
+document.getElementById("btnAlignCenter").addEventListener("click", () => alignSelection("centerX"));
+document.getElementById("btnAlignRight").addEventListener("click", () => alignSelection("right"));
 document.getElementById("btnTheme").addEventListener("click", toggleTheme);
 document.getElementById("pngAsShown").addEventListener("change", ev => setPngAsShown(ev.target.checked));
 document.getElementById("dialectSelect").addEventListener("change", ev => setDialect(ev.target.value));
