@@ -97,11 +97,14 @@ Add new code inside the matching section.
   "notes": "", "color": "#E9E2F8", "items": [ { "id": "n13", "text": "Approve copy", "done": true } ] }`
   — `done` is optional (absent = false, never written as `false`); item ids share the node
   id namespace and are referenced by `fromField`/`toField` exactly like table field ids.
+- Rich-note nodes (v1.7): `{ "id":"n14", "type":"note", "x":0, "y":0,
+  "title":"Decision context", "content":"## Evidence\n- **Strong** signal", "color":"#FFE9A8",
+  "fontSize":13, "w":300 }` — `content` stores Markdown-style source; `w` is optional.
 - Concept nodes may include optional `shape` ∈ `process|decision|terminator|data|document|manualInput`.
   It is presentation-only, applies only to concept nodes, and is absent for the default
   `process` rectangle so all older documents render unchanged.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
-  kinds are table↔table only; edges touching a to-do list are always `link`.
+  kinds are table↔table only; edges touching a to-do list or rich note are always `link`.
 - `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
 - `fromAnchor`/`toAnchor` (v1.3, additive) optionally pin a whole-node edge end to one of
   the 9 attachment points ∈ `tl|tc|tr|ml|mc|mr|bl|bc|br` (3×3: top/middle/bottom ×
@@ -122,15 +125,15 @@ Add new code inside the matching section.
   Node colors already written into the document are untouched — the scheme changes
   swatch palettes, new-node defaults, and (via `theme`) canvas + UI chrome colors.
 - `fontSize`/`fontColor` are optional; absence means defaults
-  (`CONCEPT_FS_DEFAULT = 14`, `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
+  (`CONCEPT_FS_DEFAULT = 14`, `NOTE_FS_DEFAULT = 13`, `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
 
 ### 2.3 Key functions (call these; do not reimplement)
 
 | Area | Functions |
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
-| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
-| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
+| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
+| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
 | I/O | `openDoc`, `saveDoc`, `saveAsDoc`, `newDoc`, `download(name, text, mime)`, JSON import handler, `generateSQL`, `ident`, PNG export handler |
@@ -180,8 +183,9 @@ Harness quirks you must respect:
 ## 3. Existing features (implemented, tested)
 
 **Canvas & interaction**
-- Infinite pannable/zoomable SVG canvas (wheel zoom at cursor 0.2–3×, Alt/middle-drag
-  pan, drag-empty marquee select, dot-grid background), Fit view (`F`), 4px grid snap on
+- Infinite pannable/zoomable SVG canvas (two-axis wheel pan, Shift+vertical-wheel zoom
+  at cursor 0.2–3×, Alt/middle-drag pan, drag-empty marquee select, dot-grid background),
+  Fit view (`F`), 4px grid snap on
   node drag, arrow-key nudge (Shift = 24px), Esc deselect, no text-selection during drags.
 - Selection model: single node/edge plus multi-node selection; selection drives inspector.
 - Auto-layout tools: concept-tree layout from the selected/root concept and layered schema
@@ -192,6 +196,9 @@ Harness quirks you must respect:
 **Nodes**
 - Concept nodes: title, notes (dot indicator), fill color, per-node font size (9–48px)
   and font color; box auto-fits text.
+- Rich-note nodes: title plus safe Markdown-style multiline content (headings, lists,
+  tasks, blockquotes, bold, italic, and inline code), folded-note canvas rendering,
+  configurable width/color/type, palette search, Markdown export, and node-level links.
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
@@ -202,7 +209,7 @@ Harness quirks you must respect:
   tables retain relation anchoring through node-boundary fallback.
 - Frame nodes: labeled subject-area rectangles drawn behind nodes; drag a frame to move
   nodes contained by center point; resize via corner handle; frames are not edge targets.
-- Add via toolbar, keyboard (`C`/`T`), double-click empty canvas, command palette, or
+- Add via toolbar, keyboard (`C`/`N`/`T`), double-click empty canvas, command palette, or
   context menu ("here").
 - Duplicate (Ctrl+D, remaps node/field ids and internal edges), copy/cut/paste
   (Ctrl/Cmd+C/X/V with in-memory clipboard and best-effort OS clipboard), delete
@@ -504,8 +511,8 @@ positioned HTML `<input>` (in `#canvasWrap`, transformed to node screen coords w
 `view.k` font scaling) over the title; Enter/blur commits (`render()`), Esc cancels.
 Keep inspector path working. Reposition/close overlay on pan/zoom.
 
-AC: dblclick → type → Enter renames without touching inspector; Esc restores; zooming
-while open closes the editor safely. Tests: overlay input existence, commit, cancel.
+AC: dblclick → type → Enter renames without touching inspector; Esc restores; panning or
+zooming while open closes the editor safely. Tests: overlay input existence, commit, cancel.
 
 Pitfall: the overlay must set `pointerdown.stopPropagation()` so the canvas handler
 doesn't blur it instantly (see existing `hexinput` pattern).
@@ -985,7 +992,7 @@ The flat 26-button header wrapped onto 3–4 rows at common widths and node text
 render unreadably (dark-on-dark to-do headers, light-on-light concepts in dark theme).
 
 - Header reorganized into a menubar (File ▾ / Export ▾ / Layout ▾ disclosure menus via
-  `setupMenus`) plus visible high-frequency actions: + Concept/+ Table/+ To-do/+ Frame,
+  `setupMenus`) plus visible high-frequency actions: + Concept/+ Note/+ Table/+ To-do/+ Frame,
   Undo/Redo/Fit, Save. **Every button keeps its historical id** — handlers and tests
   bind by id; menu items are the same elements restyled. One panel open at a time;
   outside pointer, item click, and Escape close (Escape is intercepted in the capture
@@ -1027,6 +1034,34 @@ AC: default pinned + visible; unpinning hides at no-selection, select reveals wi
 element editor (not the help panel), deselect re-hides; `I` re-pins; preference
 survives reload via storage seed; throwing storage degrades to in-memory. Covered by
 jsdom assertions in `test.js`.
+
+---
+
+### Phase J — Rich notes (v1.7)
+
+**SCH-067 · Linkable rich-note primitive · P1 · M · Done 2026-07-11**
+
+Add an additive `note` node type with `{id,type:"note",x,y,title,content,color,fontSize,
+fontColor,w}`. Notes render as folded-corner cards using SVG-only text so saved SVG/PNG
+exports remain portable and untrusted note content never becomes executable HTML.
+
+- Markdown-style rendering supports `#`/`##` headings, bullets, numbered lists, tasks,
+  blockquotes, `**bold**`, `_italic_`, and inline code. Content wraps to the configured
+  width; the canvas preview is bounded to 80 lines while the full source remains saved.
+- Creation paths: `+ Note`, keyboard `N`, canvas context menu, and command palette.
+  Inspector editing includes multiline source, width, color, text size, and text color;
+  double-clicking the note body focuses the source editor.
+- Notes participate in generic selection, move, align, frames, undo/redo, duplicate,
+  copy/paste, minimap, tree layout, Markdown outline, SVG/PNG/JSON export, and node-level
+  link edges. Relation kinds touching notes are rejected in lint and hidden in note-edge
+  editors, matching the to-do link-only contract.
+- `DOC_VERSION` remains 1 because the new node type and fields are additive; older
+  documents import unchanged.
+
+AC: formatting renders safely; empty and pathological long content degrade visibly;
+content edits undo/redo; JSON round-trips; duplicate preserves content with a new id;
+note-to-node links resolve endpoints and remain `link`; palette and Markdown export include
+note content; full tests and browser interaction QA pass.
 
 ---
 

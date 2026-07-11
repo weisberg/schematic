@@ -47,9 +47,10 @@ const FLOWCHART_SHAPES = [
 ];
 const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
+const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.6.3";
+const APP_VERSION = "v1.7.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -175,6 +176,7 @@ const SHORTCUTS = [
   { id:"palette", keys:"Ctrl/Cmd+K", title:"Quick jump / command palette" },
   { id:"help", keys:"?", title:"Shortcut cheat sheet" },
   { id:"concept", keys:"C", title:"Add concept" },
+  { id:"note", keys:"N", title:"Add rich note" },
   { id:"table", keys:"T", title:"Add table" },
   { id:"todo", keys:"D", title:"Add to-do list" },
   { id:"child", keys:"Tab", title:"Add linked child concept" },
@@ -384,6 +386,7 @@ function nodeRows(n){
   if (n.type === "todo") return n.items;
   return null;
 }
+function linkOnlyNode(n){ return !!n && (n.type === "todo" || n.type === "note"); }
 /* field-level references: edges may carry fromField / toField (row ids) */
 function ensureFieldIds(){
   for (const n of state.nodes){
@@ -739,6 +742,113 @@ window.addEventListener("beforeunload", ev => {
 /* --------------------------- Geometry ----------------------------- */
 function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; return Math.min(hi, Math.max(lo, v)); }
 function conceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
+function noteFont(n){ return clampSize(n.fontSize || NOTE_FS_DEFAULT, 10, 28); }
+function nodeTextSize(n){ return n.type === "concept" ? conceptFont(n) : n.type === "note" ? noteFont(n) : tableMetrics(n).base; }
+function clampNodeTextSize(n, value){
+  return n.type === "concept" ? clampSize(value, 9, 48)
+       : n.type === "note" ? clampSize(value, 10, 28) : clampSize(value, 8, 28);
+}
+function richNoteInline(text){
+  const source = String(text || "");
+  const runs = [];
+  const pattern = /(\*\*([^*]+)\*\*|_([^_]+)_|`([^`]+)`)/g;
+  let at = 0, match;
+  while ((match = pattern.exec(source))){
+    if (match.index > at) runs.push({ text:source.slice(at, match.index) });
+    if (match[2] != null) runs.push({ text:match[2], bold:true });
+    else if (match[3] != null) runs.push({ text:match[3], italic:true });
+    else runs.push({ text:match[4], code:true });
+    at = pattern.lastIndex;
+  }
+  if (at < source.length) runs.push({ text:source.slice(at) });
+  return runs;
+}
+function richNoteBlock(raw, base){
+  let text = String(raw || ""), prefix = "", size = base, weight = 400, italic = false;
+  if (/^##\s+/.test(text)){ text = text.replace(/^##\s+/, ""); size = base + 2; weight = 700; }
+  else if (/^#\s+/.test(text)){ text = text.replace(/^#\s+/, ""); size = base + 4; weight = 700; }
+  else if (/^-\s+\[[xX]\]\s+/.test(text)){ text = text.replace(/^-\s+\[[xX]\]\s+/, ""); prefix = "☑"; }
+  else if (/^-\s+\[\s\]\s+/.test(text)){ text = text.replace(/^-\s+\[\s\]\s+/, ""); prefix = "☐"; }
+  else if (/^[-*]\s+/.test(text)){ text = text.replace(/^[-*]\s+/, ""); prefix = "•"; }
+  else if (/^\d+\.\s+/.test(text)){
+    const m = text.match(/^(\d+\.)\s+/); prefix = m[1]; text = text.slice(m[0].length);
+  } else if (/^>\s?/.test(text)){ text = text.replace(/^>\s?/, ""); prefix = "│"; italic = true; }
+  return { text, prefix, size, weight, italic, runs:richNoteInline(text) };
+}
+function richNoteRunFont(run, block){
+  const style = run.italic || block.italic ? "italic " : "";
+  const weight = run.bold || block.weight >= 700 ? "700 " : "400 ";
+  const family = run.code ? "'IBM Plex Mono', monospace" : "Archivo, sans-serif";
+  return `${style}${weight}${block.size}px ${family}`;
+}
+function appendRichRun(line, text, run){
+  if (!text) return;
+  const prev = line[line.length - 1];
+  if (prev && !!prev.bold === !!run.bold && !!prev.italic === !!run.italic && !!prev.code === !!run.code)
+    prev.text += text;
+  else line.push({ text, bold:!!run.bold, italic:!!run.italic, code:!!run.code });
+}
+function wrapRichNoteBlock(block, maxWidth){
+  const lines = [];
+  let line = [], width = 0;
+  const finish = () => {
+    while (line.length && /^\s+$/.test(line[line.length - 1].text)) line.pop();
+    lines.push(line); line = []; width = 0;
+  };
+  for (const run of block.runs){
+    const font = richNoteRunFont(run, block);
+    for (const token of run.text.split(/(\s+)/).filter(Boolean)){
+      const space = /^\s+$/.test(token);
+      if (space){
+        if (line.length && width + textW(" ", font) <= maxWidth){ appendRichRun(line, " ", run); width += textW(" ", font); }
+        continue;
+      }
+      const tokenWidth = textW(token, font);
+      if (line.length && width + tokenWidth > maxWidth) finish();
+      if (tokenWidth <= maxWidth){ appendRichRun(line, token, run); width += tokenWidth; continue; }
+      let part = "";
+      for (const ch of token){
+        if (part && textW(part + ch, font) > maxWidth){
+          appendRichRun(line, part, run); finish(); part = ch;
+        } else part += ch;
+      }
+      if (part){ appendRichRun(line, part, run); width += textW(part, font); }
+    }
+  }
+  if (line.length || !lines.length) finish();
+  return lines;
+}
+function richNoteLayout(n){
+  const base = noteFont(n), w = clampSize(n.w || NOTE_W_DEFAULT, 220, 720);
+  const titleH = Math.ceil(base * 2.9), bodyW = w - 28;
+  const source = String(n.content || "").replace(/\r\n?/g, "\n");
+  const lines = [];
+  if (!source.trim()){
+    lines.push({ runs:[{text:"Write a note…", italic:true}], prefix:"", size:base,
+                 weight:400, italic:true, indent:0, h:Math.ceil(base*1.4), placeholder:true });
+  } else {
+    outer: for (const raw of source.split("\n")){
+      if (!raw.trim()){
+        lines.push({runs:[], prefix:"", size:base, weight:400, italic:false, indent:0, h:Math.ceil(base*.8)});
+        if (lines.length >= 80) break;
+        continue;
+      }
+      const block = richNoteBlock(raw, base);
+      const indent = block.prefix ? 20 : 0;
+      const wrapped = wrapRichNoteBlock(block, bodyW - indent);
+      for (let i = 0; i < wrapped.length; i++){
+        lines.push({ runs:wrapped[i], prefix:i === 0 ? block.prefix : "", size:block.size,
+                     weight:block.weight, italic:block.italic, indent, h:Math.ceil(block.size*1.42) });
+        if (lines.length >= 80) break outer;
+      }
+    }
+    if (lines.length >= 80)
+      lines[79] = { runs:[{text:"…", italic:true}], prefix:"", size:base, weight:400,
+                    italic:true, indent:0, h:Math.ceil(base*1.4), truncated:true };
+  }
+  const h = Math.max(96, titleH + lines.reduce((sum, line) => sum + line.h, 0) + 14);
+  return { w, h, base, titleH, lines };
+}
 /* Concept shape is intentionally optional in the document model: old documents and a
    selected Process both render as the conventional rectangular process symbol. */
 function conceptShape(n){ return n && n.type === "concept" && FLOWCHART_SHAPE_SET.has(n.shape) ? n.shape : "process"; }
@@ -782,6 +892,10 @@ function nodeSize(n){
       (shape === "data" || shape === "manualInput" ? 56 : 44));
     const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 18 : 0);
     return { w: Math.min(w, 420), h };
+  }
+  if (n.type === "note"){
+    const layout = richNoteLayout(n);
+    return { w:layout.w, h:layout.h };
   }
   if (n.type === "todo"){
     const m = tableMetrics(n);
@@ -1246,6 +1360,49 @@ function drawConceptShape(g, n, r, attrs){
   /* Manual input: the sloped leading edge is the conventional flowchart symbol. */
   return el("path", {d:`M 20 0 H ${r.w} L ${r.w-14} ${r.h} H 0 Z`, ...common}, g);
 }
+function drawRichNote(g, n, r, selected, t){
+  const layout = richNoteLayout(n);
+  const fill = n.color || conceptColors()[0];
+  const ink = n.fontColor || autoInk(fill, t);
+  const fold = 22;
+  el("path", {d:`M 8 0 H ${r.w-fold} L ${r.w} ${fold} V ${r.h-8} Q ${r.w} ${r.h} ${r.w-8} ${r.h} H 8 Q 0 ${r.h} 0 ${r.h-8} V 8 Q 0 0 8 0 Z`,
+              fill, stroke:selected ? t.accent : t.ink, "stroke-width":selected ? 2.2 : 1.2,
+              "stroke-linejoin":"round", "data-note-surface":"1"}, g);
+  el("path", {d:`M ${r.w-fold} 0 V ${fold} H ${r.w}`, fill:"none", stroke:ink,
+              "stroke-width":1, opacity:.35, "pointer-events":"none", "data-note-fold":"1"}, g);
+  const title = el("text", {x:14, y:Math.ceil(layout.titleH*.62), fill:ink,
+              "font-family":"Archivo, sans-serif", "font-size":layout.base+1.5, "font-weight":700}, g);
+  title.textContent = truncate(n.title || "Rich note", r.w - fold - 28,
+    `700 ${layout.base+1.5}px Archivo, sans-serif`);
+  el("line", {x1:12, y1:layout.titleH, x2:r.w-12, y2:layout.titleH,
+              stroke:ink, "stroke-width":1, opacity:.18}, g);
+
+  const body = el("g", {"data-note-content":n.id, "pointer-events":"none"}, g);
+  let y = layout.titleH + 8;
+  for (const line of layout.lines){
+    const baseline = y + line.size;
+    if (line.prefix){
+      el("text", {x:14, y:baseline, fill:ink, "font-family":"Archivo, sans-serif",
+                  "font-size":line.size, "font-weight":line.weight,
+                  "font-style":line.italic ? "italic" : "normal"}, body).textContent = line.prefix;
+    }
+    if (line.runs.length){
+      const text = el("text", {x:14 + line.indent, y:baseline, fill:ink,
+                    "font-family":"Archivo, sans-serif", "font-size":line.size,
+                    "font-weight":line.weight, "font-style":line.italic ? "italic" : "normal",
+                    opacity:line.placeholder ? .55 : 1}, body);
+      for (const run of line.runs){
+        const span = el("tspan", {
+          "font-family":run.code ? "'IBM Plex Mono', monospace" : "Archivo, sans-serif",
+          "font-weight":run.bold || line.weight >= 700 ? 700 : 400,
+          "font-style":run.italic || line.italic ? "italic" : "normal"
+        }, text);
+        span.textContent = run.text;
+      }
+    }
+    y += line.h;
+  }
+}
 function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
@@ -1267,6 +1424,8 @@ function drawNode(n){
       el("circle", {cx:noteAtSide ? r.w - 14 : r.w - 12, cy:noteAtSide ? r.h/2 : 12,
                     r:3.2, fill:t.ink, opacity:.55}, g);
     }
+  } else if (n.type === "note"){
+    drawRichNote(g, n, r, selected, t);
   } else if (n.type === "todo"){
     const m = tableMetrics(n);
     const fc = n.fontColor || autoInk(n.color || todoColorDefault(), t);
@@ -1436,6 +1595,10 @@ function addNode(type, x, y){
   if (type === "concept"){
     n = { id: uid(), type, x, y, title:"New idea", notes:"",
           color: conceptColors()[state.nodes.filter(n=>n.type==="concept").length % conceptColors().length] };
+  } else if (type === "note"){
+    n = { id:uid(), type, x, y, title:"Rich note",
+          content:"Add context here.\n\n- Use **bold**, _italic_, or `code`\n- [ ] Track a decision",
+          color:conceptColors()[0], fontSize:NOTE_FS_DEFAULT, w:NOTE_W_DEFAULT };
   } else if (type === "frame"){
     n = { id: uid(), type, x, y, title:"Subject area", color:frameColorDefault(),
           w:FRAME_DEFAULT.w, h:FRAME_DEFAULT.h };
@@ -1646,9 +1809,9 @@ function distribute(entries, axis){
   }
 }
 function conceptTreeRoot(){
-  const selected = selectedNodes().find(n => n.type === "concept" || n.type === "todo");
+  const selected = selectedNodes().find(n => n.type === "concept" || n.type === "todo" || n.type === "note");
   if (selected) return selected;
-  const concepts = state.nodes.filter(n => n.type === "concept");
+  const concepts = state.nodes.filter(n => n.type === "concept" || n.type === "todo" || n.type === "note");
   if (!concepts.length) return null;
   return concepts.slice().sort((a, b) => {
     const ao = state.edges.filter(e => e.kind === "link" && e.from === a.id).length;
@@ -1657,7 +1820,7 @@ function conceptTreeRoot(){
   })[0];
 }
 function conceptTreeScope(rootId){
-  const conceptIds = new Set(state.nodes.filter(n => n.type === "concept" || n.type === "todo").map(n => n.id));
+  const conceptIds = new Set(state.nodes.filter(n => n.type === "concept" || n.type === "todo" || n.type === "note").map(n => n.id));
   const childMap = new Map();
   const visited = new Set();
   const bySource = new Map();
@@ -1981,7 +2144,7 @@ function reattachEdgeEnd(e, end, hit, w){
     else delete e.pairs;
   }
   const a = nodeById(e.from), b = nodeById(e.to);
-  if ((a && a.type === "todo") || (b && b.type === "todo")) e.kind = "link";
+  if (linkOnlyNode(a) || linkOnlyNode(b)) e.kind = "link";
   setSelection("edge", e.id);
   render();
 }
@@ -2123,9 +2286,11 @@ board.addEventListener("pointerdown", ev => {
       const id = nodeEl.getAttribute("data-node");
       setSelection("node", id);
       render();
-      /* a row under the cursor edits that field name / item text; anywhere else edits the title */
+      /* Rows edit their value, a rich-note body focuses its Markdown editor, and headers edit titles. */
       const hit = hitTest(clientToWorld(ev.clientX, ev.clientY));
       if (hit && hit.node.id === id && hit.field) startInlineEditor("row", id, hit.field.id);
+      else if (hit && hit.node.type === "note" &&
+               clientToWorld(ev.clientX, ev.clientY).y > hit.node.y + richNoteLayout(hit.node).titleH) focusNoteInput();
       else startInlineEditor("node", id);
     } else if (edgeEl){
       const id = edgeEl.getAttribute("data-edge");
@@ -2310,13 +2475,18 @@ board.addEventListener("pointercancel", ev => {
 board.addEventListener("wheel", ev => {
   ev.preventDefault();
   closeInlineEditor(false);
-  const factor = ev.deltaY < 0 ? 1.1 : 1/1.1;
-  const nk = Math.min(3, Math.max(0.2, view.k * factor));
-  const b = board.getBoundingClientRect();
-  const mx = ev.clientX - b.left, my = ev.clientY - b.top;
-  view.x = mx - (mx - view.x) * (nk/view.k);
-  view.y = my - (my - view.y) * (nk/view.k);
-  view.k = nk;
+  if (ev.shiftKey && ev.deltaY !== 0){
+    const factor = ev.deltaY < 0 ? 1.1 : 1/1.1;
+    const nk = Math.min(3, Math.max(0.2, view.k * factor));
+    const b = board.getBoundingClientRect();
+    const mx = ev.clientX - b.left, my = ev.clientY - b.top;
+    view.x = mx - (mx - view.x) * (nk/view.k);
+    view.y = my - (my - view.y) * (nk/view.k);
+    view.k = nk;
+  } else {
+    view.x -= ev.deltaX;
+    view.y -= ev.deltaY;
+  }
   applyView();
 }, { passive:false });
 
@@ -2341,6 +2511,7 @@ function matchShortcut(ev, typing){
   if (ev.key === "Tab") return "child";
   if (ev.key === "Escape") return "escape";
   if (!mod && key === "c") return "concept";
+  if (!mod && key === "n") return "note";
   if (!mod && key === "t") return "table";
   if (!mod && key === "d") return "todo";
   if (!mod && key === "f") return "fit";
@@ -2364,6 +2535,7 @@ function runShortcut(id, ev){
   if (id === "child") return addChildConcept();
   if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
   if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
+  if (id === "note"){ const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); return; }
   if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
   if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
   if (id === "fit") return fitView();
@@ -2468,6 +2640,12 @@ function inlineEditorBox(kind, id, rowId){
     if (n.type === "concept"){
       const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
       return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:32, fontSize:Math.max(12, conceptFont(n)*view.k) };
+    }
+    if (n.type === "note"){
+      const layout = richNoteLayout(n);
+      const p = worldToWrap(r.x + 8, r.y + 4);
+      return { x:p.x, y:p.y, w:Math.max(140, (r.w - 16)*view.k),
+               h:Math.max(28, (layout.titleH - 8)*view.k), fontSize:Math.max(12, (layout.base + 1.5)*view.k) };
     }
     const p = worldToWrap(r.x + 8, r.y + 4);
     return { x:p.x, y:p.y, w:Math.max(140, r.w*view.k - 16), h:Math.max(28, tableMetrics(n).headerH*view.k - 8),
@@ -2583,9 +2761,12 @@ function paletteItems(){
       for (const it of n.items)
         items.push({ type:"item", label:`${n.title || "list"}.${it.text || "(item)"}`, nodeId:n.id, itemId:it.id });
     }
+    if (n.type === "note" && String(n.content || "").trim())
+      items.push({ type:"note", label:`${n.title || "note"}.${String(n.content).replace(/\s+/g, " ").slice(0, 120)}`, nodeId:n.id });
   }
   for (const c of [
     ["addConcept", "Add concept"],
+    ["addNote", "Add rich note"],
     ["addTable", "Add table"],
     ["addTodo", "Add to-do list"],
     ["addFrame", "Add frame"],
@@ -2616,7 +2797,7 @@ function centerNode(id){
 function activatePaletteItem(item){
   if (!item) return;
   closeCommandPalette();
-  if (item.type === "node" || item.type === "field" || item.type === "item"){
+  if (item.type === "node" || item.type === "field" || item.type === "item" || item.type === "note"){
     setSelection("node", item.nodeId);
     centerNode(item.nodeId);
     render();
@@ -2624,6 +2805,7 @@ function activatePaletteItem(item){
   }
   const c = viewCenter();
   if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
+  if (item.command === "addNote") addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60);
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
   if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);
   if (item.command === "addFrame") addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2);
@@ -2705,6 +2887,12 @@ function focusTitleInput(){
     if (i){ i.focus(); i.select(); }
   });
 }
+function focusNoteInput(){
+  requestAnimationFrame(() => {
+    const i = document.getElementById("noteContentInput");
+    if (i) i.focus();
+  });
+}
 
 function renderInspector(){
   updateInspectorVisibility();
@@ -2716,7 +2904,7 @@ function renderInspector(){
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
     inspTitle.textContent = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame"
-                          : n.type === "todo" ? "To-do list" : "Table node";
+                          : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note" : "Table node";
 
     frow(n.type === "table" ? "Table name" : "Title", () => {
       const i = mkInput(n.title, v => { n.title = v; drawOnly(); });
@@ -2772,6 +2960,29 @@ function renderInspector(){
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
       frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+    } else if (n.type === "note"){
+      frow("Content (Markdown)", () => {
+        const t = document.createElement("textarea");
+        t.id = "noteContentInput";
+        t.rows = 10;
+        t.value = n.content || "";
+        t.placeholder = "Write a note…";
+        t.addEventListener("focus", pushHistoryOnce());
+        t.addEventListener("input", () => { n.content = t.value; drawOnly(); });
+        return t;
+      });
+      const help = document.createElement("div");
+      help.className = "helper";
+      help.textContent = "Formatting: # heading, - bullet, - [ ] task, **bold**, _italic_, and `code`.";
+      inspBody.appendChild(help);
+      frow("Color", () => swatches(conceptColors(), n.color || conceptColors()[0],
+        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+      frow("Width", () => sizeStepper(n.w || NOTE_W_DEFAULT, 220, 720, 20,
+        (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
+      frow("Text size", () => sizeStepper(noteFont(n), 10, 28, 1,
+        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
+        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
     } else if (n.type === "todo"){
       frow("Notes", () => {
         const t = document.createElement("textarea");
@@ -2824,7 +3035,7 @@ function renderInspector(){
     if (!e){ clearSelection(); renderHelp(); return; }
     inspTitle.textContent = "Edge";
     const a = nodeById(e.from), b = nodeById(e.to);
-    const touchesTodo = a.type === "todo" || b.type === "todo";
+    const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
       const rows = fid ? nodeRows(n) : null;
       const f = rows ? rows.find(x => x.id === fid) : null;
@@ -2836,7 +3047,7 @@ function renderInspector(){
       (e.kind !== "link" ? `<br>Convention: <em>from</em> = the “one” side, <em>to</em> = the “many” side.` : "");
     inspBody.appendChild(p);
 
-    if (!touchesTodo) frow("Type", () => {
+    if (!touchesLinkOnlyNode) frow("Type", () => {
       const s = document.createElement("select");
       for (const k of ["link","1:1","1:N","N:M"]){
         const o = document.createElement("option");
@@ -2919,10 +3130,10 @@ function renderMultiInspector(){
         return s;
       });
     }
-    frow("Text size", () => sizeStepper(nodes[0].type === "concept" ? conceptFont(nodes[0]) : tableMetrics(nodes[0]).base,
+    frow("Text size", () => sizeStepper(nodeTextSize(nodes[0]),
       8, 48, 1, (v, commit) => {
         pushHistory("fs:multi");
-        for (const n of nodes) n.fontSize = n.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
+        for (const n of nodes) n.fontSize = clampNodeTextSize(n, v);
         commit ? render() : drawOnly();
       }));
     frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
@@ -3157,10 +3368,10 @@ function renderHelp(){
   const h = document.createElement("div");
   h.className = "helper";
   h.innerHTML = `
-    <p><b>Three node types, one canvas.</b><br>
-    Concepts sketch the business thinking, tables carry the data model, and to-do lists
-    track the work. Link them freely — an idea can point at the entity, the exact column,
-    or the task that will deliver it.</p>
+    <p><b>Four primitives, one canvas.</b><br>
+    Concepts sketch the business thinking, rich notes preserve formatted context, tables
+    carry the data model, and to-do lists track the work. Link them freely — a note or idea
+    can point at an entity, an exact column, or the task that will deliver it.</p>
     <p style="margin-top:10px"><b>Field-level connections.</b><br>
     Hover a table to reveal ○ handles on each field row. Drag from a row to another
     field or node — drop-target rows highlight as you go. Field-bound relations export
@@ -3177,7 +3388,7 @@ function renderHelp(){
       <line x1="36" y1="8" x2="44" y2="13" stroke="#33475C" stroke-width="1.6"/></svg>
       1:N — crow's-foot relation</div>
     <p style="margin-top:12px"><b>Shortcuts</b><br>
-    <kbd>C</kbd> concept · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
+    <kbd>C</kbd> concept · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
     <kbd>Del</kbd> delete · <kbd>Ctrl+Z</kbd> undo · <kbd>Ctrl+D</kbd> duplicate ·
     <kbd>F</kbd> fit · arrows nudge</p>
     <p style="margin-top:12px"><b>Type &amp; color</b><br>
@@ -3472,6 +3683,7 @@ document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnInspector").addEventListener("click", toggleInspector);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
+document.getElementById("btnAddNote").addEventListener("click", () => { const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
 document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
 document.getElementById("btnSnap").addEventListener("click", toggleSnapToGrid);
@@ -3559,7 +3771,7 @@ function generateSQL(dialect = docDialect){
   if (!tables.length) return "-- No table nodes on the canvas.\n-- Add a Table node, give it fields, then export again.";
   dialect = SQL_DIALECTS.includes(dialect) ? dialect : "ansi";
   const lines = [`-- Draft ${dialect.toUpperCase()} DDL generated by Schematic — review types & constraints before use.`,
-    "-- Table nodes only; concepts and to-do lists are not exported.",""];
+    "-- Table nodes only; concepts, rich notes, and to-do lists are not exported.",""];
   for (const t of tables){
     const tn = qident(t.title, dialect);
     const cols = t.fields.map(f => columnLine(f, dialect));
@@ -3655,8 +3867,9 @@ function lintDocument(docState = state){
   for (const e of edges){
     if (e.kind === "link") continue;
     const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to);
-    if ((a && a.type === "todo") || (b && b.type === "todo")){
-      issues.push({level:"error", msg:`Relation ${e.kind} touches a to-do list — use a link edge`, edgeId:e.id});
+    if (linkOnlyNode(a) || linkOnlyNode(b)){
+      const kind = a && a.type === "note" || b && b.type === "note" ? "rich note" : "to-do list";
+      issues.push({level:"error", msg:`Relation ${e.kind} touches a ${kind} — use a link edge`, edgeId:e.id});
       continue;
     }
     if (!a || !b || a.type !== "table" || b.type !== "table") continue;
@@ -3848,7 +4061,7 @@ function importDDLText(text){
   return {...parsed, imported:ok};
 }
 function generateMermaid(){
-  const lines = ["erDiagram", "  %% Tables and relations only — concepts, links, and to-do lists are omitted."];
+  const lines = ["erDiagram", "  %% Tables and relations only — concepts, links, rich notes, and to-do lists are omitted."];
   const tables = state.nodes.filter(n => n.type === "table");
   for (const t of tables){
     lines.push(`  ${ident(t.title)} {`);
@@ -3865,7 +4078,7 @@ function generateMermaid(){
   return lines.join("\n");
 }
 function generateMarkdownOutline(){
-  const outlineRoots = state.nodes.filter(n => n.type === "concept" || n.type === "todo");
+  const outlineRoots = state.nodes.filter(n => n.type === "concept" || n.type === "todo" || n.type === "note");
   const incoming = new Set(state.edges.filter(e => e.kind === "link").map(e => e.to));
   const roots = outlineRoots.filter(n => !incoming.has(n.id)).sort((a, b) => a.y - b.y || a.x - b.x);
   const childEdges = id => state.edges.filter(e => e.kind === "link" && e.from === id)
@@ -3877,6 +4090,11 @@ function generateMarkdownOutline(){
     const indent = "  ".repeat(depth);
     if (seen.has(id)){ lines.push(`${indent}- (→ see ${n.title || id})`); return; }
     if (n.type === "table") lines.push(`${indent}- **${n.title || "table"}**`);
+    else if (n.type === "note"){
+      lines.push(`${indent}- **${n.title || "Rich note"}**`);
+      for (const contentLine of String(n.content || "").split(/\r?\n/))
+        lines.push(contentLine ? `${indent}  ${contentLine}` : "");
+    }
     else if (n.type === "todo"){
       lines.push(`${indent}- ${n.title || "To-do list"}`);
       if (n.notes) lines.push(`${indent}  > ${n.notes}`);
@@ -4125,14 +4343,14 @@ function ctxSwatches(parent, colors, current, apply){
 }
 /* compact font-size stepper for the context menu */
 function ctxSizeRow(parent, n, targets = [n]){
-  const isC = n.type === "concept";
-  const cur = isC ? conceptFont(n) : tableMetrics(n).base;
+  const isC = n.type === "concept", isNote = n.type === "note";
+  const cur = nodeTextSize(n);
   const wrap = document.createElement("div");
   wrap.className = "swrow";
-  wrap.appendChild(sizeStepper(cur, isC ? 9 : 8, isC ? 48 : 28, isC ? 1 : 0.5,
+  wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote ? 10 : 8, isC ? 48 : 28, isC || isNote ? 1 : 0.5,
     (v, commit) => {
       pushHistory(targets.length > 1 ? "fs:multi" : "fs:"+n.id);
-      for (const t of targets) t.fontSize = t.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
+      for (const t of targets) t.fontSize = clampNodeTextSize(t, v);
       commit ? render() : drawOnly();
     }));
   parent.appendChild(wrap);
@@ -4168,8 +4386,8 @@ function nodeMenu(n, x, y){
   };
   showCtx(x, y, m => {
     ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
-              : n.type === "todo" ? "List color" : "Header color");
-    ctxSwatches(m, (n.type === "concept" || n.type === "todo") ? conceptColors() : tableColors(), n.color,
+              : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
+    ctxSwatches(m, (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
       (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
     if (n.type === "concept"){
       ctxLabel(m, "Shape");
@@ -4184,6 +4402,7 @@ function nodeMenu(n, x, y){
     }
     ctxSep(m);
     ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
+    if (n.type === "note") ctxItem(m, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
     if (n.type !== "frame") ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table"){
       ctxItem(m, "Add related table (1:N)", () => addRelatedTable(n.id));
@@ -4229,9 +4448,9 @@ function nodeMenu(n, x, y){
 }
 function edgeMenu(e, x, y){
   const a = nodeById(e.from), b = nodeById(e.to);
-  const touchesTodo = (a && a.type === "todo") || (b && b.type === "todo");
+  const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
   showCtx(x, y, m => {
-    if (!touchesTodo){
+    if (!touchesLinkOnlyNode){
       ctxLabel(m, "Relation type");
       const row = document.createElement("div");
       row.className = "kindrow";
@@ -4274,6 +4493,7 @@ function edgeMenu(e, x, y){
 function canvasMenu(w, x, y){
   showCtx(x, y, m => {
     ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
+    ctxItem(m, "Add rich note here", () => addNode("note", w.x - NOTE_W_DEFAULT/2, w.y - 60), {kbd:"N"});
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
     ctxItem(m, "Add to-do list here", () => addNode("todo", w.x - 90, w.y - 30), {kbd:"D"});
     ctxItem(m, "Add frame here",   () => addNode("frame",   w.x - FRAME_DEFAULT.w/2, w.y - FRAME_DEFAULT.h/2));
@@ -4474,6 +4694,10 @@ window.__T = {
   themeColors,
   autoInk,
   relativeLuminance,
+  noteFont,
+  richNoteInline,
+  richNoteBlock,
+  richNoteLayout,
   toggleInspector,
   updateInspectorVisibility,
   get inspectorPinned(){ return inspectorPinned; },

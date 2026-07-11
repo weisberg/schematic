@@ -429,10 +429,33 @@ function closeEnough(a, b, msg){
     T.startInlineEditor("node", node.id);
     input = window.document.querySelector(".inline-editor");
     input.value = "Zoom cancelled";
-    const wheel = new window.WheelEvent("wheel", { bubbles:true, cancelable:true, deltaY:-1, clientX:10, clientY:10 });
+    T.setView({ x:0, y:0, k:1 });
+    const wheel = new window.WheelEvent("wheel", {
+      bubbles:true, cancelable:true, deltaX:14, deltaY:-20, clientX:10, clientY:10
+    });
     window.document.getElementById("board").dispatchEvent(wheel);
-    assert(!window.document.querySelector(".inline-editor"), "zoom closes inline editor");
-    assert.strictEqual(node.title, "Tier strategy", "zoom close does not commit an edit");
+    assert(!window.document.querySelector(".inline-editor"), "wheel pan closes inline editor");
+    assert.strictEqual(node.title, "Tier strategy", "wheel pan close does not commit an edit");
+    assert.strictEqual(T.view.x, -14, "ordinary horizontal wheel input pans horizontally");
+    assert.strictEqual(T.view.y, 20, "ordinary vertical wheel input pans vertically");
+    assert.strictEqual(T.view.k, 1, "ordinary wheel input does not zoom");
+
+    const beforeZoom = {...T.view};
+    const zoomWheel = new window.WheelEvent("wheel", {
+      bubbles:true, cancelable:true, deltaY:-20, shiftKey:true, clientX:10, clientY:10
+    });
+    window.document.getElementById("board").dispatchEvent(zoomWheel);
+    assert.strictEqual(T.view.k, 1.1, "Shift plus vertical wheel zooms in");
+    closeEnough(T.view.x, 10 - (10 - beforeZoom.x)*1.1, "Shift-wheel zoom keeps cursor x anchored");
+    closeEnough(T.view.y, 10 - (10 - beforeZoom.y)*1.1, "Shift-wheel zoom keeps cursor y anchored");
+
+    const beforeShiftHorizontal = {...T.view};
+    const shiftHorizontal = new window.WheelEvent("wheel", {
+      bubbles:true, cancelable:true, deltaX:9, deltaY:0, shiftKey:true
+    });
+    window.document.getElementById("board").dispatchEvent(shiftHorizontal);
+    assert.strictEqual(T.view.k, beforeShiftHorizontal.k, "Shift plus horizontal wheel does not zoom");
+    closeEnough(T.view.x, beforeShiftHorizontal.x - 9, "Shift plus horizontal wheel still pans horizontally");
 
     const edge = T.state.edges.find(e => e.label === "drives");
     T.startInlineEditor("edge", edge.id);
@@ -1102,6 +1125,90 @@ function closeEnough(a, b, msg){
     live.collapsed = true;
     T.render();
     assert(!window.document.querySelector(`[data-todoadd="${live.id}"]`), "collapsed lists hide the add-item footer");
+  }
+
+  /* SCH-067 — rich-note primitive: formatting, editing, persistence, and links */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    assert(html.includes('id="btnAddNote"'), "toolbar exposes the rich-note primitive");
+    assert(T.SHORTCUTS.some(s => s.keys === "N" && /rich note/i.test(s.title)), "N shortcut is registered for rich notes");
+
+    const note = T.addNode("note", 1180, 80);
+    assert.strictEqual(note.type, "note", "addNode creates a rich note");
+    assert(note.content.includes("**bold**"), "new rich notes seed formatting guidance");
+    assert.strictEqual(note.w, 300, "new rich notes use the default width");
+
+    note.title = "Decision context";
+    note.content = "# Why this matters\n- [x] Approved\n- **High confidence** with _one caveat_ and `source_id`\n<script>alert(1)</script>";
+    T.render();
+    const group = window.document.querySelector(`[data-node="${note.id}"]`);
+    assert(group.querySelector('[data-note-surface="1"]'), "rich note renders a folded note surface");
+    assert(group.querySelector('[data-note-fold="1"]'), "rich note renders a folded corner");
+    assert(group.querySelector(`[data-note-content="${note.id}"]`), "rich note renders a content group");
+    const noteText = [...group.querySelectorAll("text")].map(el => el.textContent).join(" ");
+    assert(noteText.includes("Why this matters"), "Markdown heading content renders");
+    assert(noteText.includes("☑") && noteText.includes("Approved"), "Markdown task content renders");
+    assert(group.querySelector('tspan[font-weight="700"]'), "bold Markdown renders with a bold tspan");
+    assert(group.querySelector('tspan[font-style="italic"]'), "italic Markdown renders with an italic tspan");
+    assert(group.querySelector('tspan[font-family*="IBM Plex Mono"]'), "inline code renders in the mono font");
+    assert(!group.querySelector("script"), "note markup is rendered as inert SVG text, not executable HTML");
+    assert(noteText.includes("<script>alert(1)</script>"), "HTML-looking note content remains visible as text");
+
+    const emptyLayout = T.richNoteLayout({type:"note", content:"", w:300, fontSize:13});
+    assert(emptyLayout.lines[0].placeholder, "empty rich notes render a writing prompt");
+    const longLayout = T.richNoteLayout({type:"note", content:"x".repeat(4000), w:220, fontSize:13});
+    assert(longLayout.lines.length <= 80, "pathological note content is bounded to 80 rendered lines");
+    assert(longLayout.lines.some(line => line.truncated), "bounded rich-note rendering signals truncation");
+
+    T.selectNode(note.id);
+    let contentInput = window.document.getElementById("noteContentInput");
+    assert(contentInput && contentInput.tagName === "TEXTAREA", "rich-note inspector exposes a multiline editor");
+    const beforeEdit = note.content;
+    contentInput.dispatchEvent(new window.FocusEvent("focus"));
+    contentInput.value = "## Updated\n- New evidence";
+    contentInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(note.content, "## Updated\n- New evidence", "inspector edits update rich-note content");
+    T.undo();
+    let live = T.state.nodes.find(n => n.id === note.id);
+    assert.strictEqual(live.content, beforeEdit, "undo restores rich-note content");
+    T.redo();
+    live = T.state.nodes.find(n => n.id === note.id);
+    assert.strictEqual(live.content, "## Updated\n- New evidence", "redo restores edited rich-note content");
+
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.addEdge({id:live.id}, {id:concept.id});
+    const edge = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(edge.kind, "link", "rich-note connections use link edges");
+    assert(T.edgeEndpoints(edge), "rich-note link resolves visible node-level endpoints");
+
+    T.selectNode(live.id);
+    T.duplicateSelection();
+    const copy = T.state.nodes[T.state.nodes.length - 1];
+    assert.strictEqual(copy.type, "note", "duplicate preserves the rich-note type");
+    assert.strictEqual(copy.content, live.content, "duplicate preserves rich-note content");
+    assert.notStrictEqual(copy.id, live.id, "duplicate remaps the rich-note id");
+
+    const saved = JSON.parse(T.serializeDocument());
+    const savedNote = saved.nodes.find(n => n.id === live.id);
+    assert.strictEqual(savedNote.content, live.content, "rich-note content serializes");
+    T.importDocText(JSON.stringify(saved));
+    assert.strictEqual(T.state.nodes.find(n => n.id === live.id).content, live.content, "rich-note content round-trips through import");
+    assert(T.generateMarkdownOutline().includes("**Decision context**"), "Markdown outline includes rich-note titles");
+    assert(T.generateMarkdownOutline().includes("## Updated"), "Markdown outline preserves rich-note content");
+    assert(T.paletteItems().some(item => item.type === "note" && item.label.includes("New evidence")),
+      "command palette indexes rich-note content");
+    assert(T.paletteItems().some(item => item.command === "addNote"), "command palette can add a rich note");
+
+    const lint = T.lintDocument({
+      nodes:[
+        {id:"n", type:"note", title:"Context", content:"x"},
+        {id:"t", type:"table", title:"records", fields:[{id:"f", name:"id", type:"INT", pk:true}]}
+      ],
+      edges:[{id:"bad", from:"n", to:"t", kind:"1:N"}]
+    });
+    assert(lint.some(issue => issue.edgeId === "bad" && /rich note/.test(issue.msg)),
+      "lint rejects relation kinds attached to a rich note");
   }
 
   /* SCH-061 — edges to to-do lists and items */
