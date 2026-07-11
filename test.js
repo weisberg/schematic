@@ -465,6 +465,89 @@ function closeEnough(a, b, msg){
     assert.strictEqual(edge.label, "maps to", "Enter commits edge label inline edit");
   }
 
+  /* SCH-068 — semantic edge relationship presets with custom-label fallback */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const expected = [
+      ["Contains", "Parent-child structure"],
+      ["Depends on", "Execution dependency"],
+      ["Blocks", "Prevents progress"],
+      ["Supports", "Evidence supports a claim"],
+      ["Contradicts", "Evidence challenges a claim"],
+      ["Owns", "Person or team is accountable"],
+      ["Measures", "KPI evaluates an objective"],
+      ["Implements", "Task or project delivers a concept"],
+      ["Produces", "Output of one object becomes another"],
+      ["Reads from", "Data dependency"],
+      ["Writes to", "Data destination"],
+      ["Triggers", "Event initiates an action"],
+      ["References", "General informational relationship"],
+      ["Causes", "Causal influence"],
+      ["Calculates", "Formula derives a value"],
+      ["Validates", "Experiment tests an assumption"]
+    ];
+    sameList(T.EDGE_RELATIONSHIPS.map(r => [r.name, r.meaning]), expected,
+      "edge relationship presets preserve the supplied names, meanings, and order");
+
+    let edge = T.state.edges.find(e => e.label === "drives");
+    T.setSelection("edge", edge.id);
+    T.render();
+    let select = window.document.getElementById("edgeRelationshipSelect");
+    assert(select, "edge inspector renders a relationship selector");
+    assert.strictEqual(select.getAttribute("aria-label"), "Edge relationship", "relationship selector is labelled");
+    assert.strictEqual(select.options.length, expected.length + 1, "relationship selector includes presets plus custom text");
+    assert.strictEqual(select.value, "__custom__", "an existing arbitrary label maps to Custom text");
+    assert([...select.options].some(o => o.value === "Measures" && o.textContent.includes("KPI evaluates an objective")),
+      "relationship options expose their meanings");
+
+    const undoBefore = T.undoDepth;
+    select.value = "Supports";
+    select.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.label, "Supports", "choosing a preset writes it to the existing edge label");
+    assert.strictEqual(T.undoDepth, undoBefore + 1, "choosing a relationship preset is one undo step");
+    assert([...window.document.querySelectorAll(`[data-edge="${edge.id}"] text`)].some(t => t.textContent === "Supports"),
+      "chosen relationship renders on the edge");
+
+    T.undo();
+    edge = T.state.edges.find(e => e.id === edge.id);
+    assert.strictEqual(edge.label, "drives", "undo restores the prior custom label");
+    T.redo();
+    edge = T.state.edges.find(e => e.label === "Supports");
+    assert(edge, "redo restores the preset relationship");
+
+    T.setSelection("edge", edge.id);
+    T.render();
+    const labelInput = window.document.getElementById("edgeLabelInput");
+    assert(labelInput, "edge inspector retains an editable label-text field");
+    labelInput.dispatchEvent(new window.FocusEvent("focus"));
+    labelInput.value = "Custom rationale";
+    labelInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(edge.label, "Custom rationale", "typing arbitrary relationship text still works");
+    assert.strictEqual(window.document.getElementById("edgeRelationshipSelect").value, "__custom__",
+      "typing arbitrary text switches the selector to Custom text");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).edges.find(e => e.id === edge.id).label, "Custom rationale",
+      "custom relationship text serializes through the existing label field");
+
+    T.edgeMenu(edge, 10, 10);
+    const ctxSelect = window.document.querySelector(`#ctxMenu [data-edge-relationship="${edge.id}"]`);
+    assert(ctxSelect, "edge context menu exposes the same relationship selector");
+    ctxSelect.value = "Blocks";
+    ctxSelect.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.label, "Blocks", "context-menu relationship selection updates the edge label");
+    assert.strictEqual(window.document.getElementById("ctxMenu").style.display, "none",
+      "context menu closes after choosing a relationship preset");
+
+    T.setSelection("edge", edge.id);
+    T.render();
+    select = window.document.getElementById("edgeRelationshipSelect");
+    select.value = "__custom__";
+    select.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.label, "", "choosing Custom text clears a preset for fresh custom entry");
+    await delay(10);
+    assert.strictEqual(window.document.activeElement.id, "edgeLabelInput", "Custom text focuses the label editor");
+  }
+
   /* SCH-014 — quick-jump / command palette */
   {
     const { window } = makeDom();
