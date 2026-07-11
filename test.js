@@ -1363,5 +1363,249 @@ function closeEnough(a, b, msg){
       "structural table nodes do not expose concept flowchart shapes");
   }
 
+  /* ---- SCH-064: custom color schemes in document JSON ---- */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+
+    assert(T.tableColors().includes("#C20029"), "built-in table palette includes the default red");
+    assert(T.tableColors().includes("#007873"), "built-in table palette includes the default teal");
+
+    // validation: invalid entries drop, hex normalizes, empty schemes collapse to null
+    assert.strictEqual(T.normalizeColorScheme(null), null, "absent scheme normalizes to null");
+    assert.strictEqual(T.normalizeColorScheme({ concept: ["nope", 42] }), null,
+      "scheme with only invalid colors normalizes to null");
+    const messy = T.normalizeColorScheme({
+      name: "  Ocean  ",
+      concept: ["#A1B2C3", "a1b2c3", "not-a-color", "#0FF"],
+      frame: "123ABC",
+      theme: { light: { paper: "#001122", bogusKey: "#111111" }, dark: "nope" }
+    });
+    sameList(messy.concept, ["#a1b2c3", "#00ffff"],
+      "palette colors normalize, dedupe, and drop invalid entries");
+    assert.strictEqual(messy.name, "Ocean", "scheme name is trimmed");
+    assert.strictEqual(messy.frame, "#123abc", "single-color overrides normalize");
+    assert.strictEqual(messy.theme.light.paper, "#001122", "theme overrides keep known THEME keys");
+    assert.strictEqual(Object.hasOwn(messy.theme.light, "bogusKey"), false,
+      "theme overrides drop unknown keys");
+
+    const scheme = {
+      name: "Ocean",
+      concept: ["#113355", "#224466", "#335577"],
+      table: ["#014421", "#025533"],
+      font: ["#101010", "#fafafa"],
+      frame: "#0a3d62",
+      todo: "#123321",
+      theme: { light: { paper: "#e0f0ff", accent: "#0a3d62", ink: "#012233" } }
+    };
+    const doc = {
+      version: 1, nextId: 2,
+      nodes: [{ id: "n1", type: "concept", x: 0, y: 0, title: "Schemed", notes: "" }],
+      edges: [],
+      meta: { theme: "light", colorScheme: scheme }
+    };
+    T.importDocText(JSON.stringify(doc), { name: "scheme.schematic.json" });
+
+    sameList(T.conceptColors(), scheme.concept, "loaded scheme replaces the concept palette");
+    sameList(T.tableColors(), scheme.table, "loaded scheme replaces the table palette");
+    sameList(T.fontColors(), scheme.font, "loaded scheme replaces the font palette");
+    assert.strictEqual(T.frameColorDefault(), "#0a3d62", "loaded scheme replaces the frame default");
+    assert.strictEqual(T.todoColorDefault(), "#123321", "loaded scheme replaces the to-do default");
+    assert.strictEqual(T.themeColors("light").paper, "#e0f0ff", "scheme theme overrides merge into THEME");
+    assert.strictEqual(T.themeColors("light").edge, T.THEME.light.edge,
+      "unspecified theme keys keep their built-in values");
+    assert.strictEqual(T.themeColors("dark").paper, T.THEME.dark.paper,
+      "modes without overrides stay untouched");
+    assert.strictEqual(window.document.documentElement.style.getPropertyValue("--accent"), "#0a3d62",
+      "scheme theme overrides reach the UI chrome CSS variables");
+
+    // colorless nodes render with the scheme default
+    const conceptShape = window.document.querySelector('[data-node="n1"] [data-node-shape]');
+    assert.strictEqual(conceptShape.getAttribute("fill"), "#113355",
+      "concept without explicit color renders with the scheme's first concept color");
+
+    // new nodes draw their defaults from the scheme
+    T.addNode("concept", 100, 100);
+    assert(scheme.concept.includes(T.state.nodes.at(-1).color), "new concepts cycle scheme concept colors");
+    T.addNode("table", 200, 200);
+    assert.strictEqual(T.state.nodes.at(-1).color, T.themeColors("light").ink,
+      "new tables keep using the (scheme-merged) theme ink");
+    T.addNode("todo", 300, 300);
+    assert.strictEqual(T.state.nodes.at(-1).color, "#123321", "new to-do lists use the scheme default");
+    T.addNode("frame", 400, 400);
+    assert.strictEqual(T.state.nodes.at(-1).color, "#0a3d62", "new frames use the scheme default");
+
+    // inspector swatches show scheme colors
+    const concept = T.state.nodes.find(n => n.type === "concept" && n.id !== "n1");
+    T.selectNode(concept.id);
+    const shown = [...window.document.querySelectorAll("#inspector .swatches")[0].children].map(b => b.title);
+    sameList(shown, scheme.concept, "inspector color swatches come from the scheme");
+
+    // context menu swatches show scheme colors
+    T.nodeMenu(concept, 10, 10);
+    const ctxShown = [...window.document.querySelectorAll("#ctxMenu .swrow")[0].children].map(b => b.title);
+    sameList(ctxShown, scheme.concept, "context-menu color swatches come from the scheme");
+
+    // scheme swatches never duplicate into the recent-colors row
+    sameList(T.pushRecentColor([], "#113355"), [], "scheme palette colors are treated as presets");
+    sameList(T.pushRecentColor([], "#ab12cd"), ["#ab12cd"], "non-scheme colors still record as recent");
+
+    // round-trip: the scheme is written back into the document JSON
+    const saved = JSON.parse(T.serializeDocument());
+    sameList(saved.meta.colorScheme.concept, scheme.concept, "scheme palettes round-trip through save");
+    assert.strictEqual(saved.meta.colorScheme.theme.light.paper, "#e0f0ff", "scheme theme round-trips through save");
+
+    // undo across an import restores the previous scheme
+    T.pushHistory();
+    T.importDocText(JSON.stringify({ version: 1, nextId: 1, nodes: [], edges: [] }),
+      { name: "plain.schematic.json", resetHistory: false });
+    assert.strictEqual(T.colorScheme, null, "documents without a scheme reset to built-in palettes");
+    sameList(T.conceptColors(), ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"],
+      "built-in concept palette returns once the scheme is gone");
+    T.undo();
+    assert(T.colorScheme && T.colorScheme.name === "Ocean", "undo restores the imported scheme");
+
+    // New document clears the scheme and the chrome CSS variables
+    T.setDocDirty(false);
+    T.newDoc();
+    assert.strictEqual(T.colorScheme, null, "new documents start without a scheme");
+    assert.strictEqual(window.document.documentElement.style.getPropertyValue("--accent"), "",
+      "scheme CSS variables are removed with the scheme");
+    assert.strictEqual(T.themeColors("light").paper, T.THEME.light.paper, "THEME reverts with the scheme");
+    assert.strictEqual(Object.hasOwn(JSON.parse(T.serializeDocument()).meta, "colorScheme"), false,
+      "schemeless documents do not write a colorScheme key");
+  }
+
+  /* ---- SCH-065: toolbar menus + auto-contrast node ink ---- */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+
+    // every historical toolbar action keeps its id (handlers bind by id)
+    for (const id of ["btnNew","btnOpen","btnSave","btnSaveAs","btnExportJSON","btnImportJSON",
+                      "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
+                      "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept",
+                      "btnAddTable","btnAddTodo","btnAddFrame","btnUndo","btnRedo","btnFit",
+                      "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup"])
+      assert(doc.getElementById(id), `toolbar button #${id} still exists`);
+
+    // menus: open, switch, outside-close, Escape-close without nuking selection
+    const menus = [...doc.querySelectorAll("header .menu")];
+    assert.strictEqual(menus.length, 3, "toolbar exposes File / Export / Layout menus");
+    const [fileMenu, exportMenu] = menus;
+    fileMenu.querySelector(".menubtn").click();
+    assert(fileMenu.classList.contains("open"), "clicking a menu trigger opens its panel");
+    assert.strictEqual(fileMenu.querySelector(".menubtn").getAttribute("aria-expanded"), "true",
+      "open menu reflects aria-expanded");
+    exportMenu.querySelector(".menubtn").click();
+    assert(!fileMenu.classList.contains("open") && exportMenu.classList.contains("open"),
+      "only one menu panel is open at a time");
+    firePointer(window, doc.getElementById("inspector"), "pointerdown");
+    assert(!exportMenu.classList.contains("open"), "pointer outside the menu closes it");
+
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    fileMenu.querySelector(".menubtn").click();
+    doc.body.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert(!fileMenu.classList.contains("open"), "Escape closes an open menu");
+    assert(T.selection && T.selection.ids.includes(concept.id),
+      "Escape that closes a menu does not clear the canvas selection");
+    doc.body.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.strictEqual(T.selection, null, "with no menu open, Escape clears selection as before");
+
+    // snap toggle state is visible on the menu item
+    assert.strictEqual(doc.getElementById("btnSnap").getAttribute("aria-pressed"), "false",
+      "snap toggle starts off");
+    doc.getElementById("btnSnap").click();
+    assert.strictEqual(doc.getElementById("btnSnap").getAttribute("aria-pressed"), "true",
+      "clicking snap flips its pressed state");
+
+    // auto-contrast ink
+    assert.strictEqual(T.autoInk("#123321"), "#FFFFFF", "dark fills take light ink");
+    assert.strictEqual(T.autoInk("#CFE8FF"), "#16232F", "light fills take dark ink");
+    T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[
+      { id:"c1", type:"concept", x:0, y:0, title:"Dark", notes:"", color:"#16232F" },
+      { id:"t1", type:"todo", x:0, y:200, title:"Dark list", notes:"", color:"#123321", items:[{id:"i1", text:"x"}] },
+      { id:"t2", type:"todo", x:0, y:400, title:"Styled", notes:"", color:"#123321", fontColor:"#ABCDEF", items:[{id:"i2", text:"x"}] },
+      { id:"tb1", type:"table", x:300, y:0, title:"light_header", notes:"", color:"#CFE8FF",
+        fields:[{id:"f1", name:"id", type:"INT", pk:true, fk:false, nullable:false}] }
+    ], edges:[] }));
+    assert.strictEqual(doc.querySelector('[data-node="c1"] text').getAttribute("fill"), "#FFFFFF",
+      "concept titles stay readable on dark fills");
+    assert.strictEqual(doc.querySelector('[data-node="t1"] text').getAttribute("fill"), "#FFFFFF",
+      "to-do headers stay readable on dark fills");
+    assert.strictEqual(doc.querySelector('[data-node="t2"] text').getAttribute("fill"), "#ABCDEF",
+      "an explicit fontColor still wins over auto-contrast");
+    assert.strictEqual(doc.querySelector('[data-node="tb1"] text').getAttribute("fill"), "#16232F",
+      "table headers flip to dark ink on light header colors");
+  }
+
+  /* ---- SCH-066: hide / show the inspector ---- */
+  {
+    const { window, storage } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    const aside = doc.getElementById("inspector");
+    const btn = doc.getElementById("btnInspector");
+
+    assert.strictEqual(T.inspectorPinned, true, "inspector starts pinned (visible) by default");
+    assert.strictEqual(aside.hidden, false, "pinned inspector is visible without a selection");
+    assert.strictEqual(btn.getAttribute("aria-pressed"), "true", "toggle reflects the pinned state");
+
+    btn.click();
+    assert.strictEqual(T.inspectorPinned, false, "clicking the toggle unpins the inspector");
+    assert.strictEqual(aside.hidden, true, "unpinned inspector hides while nothing is selected");
+    assert.strictEqual(storage.getItem("schematic.inspectorPinned"), "0", "preference mirrors to localStorage");
+
+    const node = T.state.nodes[0];
+    T.selectNode(node.id);
+    assert.strictEqual(aside.hidden, false, "selecting an element reveals the auto-hidden inspector");
+    assert(doc.getElementById("titleInput") || doc.getElementById("inspTitle").textContent !== "Inspector",
+      "revealed inspector shows the selected element, not the help panel");
+
+    T.clearSelection();
+    T.render();
+    assert.strictEqual(aside.hidden, true, "clearing the selection hides the inspector again");
+
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "i", bubbles: true }));
+    assert.strictEqual(T.inspectorPinned, true, "the I shortcut re-pins the inspector");
+    assert.strictEqual(aside.hidden, false, "re-pinned inspector is visible with no selection");
+    assert.strictEqual(storage.getItem("schematic.inspectorPinned"), "1", "re-pinning mirrors to localStorage");
+    assert(T.SHORTCUTS.some(s => s.keys === "I" && /inspector/i.test(s.title)),
+      "I shortcut is registered in the cheat sheet");
+  }
+
+  /* inspector preference survives reload; storage failures degrade gracefully */
+  {
+    const { window } = makeDom({ storageSeed: { "schematic.inspectorPinned": "0" } });
+    assert.strictEqual(window.__T.inspectorPinned, false, "stored preference restores an unpinned inspector");
+    assert.strictEqual(window.document.getElementById("inspector").hidden, true,
+      "restored unpinned inspector starts hidden without a selection");
+  }
+  {
+    const { window } = makeDom({ storageThrows: true });
+    const T = window.__T;
+    assert.strictEqual(T.inspectorPinned, true, "throwing localStorage still defaults to a visible inspector");
+    T.toggleInspector();
+    assert.strictEqual(T.inspectorPinned, false, "toggling works in-memory without localStorage");
+    assert.strictEqual(window.document.getElementById("inspector").hidden, true,
+      "in-memory unpinned inspector hides without a selection");
+  }
+
+  /* scheme theme overrides follow light/dark toggling */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.applyColorScheme({ theme: { light: { accent: "#0a3d62" }, dark: { accent: "#88ccff" } } });
+    T.applyTheme("light", { render: true });
+    assert.strictEqual(window.document.documentElement.style.getPropertyValue("--accent"), "#0a3d62",
+      "light-mode chrome variables use the light override");
+    T.toggleTheme();
+    assert.strictEqual(window.document.documentElement.style.getPropertyValue("--accent"), "#88ccff",
+      "dark-mode chrome variables use the dark override");
+    assert.strictEqual(T.themeColors().accent, "#88ccff", "canvas theme follows the active mode's override");
+  }
+
   console.log("ALL TESTS PASSED");
 })();

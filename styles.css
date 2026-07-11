@@ -31,24 +31,45 @@
   body{font-family:var(--ui);color:var(--ink);background:var(--paper);display:flex;flex-direction:column}
 
   /* ---------- Toolbar ---------- */
-  header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--panel);
+  header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);
          border-bottom:1px solid var(--line);flex-wrap:wrap;z-index:5}
-  .brand{display:flex;flex-direction:column;line-height:1.05;margin-right:6px}
-  .brand b{font-weight:800;letter-spacing:.14em;font-size:15px}
-  .brand span{font-size:10px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
-  .tgroup{display:flex;align-items:center;gap:6px;padding:0 12px;border-left:1px solid var(--line)}
-  .tgroup:first-of-type{border-left:none;padding-left:0}
-  .tlabel{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-right:2px}
-  button{font-family:var(--ui);font-size:13px;font-weight:600;color:var(--ink-2);
+  .brand{display:flex;flex-direction:column;line-height:1.1;margin-right:4px;min-width:0}
+  .brand b{font-weight:800;letter-spacing:.14em;font-size:14px}
+  .brand span{font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;
+              max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tgroup{display:flex;align-items:center;gap:5px}
+  button{font-family:var(--ui);font-size:12.5px;font-weight:600;color:var(--ink-2);
          background:var(--panel);border:1px solid var(--line);border-radius:7px;
-         padding:7px 12px;cursor:pointer;transition:background .12s,border-color .12s}
+         padding:6px 11px;cursor:pointer;transition:background .12s,border-color .12s}
   button:hover{background:var(--hover);border-color:var(--muted)}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-  button.primary:hover{background:#1C46C2}
+  button.primary:hover{background:var(--accent);filter:brightness(.92)}
   button.ghost{border-color:transparent}
   button:disabled{opacity:.4;cursor:default}
   .spacer{flex:1}
+
+  /* ---------- Toolbar menus ---------- */
+  .menubar{display:flex;align-items:center;gap:1px;margin-right:2px;padding-right:8px;
+           border-right:1px solid var(--line)}
+  .menu{position:relative}
+  .menubtn{border-color:transparent;background:none;font-weight:600;padding:6px 10px;border-radius:6px}
+  .menubtn:hover,.menu.open .menubtn{background:var(--hover);border-color:transparent}
+  .menu.open .menubtn{color:var(--ink)}
+  .menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:208px;
+             display:none;flex-direction:column;padding:5px;background:var(--panel);
+             border:1px solid var(--line);border-radius:9px;
+             box-shadow:0 10px 32px rgba(10,20,30,.18)}
+  .menu.open .menupanel{display:flex}
+  .menupanel button{display:flex;justify-content:space-between;align-items:center;gap:18px;
+                    width:100%;border:none;background:none;border-radius:6px;padding:7px 10px;
+                    font-size:12.5px;font-weight:500;color:var(--ink);text-align:left}
+  .menupanel button:hover{background:var(--accent-soft);border-color:transparent}
+  .menupanel button.dangerbtn{color:var(--danger);border:none}
+  .menupanel button.dangerbtn:hover{background:var(--hover)}
+  .menupanel button[aria-pressed="true"]{color:var(--accent);font-weight:600}
+  .menupanel button[aria-pressed="true"]::after{content:"✓";font-weight:700}
+  .menusep{height:1px;background:var(--line);margin:5px 4px}
   .banner{background:#FFF7D6;border-bottom:1px solid #E8D58B;color:#604B00;
           padding:8px 16px;font-size:12px;line-height:1.35}
   .banner[hidden]{display:none}
@@ -80,6 +101,8 @@
   /* ---------- Inspector ---------- */
   aside{width:312px;background:var(--panel);border-left:1px solid var(--line);
         display:flex;flex-direction:column;overflow-y:auto}
+  aside[hidden]{display:none}
+  #btnInspector[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
   aside .head{padding:14px 16px 10px;border-bottom:1px solid var(--line)}
   aside .head h2{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700}
   aside .body{padding:14px 16px;display:flex;flex-direction:column;gap:14px}
@@ -153,9 +176,9 @@
                  border-radius:6px;padding:4px 8px;box-shadow:0 8px 24px rgba(10,20,30,.18)}
 
   /* ---------- Status bar ---------- */
-  footer{display:flex;align-items:center;gap:18px;padding:6px 16px;background:var(--panel);
+  footer{display:flex;align-items:center;gap:16px;padding:6px 16px;background:var(--panel);
          border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);font-family:var(--mono)}
-  footer .hint{font-family:var(--ui)}
+  footer .hint{font-family:var(--ui);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .appversion{font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap}
   .statusbtn{font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:5px}
   .statuscheck{display:flex;align-items:center;gap:6px;white-space:nowrap;color:var(--muted)}
@@ -211,7 +234,7 @@
   #ctxMenu .shaperow button{font-family:var(--ui);font-size:9.5px;line-height:1.1;padding:5px 3px;border-radius:5px}
   #ctxMenu .shaperow button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
 
-  @media (max-width:820px){ aside{width:262px} }
+  @media (max-width:820px){ aside{width:262px} footer .hint{display:none} .brand span{max-width:120px} }
   @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
   @media print{
     header,aside,footer,.banner,#minimap,.modal{display:none!important}

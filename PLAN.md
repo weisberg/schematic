@@ -112,6 +112,15 @@ Add new code inside the matching section.
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
 - Table nodes may include `collapsed`; collapsed tables render header + field count.
 - `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
+- `meta.colorScheme` (v1.4, additive) optionally carries a custom color scheme that
+  replaces the built-in palettes and defaults while the document is open:
+  `{ "name"?, "concept"?: [hex…], "table"?: [hex…], "font"?: [hex…], "frame"?: hex,
+  "todo"?: hex, "theme"?: { "light"?: {…}, "dark"?: {…} } }`. All keys optional;
+  palette arrays cap at 12 entries; `theme` overrides accept only the keys of the
+  built-in `THEME` objects. Everything is validated through `normalizeColorScheme`
+  on import (invalid colors are dropped; an empty scheme collapses to absent).
+  Node colors already written into the document are untouched — the scheme changes
+  swatch palettes, new-node defaults, and (via `theme`) canvas + UI chrome colors.
 - `fontSize`/`fontColor` are optional; absence means defaults
   (`CONCEPT_FS_DEFAULT = 14`, `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
 
@@ -931,6 +940,92 @@ survive), multi-select/alignment/frames containment (should be generic — verif
 auto-layout tree scope includes `link`-connected todos like concepts.
 
 AC: one assertion per surface above; PNG/SVG exports strip handles and render checkboxes.
+
+---
+
+### Phase H — Custom color schemes (v1.4)
+
+**SCH-064 · Document color schemes · P2 · M · Done 2026-07-10**
+
+Add optional `meta.colorScheme` (see §2.2) so a project/map JSON file can ship its own
+palette. Implementation keystones:
+- Scheme access goes through accessors — `conceptColors()`, `tableColors()`,
+  `fontColors()`, `frameColorDefault()`, `todoColorDefault()` — which fall back to the
+  built-in constants; every palette/default consumer (inspector `swatches`, context-menu
+  `ctxSwatches`, `addNode`, `addChildConcept`, DDL/CSV import, minimap, `perfSeed`) uses
+  them instead of the constants.
+- The built-in table palette includes brand red `#C20029` and teal `#007873`; document
+  schemes remain free to replace either value.
+- `themeColors()` reads scheme-merged copies of `THEME` (rebuilt on scheme apply);
+  scheme theme overrides also mirror onto the UI-chrome CSS custom properties
+  (`--paper`, `--panel`, `--control`, `--ink`, `--ink-2`, `--muted`, `--accent`) per
+  active mode, re-synced on light/dark toggle.
+- Lifecycle: `applyColorScheme` runs in `applyDocument` (import), `restore` (undo/redo —
+  `snapshot()` now carries `meta.colorScheme`), and `newDoc` (reset to null);
+  `documentObject()` writes the scheme back so it round-trips. The recent-colors preset
+  set recomputes on scheme apply so scheme swatches don't duplicate into the recent row.
+- `DOC_VERSION` stays 1 (E8 — additive). Documents without a scheme, and all existing
+  node `color`/`fontColor` values, behave exactly as before.
+
+AC: importing a scheme document swaps inspector/context-menu swatches, new-node
+defaults, and theme colors; saving round-trips the scheme byte-stable; invalid scheme
+entries are dropped on import; `newDoc` and schemeless documents restore built-ins;
+undo across an import restores the prior scheme. Covered by jsdom assertions in
+`test.js` (validation, palettes, rendering fill, swatch rows, recent-color exclusion,
+round-trip, undo, reset, CSS variables, light/dark override switching).
+
+---
+
+### Phase I — Toolbar & readability overhaul (v1.5)
+
+**SCH-065 · Menu-based toolbar + auto-contrast node ink · P1 · M · Done 2026-07-10**
+
+The flat 26-button header wrapped onto 3–4 rows at common widths and node text could
+render unreadably (dark-on-dark to-do headers, light-on-light concepts in dark theme).
+
+- Header reorganized into a menubar (File ▾ / Export ▾ / Layout ▾ disclosure menus via
+  `setupMenus`) plus visible high-frequency actions: + Concept/+ Table/+ To-do/+ Frame,
+  Undo/Redo/Fit, Save. **Every button keeps its historical id** — handlers and tests
+  bind by id; menu items are the same elements restyled. One panel open at a time;
+  outside pointer, item click, and Escape close (Escape is intercepted in the capture
+  phase so it doesn't also clear the canvas selection). Snap-to-grid shows its state
+  via `aria-pressed` (checkmark styled in CSS); `appVersion` moved to the footer.
+- `autoInk(bg)` picks readable text ink against a node's own fill by WCAG relative
+  luminance (`relativeLuminance`, cutoff ≈ 0.179), returning `THEME` values (never
+  literals — the no-literal-ink grep test still holds). Applied wherever a default was
+  previously assumed to sit on a light/dark fill: concept titles, to-do headers, table
+  headers (formerly always `tableText` white), and PK/U badge glyphs. An explicit
+  `n.fontColor` always wins; document JSON is untouched.
+- CSS: `button.primary:hover` no longer hardcodes a blue (uses brightness filter so
+  scheme accents survive); footer hint truncates with ellipsis and hides ≤820px.
+
+AC: all historical ids present; menus open/switch/close correctly incl. Escape
+selection-preservation; snap state visible; dark-fill concept/todo/table text renders
+light and light-fill table headers render dark; explicit fontColor overrides; full
+suite green. Covered by jsdom assertions in `test.js`.
+
+---
+
+**SCH-066 · Hide / show the inspector · P2 · S · Done 2026-07-10**
+
+Two inspector modes toggled by the header `#btnInspector` button (`aria-pressed`
+reflects state) or the `I` shortcut (registered in `SHORTCUTS` — cheat-sheet sync):
+- **Pinned** (default): inspector always visible — the historical behavior.
+- **Unpinned (auto)**: inspector hidden when nothing is selected; selecting any node
+  or edge reveals it, clearing the selection hides it again.
+
+Implementation: `inspectorPinned` is a UI preference, not document data — mirrored to
+`localStorage` (`schematic.inspectorPinned`) behind the `RECOVERY` feature detect with
+an in-memory fallback (P5). Visibility is applied by `updateInspectorVisibility()`
+(`aside.hidden = !pinned && !sel`) called from `renderInspector()`, the funnel every
+`render()` goes through, so every selection path (click, marquee, palette, Tab-cycle,
+undo/redo prune) is covered without new hooks. `aside[hidden]{display:none}` CSS makes
+the attribute effective against the flex display.
+
+AC: default pinned + visible; unpinning hides at no-selection, select reveals with the
+element editor (not the help panel), deselect re-hides; `I` re-pins; preference
+survives reload via storage seed; throwing storage degrades to in-memory. Covered by
+jsdom assertions in `test.js`.
 
 ---
 
