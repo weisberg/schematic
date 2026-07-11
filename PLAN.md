@@ -218,6 +218,8 @@ Harness quirks you must respect:
 
 **Edges**
 - Kinds: `link` (dashed freeform) and `1:1`/`1:N`/`N:M` with crow's-foot notation.
+- Semantic labels offer 16 relationship presets (Contains through Validates) with their
+  meanings in the inspector and context menu; arbitrary custom label text remains supported.
 - Whole-node anchoring (boundary point toward the other end) and **field-level anchoring**
   (per-row ○ handles on hover, drag to another field/node, live drop-target highlight,
   anchor dots on bound ends, inspector attachment dropdowns per end).
@@ -1062,6 +1064,27 @@ AC: formatting renders safely; empty and pathological long content degrade visib
 content edits undo/redo; JSON round-trips; duplicate preserves content with a new id;
 note-to-node links resolve endpoints and remain `link`; palette and Markdown export include
 note content; full tests and browser interaction QA pass.
+
+---
+
+**SCH-068 · Semantic edge relationship presets · P1 · S · Done 2026-07-11**
+
+Keep `edge.kind` reserved for rendering/cardinality (`link|1:1|1:N|N:M`) and store
+semantic relationships in the existing optional `edge.label`, preserving every current
+document and custom label. Add the supplied 16 presets—Contains, Depends on, Blocks,
+Supports, Contradicts, Owns, Measures, Implements, Produces, Reads from, Writes to,
+Triggers, References, Causes, Calculates, and Validates—with their explanatory meanings.
+
+- Edge inspector: a Relationship selector lists `Custom text` plus all presets and
+  meanings; the existing editable label field remains available for arbitrary text.
+- Edge context menu exposes the same selector for workflow parity; selecting Custom text
+  clears a preset and focuses the existing label editor.
+- Selecting a preset is one undo step and writes only `edge.label`; serialization, inline
+  label editing, SVG rendering, routing, and relation kind behavior remain unchanged.
+
+AC: exact supplied names/meanings/order are tested; existing custom labels select Custom
+text; preset selection renders, undoes/redoes, and serializes; arbitrary input returns the
+selector to Custom text; inspector and context-menu paths both work.
 
 ---
 

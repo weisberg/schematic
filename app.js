@@ -46,11 +46,30 @@ const FLOWCHART_SHAPES = [
   ["manualInput", "Manual input"]
 ];
 const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
+const EDGE_RELATIONSHIPS = [
+  ["Contains", "Parent-child structure"],
+  ["Depends on", "Execution dependency"],
+  ["Blocks", "Prevents progress"],
+  ["Supports", "Evidence supports a claim"],
+  ["Contradicts", "Evidence challenges a claim"],
+  ["Owns", "Person or team is accountable"],
+  ["Measures", "KPI evaluates an objective"],
+  ["Implements", "Task or project delivers a concept"],
+  ["Produces", "Output of one object becomes another"],
+  ["Reads from", "Data dependency"],
+  ["Writes to", "Data destination"],
+  ["Triggers", "Event initiates an action"],
+  ["References", "General informational relationship"],
+  ["Causes", "Causal influence"],
+  ["Calculates", "Formula derives a value"],
+  ["Validates", "Experiment tests an assumption"]
+];
+const EDGE_CUSTOM_RELATIONSHIP = "__custom__";
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.7.0";
+const APP_VERSION = "v1.7.1";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -2893,6 +2912,45 @@ function focusNoteInput(){
     if (i) i.focus();
   });
 }
+function focusEdgeLabelInput(){
+  requestAnimationFrame(() => {
+    const i = document.getElementById("edgeLabelInput");
+    if (i){ i.focus(); i.select(); }
+  });
+}
+function edgeRelationshipValue(label){
+  return EDGE_RELATIONSHIPS.some(([name]) => name === label) ? label : EDGE_CUSTOM_RELATIONSHIP;
+}
+function edgeRelationshipSelect(e, opts = {}){
+  const s = document.createElement("select");
+  s.setAttribute("aria-label", "Edge relationship");
+  s.setAttribute("data-edge-relationship", e.id);
+  if (opts.id) s.id = opts.id;
+  const custom = document.createElement("option");
+  custom.value = EDGE_CUSTOM_RELATIONSHIP;
+  custom.textContent = "Custom text";
+  custom.title = "Use any custom edge label";
+  s.appendChild(custom);
+  for (const [name, meaning] of EDGE_RELATIONSHIPS){
+    const o = document.createElement("option");
+    o.value = name;
+    o.textContent = `${name} — ${meaning}`;
+    o.title = meaning;
+    s.appendChild(o);
+  }
+  s.value = edgeRelationshipValue(e.label);
+  s.addEventListener("change", () => {
+    const next = s.value;
+    pushHistory();
+    if (next === EDGE_CUSTOM_RELATIONSHIP){
+      if (edgeRelationshipValue(e.label) !== EDGE_CUSTOM_RELATIONSHIP) e.label = "";
+    } else e.label = next;
+    if (opts.close) opts.close();
+    render();
+    if (next === EDGE_CUSTOM_RELATIONSHIP && opts.onCustom) opts.onCustom();
+  });
+  return s;
+}
 
 function renderInspector(){
   updateInspectorVisibility();
@@ -3082,7 +3140,18 @@ function renderInspector(){
     const firstPair = edgeFieldPairs(e)[0] || {};
     if (!(firstPair.fromField || e.fromField)) anchorRow("From", e, "fromAnchor");
     if (!(firstPair.toField || e.toField)) anchorRow("To", e, "toAnchor");
-    frow("Label (optional)", () => mkInput(e.label, v => { e.label = v; drawOnly(); }));
+    frow("Relationship", () => edgeRelationshipSelect(e, { id:"edgeRelationshipSelect", onCustom:focusEdgeLabelInput }));
+    frow("Label text", () => {
+      const i = mkInput(e.label, v => {
+        e.label = v;
+        const s = document.getElementById("edgeRelationshipSelect");
+        if (s) s.value = edgeRelationshipValue(v);
+        drawOnly();
+      });
+      i.id = "edgeLabelInput";
+      i.placeholder = "Custom relationship text";
+      return i;
+    });
 
     const div = document.createElement("div");
     div.className = "rowbtns";
@@ -4463,6 +4532,14 @@ function edgeMenu(e, x, y){
       }
       m.appendChild(row);
     }
+    ctxLabel(m, "Relationship");
+    const relationshipRow = document.createElement("div");
+    relationshipRow.className = "swrow";
+    relationshipRow.appendChild(edgeRelationshipSelect(e, {
+      close:hideCtx,
+      onCustom:() => startInlineEditor("edge", e.id)
+    }));
+    m.appendChild(relationshipRow);
     ctxLabel(m, "Routing");
     const routeRow = document.createElement("div");
     routeRow.className = "kindrow";
@@ -4485,7 +4562,7 @@ function edgeMenu(e, x, y){
       swapEdgeDirection(e);
       render();
     });
-    ctxItem(m, "Edit label", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
+    ctxItem(m, "Edit label text", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
     ctxSep(m);
     ctxItem(m, "Delete edge", deleteSelection, {kbd:"Del", danger:true});
   });
@@ -4624,7 +4701,11 @@ window.__T = {
   conceptShape,
   setConceptShape,
   get FLOWCHART_SHAPES(){ return FLOWCHART_SHAPES.map(([id, label]) => ({id, label})); },
+  get EDGE_RELATIONSHIPS(){ return EDGE_RELATIONSHIPS.map(([name, meaning]) => ({name, meaning})); },
   nodeMenu,
+  edgeMenu,
+  edgeRelationshipValue,
+  edgeRelationshipSelect,
   nodeAnchor,
   nodeRows,
   tableMetrics,
