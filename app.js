@@ -34,7 +34,7 @@ let recoveryTimer = null;
 let clipboardData = null;
 let inlineEditor = null;
 
-const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"];
+const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC","#007873","#C20029"];
 const TABLE_COLORS   = ["#16232F","#2456E6","#007873","#8A3FA8","#C20029","#6B7683"];
 const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A3A"];
 const FLOWCHART_SHAPES = [
@@ -49,7 +49,7 @@ const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.6.1";
+const APP_VERSION = "v1.6.2";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {

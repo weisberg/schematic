@@ -954,7 +954,7 @@ palette. Implementation keystones:
   built-in constants; every palette/default consumer (inspector `swatches`, context-menu
   `ctxSwatches`, `addNode`, `addChildConcept`, DDL/CSV import, minimap, `perfSeed`) uses
   them instead of the constants.
-- The built-in table palette includes brand red `#C20029` and teal `#007873`; document
+- The built-in table and concept/background palettes include brand red `#C20029` and teal `#007873`; document
   schemes remain free to replace either value.
 - `themeColors()` reads scheme-merged copies of `THEME` (rebuilt on scheme apply);
   scheme theme overrides also mirror onto the UI-chrome CSS custom properties

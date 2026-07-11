@@ -1370,6 +1370,8 @@ function closeEnough(a, b, msg){
 
     assert(T.tableColors().includes("#C20029"), "built-in table palette includes the default red");
     assert(T.tableColors().includes("#007873"), "built-in table palette includes the default teal");
+    assert(T.conceptColors().includes("#C20029"), "built-in concept backgrounds include the default red");
+    assert(T.conceptColors().includes("#007873"), "built-in concept backgrounds include the default teal");
 
     // validation: invalid entries drop, hex normalizes, empty schemes collapse to null
     assert.strictEqual(T.normalizeColorScheme(null), null, "absent scheme normalizes to null");
@@ -1460,7 +1462,7 @@ function closeEnough(a, b, msg){
     T.importDocText(JSON.stringify({ version: 1, nextId: 1, nodes: [], edges: [] }),
       { name: "plain.schematic.json", resetHistory: false });
     assert.strictEqual(T.colorScheme, null, "documents without a scheme reset to built-in palettes");
-    sameList(T.conceptColors(), ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"],
+    sameList(T.conceptColors(), ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC","#007873","#C20029"],
       "built-in concept palette returns once the scheme is gone");
     T.undo();
     assert(T.colorScheme && T.colorScheme.name === "Ocean", "undo restores the imported scheme");
