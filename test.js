@@ -1067,6 +1067,43 @@ function closeEnough(a, b, msg){
     assert(copy.items.every(it => !live.items.some(orig => orig.id === it.id)), "duplicate remaps item ids");
   }
 
+  /* To-do list footer: add items without leaving the node */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const todo = T.addNode("todo", 120, 80);
+    todo.title = "Release checklist";
+    T.render();
+
+    const addControl = window.document.querySelector(`[data-todoadd="${todo.id}"]`);
+    assert(addControl, "expanded to-do list renders an in-list add-item control");
+    assert.strictEqual(addControl.getAttribute("role"), "button", "add-item control exposes a button role");
+    assert.strictEqual(addControl.getAttribute("tabindex"), "0", "add-item control is keyboard focusable");
+    assert(addControl.getAttribute("aria-label").includes("Release checklist"), "add-item control names its list");
+
+    const r = T.nodeRect(todo), m = T.tableMetrics(todo);
+    const addHit = T.hitTest({ x:r.x + r.w/2, y:r.y + m.headerH + m.rowH*1.5 });
+    assert(addHit && addHit.node.id === todo.id && !addHit.field, "add-item footer is not treated as an item row");
+
+    const undoBefore = T.undoDepth;
+    firePointer(window, addControl, "pointerdown");
+    assert.strictEqual(todo.items.length, 2, "in-list add-item control appends an item");
+    assert.strictEqual(todo.items[1].text, "New item", "new footer item uses the standard placeholder text");
+    assert.strictEqual(T.undoDepth, undoBefore + 1, "in-list add-item action is exactly one undo step");
+
+    T.undo();
+    let live = T.state.nodes.find(n => n.title === "Release checklist");
+    assert.strictEqual(live.items.length, 1, "undo removes the item added from the list footer");
+    const keyboardControl = window.document.querySelector(`[data-todoadd="${live.id}"]`);
+    keyboardControl.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true, cancelable:true }));
+    assert.strictEqual(live.items.length, 2, "Enter activates the in-list add-item control");
+    T.undo();
+    live = T.state.nodes.find(n => n.title === "Release checklist");
+    live.collapsed = true;
+    T.render();
+    assert(!window.document.querySelector(`[data-todoadd="${live.id}"]`), "collapsed lists hide the add-item footer");
+  }
+
   /* SCH-061 — edges to to-do lists and items */
   {
     const { window } = makeDom();

@@ -49,7 +49,7 @@ const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.6.2";
+const APP_VERSION = "v1.6.3";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -413,8 +413,8 @@ function hitTest(w){
     if (rows && rows.length){
       const m = tableMetrics(n);
       if (w.y > r.y + m.headerH){
-        const idx = Math.min(rows.length - 1, Math.floor((w.y - r.y - m.headerH) / m.rowH));
-        if (idx >= 0) field = rows[idx];
+        const idx = Math.floor((w.y - r.y - m.headerH) / m.rowH);
+        if (idx >= 0 && idx < rows.length) field = rows[idx];
       }
     }
     return { node: n, field };
@@ -793,7 +793,7 @@ function nodeSize(n){
       if (rw > maxRow) maxRow = rw;
     }
     const w = Math.min(Math.max(190, headW, maxRow), 460);
-    const h = m.headerH + Math.max(1, n.items.length) * m.rowH + 8;
+    const h = m.headerH + (Math.max(1, n.items.length) + 1) * m.rowH + 8;
     return { w, h };
   }
   // table node
@@ -1321,6 +1321,21 @@ function drawNode(n){
         el("text", {x:12, y:m.headerH + 16, fill:t.empty, "font-family":"Archivo, sans-serif",
                     "font-size":11.5, "font-style":"italic"}, g).textContent = "no items yet";
       drawRowHandles(g, n, n.items, r, t);
+      const addTop = m.headerH + Math.max(1, n.items.length) * m.rowH;
+      el("line", {x1:8, y1:addTop, x2:r.w-8, y2:addTop, stroke:t.rowLine, "stroke-width":1}, g);
+      const add = el("g", {"data-todoadd":n.id, cursor:"pointer", role:"button", tabindex:0,
+                           "aria-label":`Add item to ${n.title || "to-do list"}`}, g);
+      el("rect", {x:6, y:addTop+4, width:r.w-12, height:m.rowH-8, rx:5,
+                  fill:t.accent, "fill-opacity":.08, stroke:t.accent, "stroke-opacity":.35}, add);
+      el("text", {x:r.w/2, y:addTop + m.rowH/2 + m.nameSize*.35, "text-anchor":"middle",
+                  fill:t.accent, "font-family":"Archivo, sans-serif", "font-size":m.nameSize,
+                  "font-weight":600, "pointer-events":"none"}, add).textContent = "+ Add item";
+      add.addEventListener("keydown", ev => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        addTodoItem(n);
+      });
     }
   } else {
     const m = tableMetrics(n);
@@ -1436,6 +1451,15 @@ function addNode(type, x, y){
   render();
   focusTitleInput();
   return n;
+}
+function addTodoItem(n){
+  if (!n || n.type !== "todo") return null;
+  pushHistory();
+  const item = { id:uid(), text:"New item" };
+  n.items.push(item);
+  setSelection("node", n.id);
+  render();
+  return item;
 }
 function addEdge(from, to){
   if (from.id === to.id) return;
@@ -1994,6 +2018,7 @@ board.addEventListener("pointerdown", ev => {
   if (window.getSelection) window.getSelection().removeAllRanges();
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   const todoCheckEl = ev.target.closest("[data-todocheck]");
+  const todoAddEl = ev.target.closest("[data-todoadd]");
   const fieldHandleEl = ev.target.closest("[data-fieldhandle]");
   const handleEl = ev.target.closest("[data-handle]");
   const collapseEl = ev.target.closest("[data-collapse]");
@@ -2023,6 +2048,11 @@ board.addEventListener("pointerdown", ev => {
       setSelection("node", n.id);
       render();
     }
+    drag = null;
+    return;
+  }
+  if (todoAddEl){
+    addTodoItem(nodeById(todoAddEl.getAttribute("data-todoadd")));
     drag = null;
     return;
   }
@@ -3119,11 +3149,7 @@ function renderItemEditor(n){
     wrapD.appendChild(flags);
   });
 
-  wrapD.appendChild(mkBtn("+ Add item", () => {
-    pushHistory();
-    n.items.push({ id: uid(), text:"New item" });
-    render();
-  }));
+  wrapD.appendChild(mkBtn("+ Add item", () => addTodoItem(n)));
   inspBody.appendChild(wrapD);
 }
 
@@ -4179,11 +4205,7 @@ function nodeMenu(n, x, y){
         n.collapsed = !n.collapsed;
         render();
       });
-      ctxItem(m, "Add item", () => {
-        pushHistory();
-        n.items.push({id: uid(), text:"New item"});
-        render();
-      });
+      ctxItem(m, "Add item", () => addTodoItem(n));
     }
     ctxItem(m, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
     if (targets.length >= 2){
