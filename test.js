@@ -579,6 +579,120 @@ function closeEnough(a, b, msg){
     assert.strictEqual(window.document.activeElement.id, "edgeLabelInput", "Custom text focuses the label editor");
   }
 
+  /* SCH-070 — edge arrows and line appearance */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    let edge = T.state.edges.find(e => e.label === "drives");
+    const edgeId = edge.id;
+    T.setSelection("edge", edgeId);
+    T.render();
+
+    let line = doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`);
+    assert.strictEqual(line.getAttribute("stroke-dasharray"), "5 5", "legacy links remain dashed by default");
+    assert.strictEqual(line.getAttribute("stroke-width"), "1.7", "legacy edges retain the default width");
+    assert.strictEqual(doc.querySelectorAll(`[data-edge="${edgeId}"] [data-edge-arrow]`).length, 0,
+      "legacy edges do not gain arrowheads");
+    assert(doc.getElementById("edgeStartArrow") && doc.getElementById("edgeEndArrow"),
+      "edge inspector exposes start and end arrow controls");
+    assert(doc.getElementById("edgeLineStyle") && doc.getElementById("edgeLineColor"),
+      "edge inspector exposes line style and color controls");
+    assert(doc.querySelector('[aria-label="Line width"]'), "edge inspector exposes a labelled width control");
+
+    const beforeArrow = T.undoDepth;
+    doc.getElementById("edgeStartArrow").click();
+    assert.strictEqual(edge.startArrow, true, "inspector toggles a start arrow");
+    assert(doc.querySelector(`[data-edge="${edgeId}"] [data-edge-arrow="start"]`),
+      "start arrow renders on the canvas");
+    assert.strictEqual(T.undoDepth, beforeArrow + 1, "arrow toggle is one undo step");
+    T.undo();
+    edge = T.state.edges.find(e => e.id === edgeId);
+    assert.strictEqual(edge.startArrow, undefined, "undo removes the start arrow");
+    T.redo();
+    edge = T.state.edges.find(e => e.id === edgeId);
+    assert.strictEqual(edge.startArrow, true, "redo restores the start arrow");
+
+    T.setSelection("edge", edgeId);
+    T.render();
+    doc.getElementById("edgeEndArrow").click();
+    assert.strictEqual(edge.endArrow, true, "inspector toggles an end arrow");
+    let style = doc.getElementById("edgeLineStyle");
+    style.value = "dot";
+    style.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.lineStyle, "dot", "inspector changes line style");
+    line = doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`);
+    assert.strictEqual(line.getAttribute("stroke-dasharray"), "1 5", "dotted style renders as a round-dot pattern");
+
+    let width = doc.querySelector('[aria-label="Line width"]');
+    width.value = "3";
+    width.dispatchEvent(new window.Event("input", {bubbles:true}));
+    width.dispatchEvent(new window.KeyboardEvent("keydown", {key:"Enter", bubbles:true}));
+    assert.strictEqual(edge.lineWidth, 3, "inspector changes line width");
+    line = doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`);
+    assert.strictEqual(line.getAttribute("stroke-width"), "3", "custom width renders on the canvas");
+
+    let colorWell = doc.querySelector("#edgeLineColor .colorwell");
+    colorWell.value = "#c20029";
+    colorWell.dispatchEvent(new window.Event("input", {bubbles:true}));
+    colorWell.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.lineColor, "#c20029", "inspector changes line color");
+    line = doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`);
+    assert.strictEqual(line.getAttribute("stroke"), "#c20029", "custom color renders on the line");
+    assert([...doc.querySelectorAll(`[data-edge="${edgeId}"] [data-edge-arrow]`)]
+      .every(a => a.getAttribute("fill") === "#c20029"), "custom color also applies to arrowheads");
+
+    const saved = JSON.parse(T.serializeDocument()).edges.find(e => e.id === edgeId);
+    assert.deepStrictEqual(
+      {startArrow:saved.startArrow, endArrow:saved.endArrow, lineStyle:saved.lineStyle,
+       lineWidth:saved.lineWidth, lineColor:saved.lineColor},
+      {startArrow:true, endArrow:true, lineStyle:"dot", lineWidth:3, lineColor:"#c20029"},
+      "edge appearance round-trips through document JSON");
+    assert(T.serializedSvg().includes('data-edge-arrow="start"'), "SVG export preserves arrowheads");
+    assert(T.serializedSvg().includes('stroke-dasharray="1 5"'), "SVG export preserves the line style");
+
+    T.importDocText(T.serializeDocument());
+    edge = T.state.edges.find(e => e.id === edgeId);
+    assert.deepStrictEqual(
+      {startArrow:edge.startArrow, endArrow:edge.endArrow, lineStyle:edge.lineStyle,
+       lineWidth:edge.lineWidth, lineColor:edge.lineColor},
+      {startArrow:true, endArrow:true, lineStyle:"dot", lineWidth:3, lineColor:"#c20029"},
+      "import restores all explicit edge appearance properties");
+
+    T.edgeMenu(edge, 10, 10);
+    let ctx = doc.getElementById("ctxMenu");
+    assert(ctx.querySelector('[data-edge-arrow-toggle="start"]'), "edge context menu exposes start/end arrows");
+    assert(ctx.querySelector('[aria-label="Line style"]') && ctx.querySelector('[aria-label="Line width"]'),
+      "edge context menu exposes line style and width");
+    assert(ctx.querySelector('.swatch[title="#007873"]'), "edge context menu exposes line colors");
+    ctx.querySelector('[data-edge-arrow-toggle="start"]').click();
+    assert.strictEqual(edge.startArrow, undefined, "context menu toggles a start arrow off");
+
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    style = ctx.querySelector('[aria-label="Line style"]');
+    style.value = "solid";
+    style.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edge.lineStyle, "solid", "context menu changes line style");
+
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    const beforeWidth = edge.lineWidth;
+    ctx.querySelector('.sizestepper .stepbtn:last-child').click();
+    assert.strictEqual(edge.lineWidth, beforeWidth + .5, "context menu changes line width");
+
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    ctx.querySelector('.swatch[title="#007873"]').click();
+    assert.strictEqual(edge.lineColor, "#007873", "context menu changes line color");
+
+    const relation = T.state.edges.find(e => e.kind === "1:N");
+    T.setSelection("edge", relation.id);
+    T.render();
+    line = doc.querySelector(`[data-edge="${relation.id}"] [data-edge-line]`);
+    assert.strictEqual(line.getAttribute("stroke-dasharray"), "none", "legacy relation edges remain solid by default");
+  }
+
   /* SCH-014 — quick-jump / command palette */
   {
     const { window } = makeDom();

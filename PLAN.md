@@ -229,6 +229,10 @@ Harness quirks you must respect:
   (carries bindings), inline-editable labels, duplicate rejection at field granularity.
 - Per-edge routing: curved default or orthogonal Manhattan routing via inspector/context menu;
   routing round-trips in JSON and keeps crow's-foot notation.
+- Per-edge appearance: optional start/end arrowheads, custom line color, 1–8px width,
+  and solid/dashed/dotted style through both the inspector and context menu. Existing
+  links retain dashed defaults, relations retain solid defaults, and old documents gain
+  no arrowheads. Styled lines and arrowheads remain portable in SVG/PNG exports.
 
 **To-do lists (v1.1)**
 - Third node type `todo`: titled list of checkable items with a `done/total` progress
@@ -1100,6 +1104,23 @@ right-click actions. Disable and close the menu whenever fewer than two nodes ar
 
 AC: menu availability follows selection count; all six actions align node rectangles on
 the requested edge or axis; each action remains one undo step; browser interaction QA passes.
+
+---
+
+**SCH-070 · Edge arrows and line appearance · P1 · M · Done 2026-07-11**
+
+Add optional start/end arrowheads and per-edge line color, width, and
+solid/dashed/dotted style. Provide equivalent controls in the edge inspector and
+right-click menu. Store only explicit overrides so existing documents preserve their
+current theme-aware dashed-link and solid-relation defaults.
+
+Selected edges keep their chosen appearance and receive a separate accent halo. Arrowheads
+use inline SVG geometry so they inherit custom color/width and remain portable through SVG
+and PNG export without marker-definition dependencies.
+
+AC: both editing surfaces change every property as one undoable action; start/end arrows
+render independently; JSON and SVG retain explicit styling; undo/redo works; legacy edges
+keep their prior appearance; automated and browser interaction QA pass.
 
 ---
 

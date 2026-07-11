@@ -69,7 +69,7 @@ const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.7.2";
+const APP_VERSION = "v1.7.3";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -515,6 +515,14 @@ function cleanEdgeForDocument(e){
   if (!out.fromField) delete out.fromField;
   if (!out.toField) delete out.toField;
   if (!out.routing || out.routing === "curve") delete out.routing;
+  if (out.startArrow !== true) delete out.startArrow;
+  if (out.endArrow !== true) delete out.endArrow;
+  const lineColor = normalizeHex(out.lineColor);
+  if (lineColor) out.lineColor = lineColor; else delete out.lineColor;
+  const lineWidth = edgeLineWidth(out);
+  if (lineWidth === 1.7) delete out.lineWidth; else out.lineWidth = lineWidth;
+  if (!["solid","dash","dot"].includes(out.lineStyle) ||
+      out.lineStyle === (out.kind === "link" ? "dash" : "solid")) delete out.lineStyle;
   return out;
 }
 function cleanNodeForDocument(n){
@@ -1299,6 +1307,21 @@ function edgePath(e, pa, pb){
   if (!pb){ pb = pa; pa = e; e = null; }
   return e && e.routing === "ortho" ? orthoEdgePath(pa, pb) : curveEdgePath(pa, pb);
 }
+function edgeLineColor(e, colors = themeColors()){
+  return normalizeHex(e && e.lineColor) || (e && e.kind === "link" ? colors.link : colors.edge);
+}
+function edgeLineWidth(e){
+  const width = Number(e && e.lineWidth);
+  return Number.isFinite(width) ? Math.min(8, Math.max(1, width)) : 1.7;
+}
+function edgeLineStyle(e){
+  return e && ["solid","dash","dot"].includes(e.lineStyle)
+    ? e.lineStyle : e && e.kind === "link" ? "dash" : "solid";
+}
+function edgeDashArray(e){
+  const style = edgeLineStyle(e);
+  return style === "dash" ? "5 5" : style === "dot" ? "1 5" : "none";
+}
 /* crow's-foot / tick notation drawn along the anchor's outward normal */
 function drawNotation(g, p, glyph, color){
   const dir = { e:[1,0], w:[-1,0], s:[0,1], n:[0,-1] }[p.side];
@@ -1317,19 +1340,33 @@ function drawNotation(g, p, glyph, color){
     }
   }
 }
+function drawEdgeArrow(g, p, color, width, end){
+  const dir = { e:[1,0], w:[-1,0], s:[0,1], n:[0,-1] }[p.side] || [1,0];
+  const nx = dir[0], ny = dir[1], px = -ny, py = nx;
+  const length = 8 + width * 1.5, spread = 3.5 + width;
+  const bx = p.x + nx*length, by = p.y + ny*length;
+  const points = `${p.x},${p.y} ${bx - px*spread},${by - py*spread} ${bx + px*spread},${by + py*spread}`;
+  el("polygon", {points, fill:color, stroke:color, "stroke-width":Math.max(.6, width*.35),
+                 "stroke-linejoin":"round", "data-edge-arrow":end}, g);
+}
 function drawEdge(e){
   const ep = edgeEndpoints(e);
   if (!ep) return;
   const selected = isSelected("edge", e.id);
   const isLink = e.kind === "link";
   const t = themeColors();
-  const color = selected ? t.accent : (isLink ? t.link : t.edge);
+  const color = edgeLineColor(e, t);
+  const width = edgeLineWidth(e);
   const g = el("g", {"data-edge": e.id, cursor:"pointer"}, edgeLayer);
   const d = edgePath(e, ep.pa, ep.pb);
   el("path", {d, fill:"none", stroke:"transparent", "stroke-width":14}, g); // hit area
-  el("path", {d, fill:"none", stroke:color, "stroke-width": selected ? 2.4 : 1.7,
-              "stroke-dasharray": isLink ? "5 5" : "none",
-              "stroke-linecap":"round"}, g);
+  if (selected) el("path", {d, fill:"none", stroke:t.accent, "stroke-width":width + 3,
+                            opacity:.28, "stroke-linecap":"round", "data-edge-selection":"1"}, g);
+  el("path", {d, fill:"none", stroke:color, "stroke-width":width,
+              "stroke-dasharray":edgeDashArray(e), "stroke-linecap":"round",
+              "data-edge-line":"1"}, g);
+  if (e.startArrow === true) drawEdgeArrow(g, ep.pa, color, width, "start");
+  if (e.endArrow === true) drawEdgeArrow(g, ep.pb, color, width, "end");
   if (!isLink){
     const [gf, gt] = e.kind === "1:1" ? ["one","one"]
                    : e.kind === "1:N" ? ["one","many"] : ["many","many"];
@@ -2964,6 +3001,28 @@ function edgeRelationshipSelect(e, opts = {}){
   });
   return s;
 }
+function setEdgeArrow(e, key, on){
+  if (on) e[key] = true;
+  else delete e[key];
+}
+function edgeStyleSelect(e, id, opts = {}){
+  const s = document.createElement("select");
+  s.setAttribute("aria-label", "Line style");
+  if (id) s.id = id;
+  for (const [value, label] of [["solid","Solid"],["dash","Dashed"],["dot","Dotted"]]){
+    const o = document.createElement("option");
+    o.value = value; o.textContent = label;
+    if (edgeLineStyle(e) === value) o.selected = true;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => {
+    pushHistory();
+    e.lineStyle = s.value;
+    if (opts.close) opts.close();
+    render();
+  });
+  return s;
+}
 
 function renderInspector(){
   updateInspectorVisibility();
@@ -3144,6 +3203,34 @@ function renderInspector(){
         render();
       });
       return s;
+    });
+    frow("Arrows", () => {
+      const row = document.createElement("div");
+      row.className = "edgearrowrow";
+      const start = mkFlag("START", !!e.startArrow, on => { setEdgeArrow(e, "startArrow", on); render(); });
+      const end = mkFlag("END", !!e.endArrow, on => { setEdgeArrow(e, "endArrow", on); render(); });
+      start.id = "edgeStartArrow"; end.id = "edgeEndArrow";
+      start.setAttribute("aria-label", "Toggle start arrow");
+      end.setAttribute("aria-label", "Toggle end arrow");
+      row.append(start, end);
+      return row;
+    });
+    frow("Line style", () => edgeStyleSelect(e, "edgeLineStyle"));
+    frow("Line width", () => sizeStepper(edgeLineWidth(e), 1, 8, .5,
+      (v, commit) => {
+        pushHistory("edge-width:"+e.id);
+        e.lineWidth = v;
+        commit ? render() : drawOnly();
+      }, { ariaLabel:"Line width" }));
+    frow("Line color", () => {
+      const control = swatches(tableColors(), edgeLineColor(e),
+        (c, commit) => {
+          pushHistory("edge-color:"+e.id);
+          e.lineColor = c;
+          commit ? render() : drawOnly();
+        });
+      control.id = "edgeLineColor";
+      return control;
     });
     if (a.type === "table" && b.type === "table" && e.kind !== "link") renderPairEditor(a, b, e);
     else {
@@ -3567,18 +3654,18 @@ function customColorRow(current, apply, opts = {}){
 }
 
 /* − [number] + stepper. apply(value, commit) — live while typing/holding, commit on settle */
-function sizeStepper(current, lo, hi, step, apply){
+function sizeStepper(current, lo, hi, step, apply, opts = {}){
   const row = document.createElement("div");
   row.className = "sizestepper";
   const dec = document.createElement("button");
   dec.type = "button"; dec.className = "stepbtn"; dec.textContent = "−";
   const num = document.createElement("input");
   num.type = "text"; num.className = "sizeval"; num.value = String(current);
-  num.setAttribute("aria-label", "Font size");
+  num.setAttribute("aria-label", opts.ariaLabel || "Font size");
   const inc = document.createElement("button");
   inc.type = "button"; inc.className = "stepbtn"; inc.textContent = "+";
   const unit = document.createElement("span");
-  unit.className = "sizeunit"; unit.textContent = "px";
+  unit.className = "sizeunit"; unit.textContent = opts.unit || "px";
   const clamp = v => Math.min(hi, Math.max(lo, v));
   const setVal = (v, commit) => { v = clamp(v); num.value = String(v); apply(v, commit); };
   dec.addEventListener("click", () => setVal((parseFloat(num.value)||current) - step, true));
@@ -4559,6 +4646,45 @@ function edgeMenu(e, x, y){
       onCustom:() => startInlineEditor("edge", e.id)
     }));
     m.appendChild(relationshipRow);
+    ctxLabel(m, "Arrows");
+    const arrowRow = document.createElement("div");
+    arrowRow.className = "kindrow";
+    for (const [key, label] of [["startArrow","Start"],["endArrow","End"]]){
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.setAttribute("data-edge-arrow-toggle", key === "startArrow" ? "start" : "end");
+      if (e[key]) btn.className = "on";
+      btn.addEventListener("click", () => {
+        hideCtx();
+        pushHistory();
+        setEdgeArrow(e, key, !e[key]);
+        render();
+      });
+      arrowRow.appendChild(btn);
+    }
+    m.appendChild(arrowRow);
+    ctxLabel(m, "Line style");
+    const styleRow = document.createElement("div");
+    styleRow.className = "swrow";
+    styleRow.appendChild(edgeStyleSelect(e, null, {close:hideCtx}));
+    m.appendChild(styleRow);
+    ctxLabel(m, "Line width");
+    const widthRow = document.createElement("div");
+    widthRow.className = "swrow";
+    widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
+      (v, commit) => {
+        pushHistory("edge-width:"+e.id);
+        e.lineWidth = v;
+        if (commit){ hideCtx(); render(); } else drawOnly();
+      }, {ariaLabel:"Line width"}));
+    m.appendChild(widthRow);
+    ctxLabel(m, "Line color");
+    ctxSwatches(m, tableColors(), edgeLineColor(e),
+      (c, commit) => {
+        pushHistory("edge-color:"+e.id);
+        e.lineColor = c;
+        commit ? render() : drawOnly();
+      });
     ctxLabel(m, "Routing");
     const routeRow = document.createElement("div");
     routeRow.className = "kindrow";
