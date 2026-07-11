@@ -23,50 +23,65 @@
 <header>
   <div class="brand"><b>SCHEMATIC</b><span id="docLabel">untitled.schematic.json</span></div>
 
+  <nav class="menubar" aria-label="Application menu">
+    <div class="menu">
+      <button class="menubtn" title="File menu" aria-haspopup="true" aria-expanded="false">File</button>
+      <div class="menupanel">
+        <button id="btnNew" title="Start a new diagram">New</button>
+        <button id="btnOpen" title="Open a diagram from disk (Ctrl/Cmd+O)">Open…</button>
+        <button id="btnSaveAs" title="Save this diagram as a new file (Ctrl/Cmd+Shift+S)">Save As…</button>
+        <div class="menusep"></div>
+        <button id="btnImportJSON" title="Load a diagram from JSON">Import JSON…</button>
+        <button id="btnImportDDL" title="Import a SQL DDL subset">Import SQL DDL…</button>
+        <button id="btnImportCSV" title="Create a table from CSV headers">Import CSV…</button>
+        <div class="menusep"></div>
+        <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear canvas</button>
+      </div>
+    </div>
+    <div class="menu">
+      <button class="menubtn" title="Export menu" aria-haspopup="true" aria-expanded="false">Export</button>
+      <div class="menupanel">
+        <button id="btnExportPNG" title="Download diagram as PNG">PNG image</button>
+        <button id="btnExportSVG" title="Download diagram as SVG">SVG vector</button>
+        <button id="btnExportJSON" title="Download diagram as JSON">JSON document</button>
+        <div class="menusep"></div>
+        <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL DDL…</button>
+        <button id="btnExportMermaid" title="Export Mermaid ER diagram">Mermaid ER…</button>
+        <button id="btnExportMarkdown" title="Export mind map as Markdown">Markdown outline…</button>
+      </div>
+    </div>
+    <div class="menu">
+      <button class="menubtn" title="Layout menu" aria-haspopup="true" aria-expanded="false">Layout</button>
+      <div class="menupanel">
+        <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree layout</button>
+        <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema layout</button>
+        <button id="btnCleanup" title="Snap every node to the dot grid now">Clean up to grid</button>
+        <button id="btnSnap" title="Snap dragged nodes to the dot grid" aria-pressed="false">Snap to grid</button>
+        <div class="menusep"></div>
+        <button id="btnLint" title="Run schema lint checks">Lint schema…</button>
+      </div>
+    </div>
+  </nav>
+
   <div class="tgroup">
-    <span class="tlabel">Add</span>
     <button id="btnAddConcept" class="primary" title="Add a concept node (C)">+ Concept</button>
     <button id="btnAddTable" title="Add a table / entity node (T)">+ Table</button>
     <button id="btnAddTodo" title="Add a to-do list (D)">+ To-do</button>
-  </div>
-
-  <div class="tgroup">
-    <span class="tlabel">Edit</span>
-    <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
-    <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-    <button id="btnFit" title="Fit diagram in view (F)">Fit</button>
-  </div>
-
-  <div class="tgroup">
-    <span class="tlabel">Layout</span>
-    <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree</button>
-    <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema</button>
-    <button id="btnAddFrame" title="Add a subject-area frame">Frame</button>
-    <button id="btnLint" title="Run schema lint checks">Lint</button>
-    <button id="btnSnap" title="Snap dragged nodes to the dot grid">Snap</button>
-    <button id="btnCleanup" title="Snap every node to the dot grid now">Clean Up</button>
+    <button id="btnAddFrame" title="Add a subject-area frame">+ Frame</button>
   </div>
 
   <div class="spacer"></div>
 
   <div class="tgroup">
-    <span class="tlabel">File</span>
-    <button id="btnNew" title="Start a new diagram">New</button>
-    <button id="btnOpen" title="Open a diagram from disk">Open</button>
-    <button id="btnSave" class="primary" title="Save the current diagram">Save</button>
-    <button id="btnSaveAs" title="Save this diagram as a new file">Save As</button>
-    <button id="btnExportJSON" title="Download diagram as JSON">JSON ↓</button>
-    <button id="btnImportJSON" title="Load a diagram from JSON">Import</button>
-    <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL</button>
-    <button id="btnImportDDL" title="Import a SQL DDL subset">DDL In</button>
-    <button id="btnExportMermaid" title="Export Mermaid ER diagram">Mermaid</button>
-    <button id="btnExportMarkdown" title="Export mind map as Markdown">Outline</button>
-    <button id="btnExportSVG" title="Download diagram as SVG">SVG ↓</button>
-    <button id="btnImportCSV" title="Create a table from CSV headers">CSV In</button>
-    <button id="btnExportPNG" title="Download diagram as PNG">PNG ↓</button>
-    <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear</button>
+    <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
+    <button id="btnFit" title="Fit diagram in view (F)">Fit</button>
+    <button id="btnInspector" aria-label="Show or hide the inspector" aria-pressed="true"
+            title="Auto-hide the inspector when nothing is selected (I)">Inspector</button>
   </div>
-  <span id="appVersion" class="appversion"></span>
+  <div class="tgroup">
+    <button id="btnSave" class="primary" title="Save the current diagram (Ctrl/Cmd+S)">Save</button>
+  </div>
   <input type="file" id="fileInput" accept="application/json,.json,.schematic" hidden>
 </header>
 
@@ -91,6 +106,7 @@
   <button id="btnTheme" class="statusbtn" title="Toggle light/dark theme">Dark</button>
   <label class="statuscheck" title="Export PNG using the current theme"><input type="checkbox" id="pngAsShown"> PNG as shown</label>
   <span class="hint spacer">Drag empty canvas to select · Alt-drag to pan · scroll to zoom · drag ○ to connect · double-click to edit · right-click for actions</span>
+  <span id="appVersion" class="appversion"></span>
 </footer>
 <div id="liveStatus" class="visually-hidden" aria-live="polite"></div>
 

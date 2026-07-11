@@ -35,7 +35,7 @@ let clipboardData = null;
 let inlineEditor = null;
 
 const CONCEPT_COLORS = ["#FFE9A8","#CFE8FF","#D8F3DC","#F4D8F0","#FFD9C7","#E4E7EC"];
-const TABLE_COLORS   = ["#16232F","#2456E6","#1E7A4F","#8A3FA8","#B4550F","#6B7683"];
+const TABLE_COLORS   = ["#16232F","#2456E6","#007873","#8A3FA8","#C20029","#6B7683"];
 const FONT_COLORS    = ["#16232F","#33475C","#7A8794","#FFFFFF","#2456E6","#C63A3A"];
 const FLOWCHART_SHAPES = [
   ["process", "Process"],
@@ -49,7 +49,7 @@ const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.3.3";
+const APP_VERSION = "v1.6.1";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -66,10 +66,92 @@ const THEME = {
   }
 };
 let docTheme = "light";
+
+/* custom color schemes (SCH-064): a document may carry meta.colorScheme, which
+   replaces the built-in palettes, node-creation defaults, and (optionally) THEME
+   colors while that document is open. All keys are optional and validated on load;
+   the built-in constants above remain the fallback at every use site. */
+let colorScheme = null;
+const SCHEME_PALETTE_MAX = 12;
+function conceptColors(){ return (colorScheme && colorScheme.concept) || CONCEPT_COLORS; }
+function tableColors(){ return (colorScheme && colorScheme.table) || TABLE_COLORS; }
+function fontColors(){ return (colorScheme && colorScheme.font) || FONT_COLORS; }
+function frameColorDefault(){ return (colorScheme && colorScheme.frame) || FRAME_DEFAULT.color; }
+function todoColorDefault(){ return (colorScheme && colorScheme.todo) || TODO_COLOR_DEFAULT; }
+function normalizeColorScheme(raw){
+  if (!raw || typeof raw !== "object") return null;
+  const hex = c => typeof c === "string" ? normalizeHex(c) : null;  // document JSON is untrusted
+  const out = {};
+  if (typeof raw.name === "string" && raw.name.trim()) out.name = raw.name.trim().slice(0, 60);
+  for (const key of ["concept","table","font"]){
+    if (!Array.isArray(raw[key])) continue;
+    const colors = [];
+    for (const c of raw[key]){
+      const n = hex(c);
+      if (n && !colors.includes(n)) colors.push(n);
+      if (colors.length >= SCHEME_PALETTE_MAX) break;
+    }
+    if (colors.length) out[key] = colors;
+  }
+  for (const key of ["frame","todo"]){
+    const n = hex(raw[key]);
+    if (n) out[key] = n;
+  }
+  if (raw.theme && typeof raw.theme === "object"){
+    const theme = {};
+    for (const mode of ["light","dark"]){
+      const src = raw.theme[mode];
+      if (!src || typeof src !== "object") continue;
+      const dst = {};
+      for (const k of Object.keys(THEME.light)){
+        const n = hex(src[k]);
+        if (n) dst[k] = n;
+      }
+      if (Object.keys(dst).length) theme[mode] = dst;
+    }
+    if (Object.keys(theme).length) out.theme = theme;
+  }
+  return Object.keys(out).length ? out : null;
+}
+function cloneColorScheme(s){ return s ? JSON.parse(JSON.stringify(s)) : null; }
+function applyColorScheme(next){
+  colorScheme = normalizeColorScheme(next);
+  presetColorSet = computePresetColorSet();
+  rebuildActiveThemes();
+  updateSchemeCssVars();
+  return colorScheme;
+}
+
 let pngAsShown = false;
 let snapToGrid = false;
 let spaceHeld = false;
 let autoSave = false, autoSaveTimer = null;
+/* inspector visibility (SCH-066): pinned = always visible (default);
+   unpinned = auto — appears with a selection, hides without one.
+   UI preference, not document data: mirrored to localStorage when available. */
+const INSPECTOR_KEY = "schematic.inspectorPinned";
+function loadInspectorPref(){
+  if (!RECOVERY) return true;
+  try { return localStorage.getItem(INSPECTOR_KEY) !== "0"; } catch { return true; }
+}
+let inspectorPinned = loadInspectorPref();
+function updateInspectorVisibility(){
+  const aside = document.getElementById("inspector");
+  if (aside) aside.hidden = !inspectorPinned && !sel;
+  const b = document.getElementById("btnInspector");
+  if (b){
+    b.setAttribute("aria-pressed", String(inspectorPinned));
+    b.title = inspectorPinned
+      ? "Auto-hide the inspector when nothing is selected (I)"
+      : "Keep the inspector always visible (I)";
+  }
+}
+function toggleInspector(){
+  inspectorPinned = !inspectorPinned;
+  if (RECOVERY){ try { localStorage.setItem(INSPECTOR_KEY, inspectorPinned ? "1" : "0"); } catch {} }
+  updateInspectorVisibility();
+  announce(inspectorPinned ? "Inspector pinned visible" : "Inspector auto-hides without a selection");
+}
 let docDialect = "ansi";
 const SQL_DIALECTS = ["ansi","postgres","mysql","athena"];
 const SQL_TYPES_BY_DIALECT = {
@@ -98,6 +180,7 @@ const SHORTCUTS = [
   { id:"child", keys:"Tab", title:"Add linked child concept" },
   { id:"delete", keys:"Delete/Backspace", title:"Delete selection" },
   { id:"fit", keys:"F", title:"Fit diagram" },
+  { id:"inspector", keys:"I", title:"Show or hide the inspector" },
   { id:"escape", keys:"Esc", title:"Close menu or clear selection" },
   { id:"nudge", keys:"Arrow keys", title:"Nudge selected nodes" },
   { id:"nudgeLarge", keys:"Shift+Arrow keys", title:"Nudge selected nodes by 24px" },
@@ -108,11 +191,16 @@ const SHORTCUTS = [
    mirrored to localStorage when available (RECOVERY doubles as the feature detect) */
 const RECENT_COLORS_KEY = "schematic.recentColors";
 const RECENT_COLORS_MAX = 8;
-const PRESET_COLOR_SET = new Set(
-  [...CONCEPT_COLORS, ...TABLE_COLORS, ...FONT_COLORS].map(c => c.toLowerCase()));
+/* recomputed whenever a color scheme is applied, so scheme swatches don't
+   duplicate into the recent row */
+function computePresetColorSet(){
+  return new Set(
+    [...conceptColors(), ...tableColors(), ...fontColors()].map(c => c.toLowerCase()));
+}
+let presetColorSet = computePresetColorSet();
 function pushRecentColor(list, hex){
   const n = normalizeHex(hex);
-  if (!n || PRESET_COLOR_SET.has(n)) return list;
+  if (!n || presetColorSet.has(n)) return list;
   return [n, ...list.filter(c => c !== n)].slice(0, RECENT_COLORS_MAX);
 }
 /* dedupe + normalize both lists into one; docList wins on order */
@@ -120,7 +208,7 @@ function mergeRecentColors(docList, storedList){
   const merged = [];
   for (const c of [...(docList || []), ...(storedList || [])]){
     const n = normalizeHex(c);
-    if (!n || PRESET_COLOR_SET.has(n) || merged.includes(n)) continue;
+    if (!n || presetColorSet.has(n) || merged.includes(n)) continue;
     merged.push(n);
     if (merged.length >= RECENT_COLORS_MAX) break;
   }
@@ -146,11 +234,51 @@ function recordRecentColor(hex){
 }
 let recentColors = loadStoredRecentColors();
 
+/* built-in THEME merged with the active scheme's theme overrides (if any) */
+let activeThemes = { light: THEME.light, dark: THEME.dark };
+function rebuildActiveThemes(){
+  activeThemes = {};
+  for (const mode of ["light","dark"]){
+    const over = colorScheme && colorScheme.theme && colorScheme.theme[mode];
+    activeThemes[mode] = over ? { ...THEME[mode], ...over } : THEME[mode];
+  }
+}
 function themeColors(name = docTheme){
-  return THEME[name] || THEME.light;
+  return activeThemes[name] || activeThemes.light;
+}
+/* readable ink for text drawn on an arbitrary node fill (SCH-065). The choice is
+   independent of the app theme — it contrasts against the node's own color — so
+   dark fills take the light table-header text and light fills take the light-theme
+   ink. The cutoff is the WCAG relative-luminance point where white text starts
+   winning the contrast ratio over black (L ≈ 0.179). */
+function relativeLuminance(hex){
+  const c = i => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126*c(1) + 0.7152*c(3) + 0.0722*c(5);
+}
+function autoInk(bg, t = themeColors()){
+  const n = normalizeHex(bg);
+  if (!n) return t.ink;
+  return relativeLuminance(n) < 0.1791 ? THEME.light.tableText : THEME.light.ink;
+}
+/* mirror scheme theme overrides onto the CSS custom properties that style the
+   app chrome (toolbar, inspector, menus), so the whole UI follows the scheme */
+const SCHEME_CSS_VARS = { paper:"--paper", panel:"--panel", control:"--control",
+                          ink:"--ink", ink2:"--ink-2", muted:"--muted", accent:"--accent" };
+function updateSchemeCssVars(){
+  const rootStyle = document.documentElement.style;
+  const over = (colorScheme && colorScheme.theme &&
+                colorScheme.theme[docTheme === "dark" ? "dark" : "light"]) || {};
+  for (const key in SCHEME_CSS_VARS){
+    if (over[key]) rootStyle.setProperty(SCHEME_CSS_VARS[key], over[key]);
+    else rootStyle.removeProperty(SCHEME_CSS_VARS[key]);
+  }
 }
 function updateThemeControls(){
   document.documentElement.dataset.theme = docTheme;
+  updateSchemeCssVars();
   const btn = document.getElementById("btnTheme");
   if (btn){
     btn.textContent = docTheme === "dark" ? "Light" : "Dark";
@@ -308,7 +436,7 @@ function textW(str, font){
 }
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect}}); }
+function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect, colorScheme}}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (coalesceKey != null){
@@ -327,6 +455,7 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
+  applyColorScheme(s.meta ? s.meta.colorScheme : null);
   applyTheme(s.meta && s.meta.theme ? s.meta.theme : "light", { render:false });
   applyDialect(s.meta && s.meta.dialect ? s.meta.dialect : "ansi", { render:false });
   pruneSelection();
@@ -381,6 +510,7 @@ function documentObject(){
   };
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
+  if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
   d.meta = meta;
   return d;
 }
@@ -413,6 +543,7 @@ function applyDocument(d, opts = {}){
   state.edges = migrated.edges;
   state.nextId = migrated.nextId;
   ensureFieldIds();
+  applyColorScheme(migrated.meta ? migrated.meta.colorScheme : null);
   if (migrated.meta && Array.isArray(migrated.meta.recentColors)){
     recentColors = mergeRecentColors(migrated.meta.recentColors, recentColors);
     persistRecentColors();
@@ -521,6 +652,52 @@ function syncAriaLabels(){
   board.setAttribute("tabindex", "0");
   board.setAttribute("role", "application");
   board.setAttribute("aria-label", "Schematic canvas");
+}
+/* toolbar dropdown menus (SCH-065): disclosure pattern — trigger toggles its panel,
+   only one panel open at a time, outside pointer / Escape / item click all close.
+   The buttons inside panels keep their historical ids and handlers. */
+function setupMenus(){
+  const menus = [...document.querySelectorAll("header .menu")];
+  if (!menus.length) return;
+  const anyOpen = () => menus.some(m => m.classList.contains("open"));
+  const closeAll = () => {
+    for (const m of menus){
+      m.classList.remove("open");
+      const b = m.querySelector(".menubtn");
+      if (b) b.setAttribute("aria-expanded", "false");
+    }
+  };
+  const open = m => {
+    closeAll();
+    m.classList.add("open");
+    const b = m.querySelector(".menubtn");
+    if (b) b.setAttribute("aria-expanded", "true");
+  };
+  for (const m of menus){
+    const btn = m.querySelector(".menubtn");
+    const panel = m.querySelector(".menupanel");
+    if (!btn || !panel) continue;
+    btn.addEventListener("click", ev => {
+      ev.stopPropagation();
+      m.classList.contains("open") ? closeAll() : open(m);
+    });
+    /* sliding across triggers while a menu is open switches panels, like a native menubar */
+    btn.addEventListener("pointerenter", () => {
+      if (anyOpen() && !m.classList.contains("open")) open(m);
+    });
+    panel.addEventListener("click", () => closeAll());
+  }
+  document.addEventListener("pointerdown", ev => {
+    if (anyOpen() && !(ev.target.closest && ev.target.closest("header .menu"))) closeAll();
+  });
+  /* capture phase so an open menu swallows Escape before the canvas shortcut
+     handler on window clears the selection */
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && anyOpen()){
+      ev.stopPropagation();
+      closeAll();
+    }
+  }, true);
 }
 function maybeShowRecovery(){
   if (!RECOVERY) return;
@@ -901,7 +1078,7 @@ function renderMinimap(){
   for (const n of state.nodes){
     const r = nodeRect(n);
     const p = tx.toMini({x:r.x, y:r.y});
-    const fill = n.type === "frame" ? n.color || FRAME_DEFAULT.color : n.color || t.ink;
+    const fill = n.type === "frame" ? n.color || frameColorDefault() : n.color || t.ink;
     el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:n.type === "frame" ? 2 : 1.5,
                 fill, opacity:n.type === "frame" ? .18 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
   }
@@ -1034,7 +1211,7 @@ function drawFrame(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
   const t = themeColors();
-  const color = n.color || FRAME_DEFAULT.color;
+  const color = n.color || frameColorDefault();
   const g = el("g", {"data-node": n.id, "data-frame": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, frameLayer);
   el("rect", {width:r.w, height:r.h, rx:14, fill:color, opacity:.10,
               stroke:selected ? t.accent : color, "stroke-width":selected ? 2.2 : 1.4}, g);
@@ -1077,9 +1254,9 @@ function drawNode(n){
 
   if (n.type === "concept"){
     const fs = conceptFont(n);
-    const fc = n.fontColor || t.ink;
+    const fc = n.fontColor || autoInk(n.color || conceptColors()[0], t);
     const shape = conceptShape(n);
-    drawConceptShape(g, n, r, {fill:n.color || CONCEPT_COLORS[0],
+    drawConceptShape(g, n, r, {fill:n.color || conceptColors()[0],
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.2});
     const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
@@ -1092,14 +1269,14 @@ function drawNode(n){
     }
   } else if (n.type === "todo"){
     const m = tableMetrics(n);
-    const fc = n.fontColor || t.ink;
+    const fc = n.fontColor || autoInk(n.color || todoColorDefault(), t);
     const total = n.items.length;
     const doneCount = n.items.filter(it => it.done).length;
     el("rect", {width:r.w, height:r.h, rx:10, fill:t.tableFill,
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.3}, g);
     el("path", {d:`M 0 10 Q 0 0 10 0 H ${r.w-10} Q ${r.w} 0 ${r.w} 10 V ${m.headerH} H 0 Z`,
-                fill: n.color || TODO_COLOR_DEFAULT}, g);
+                fill: n.color || todoColorDefault()}, g);
     const ht = el("text", {x:12, y:m.headerBaseline, fill:fc, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700}, g);
     ht.textContent = truncate(n.title || "To-do list", r.w - 96, `700 ${m.headerSize}px Archivo, sans-serif`);
@@ -1151,18 +1328,19 @@ function drawNode(n){
     el("rect", {width:r.w, height:r.h, rx:8, fill:t.tableFill,
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.3}, g);
+    const hInk = autoInk(n.color || t.ink, t);
     el("path", {d:`M 0 8 Q 0 0 8 0 H ${r.w-8} Q ${r.w} 0 ${r.w} 8 V ${m.headerH} H 0 Z`,
                 fill: n.color || t.ink}, g);
-    const ht = el("text", {x:12, y:m.headerBaseline, fill:t.tableText, "font-family":"Archivo, sans-serif",
+    const ht = el("text", {x:12, y:m.headerBaseline, fill:hInk, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700, "letter-spacing":".04em"}, g);
     ht.textContent = truncate(n.title || "table", r.w - 82, `700 ${m.headerSize}px Archivo, sans-serif`);
-    if (n.notes) el("circle", {cx:r.w - 34, cy:Math.max(10, m.headerH/2), r:3.2, fill:t.tableText, opacity:.7}, g);
+    if (n.notes) el("circle", {cx:r.w - 34, cy:Math.max(10, m.headerH/2), r:3.2, fill:hInk, opacity:.7}, g);
     const cg = el("g", {"data-collapse":n.id, cursor:"pointer"}, g);
     el("rect", {x:r.w - 24, y:0, width:24, height:m.headerH, fill:"transparent"}, cg);
-    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"middle", fill:t.tableText, opacity:.85,
+    el("text", {x:r.w - 12, y:m.headerBaseline, "text-anchor":"middle", fill:hInk, opacity:.85,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(10, m.base)}, cg)
       .textContent = n.collapsed ? "▸" : "▾";
-    el("text", {x:r.w - 34, y:m.headerBaseline, "text-anchor":"end", fill:t.tableText, opacity:.75,
+    el("text", {x:r.w - 34, y:m.headerBaseline, "text-anchor":"end", fill:hInk, opacity:.75,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":Math.max(8, m.base-2)}, g)
       .textContent = "TBL";
     if (n.collapsed){
@@ -1180,7 +1358,7 @@ function drawNode(n){
                     fill: f.pk ? t.ink : f.unique ? t.accent : t.tableFill,
                     stroke:t.ink, "stroke-width":.9}, g);
         el("text", {x:8 + m.badgeW/2, y:cy + m.badgeSize*0.34, "text-anchor":"middle",
-                    fill: f.pk || f.unique ? t.tableText : t.ink,
+                    fill: f.pk || f.unique ? autoInk(f.pk ? t.ink : t.accent, t) : t.ink,
                     "font-family":"'IBM Plex Mono', monospace", "font-size":m.badgeSize,
                     "font-weight":600}, g).textContent = badge;
       }
@@ -1242,12 +1420,12 @@ function addNode(type, x, y){
   let n;
   if (type === "concept"){
     n = { id: uid(), type, x, y, title:"New idea", notes:"",
-          color: CONCEPT_COLORS[state.nodes.filter(n=>n.type==="concept").length % CONCEPT_COLORS.length] };
+          color: conceptColors()[state.nodes.filter(n=>n.type==="concept").length % conceptColors().length] };
   } else if (type === "frame"){
-    n = { id: uid(), type, x, y, title:"Subject area", color:FRAME_DEFAULT.color,
+    n = { id: uid(), type, x, y, title:"Subject area", color:frameColorDefault(),
           w:FRAME_DEFAULT.w, h:FRAME_DEFAULT.h };
   } else if (type === "todo"){
-    n = { id: uid(), type, x, y, title:"To-do list", notes:"", color:TODO_COLOR_DEFAULT,
+    n = { id: uid(), type, x, y, title:"To-do list", notes:"", color:todoColorDefault(),
           items:[{ id: uid(), text:"New item" }] };
   } else {
     n = { id: uid(), type:"table", x, y, title:uniqueTableTitle("new_table"), notes:"", color:themeColors("light").ink,
@@ -1648,7 +1826,7 @@ function addChildConcept(){
   const siblings = state.edges.filter(e => e.from === p.id).length;
   const n = { id: uid(), type:"concept", x: r.x + r.w + 90,
               y: r.y + siblings*64 - 20, title:"New idea", notes:"",
-              color: p.type === "concept" ? p.color : CONCEPT_COLORS[0] };
+              color: p.type === "concept" ? p.color : conceptColors()[0] };
   state.nodes.push(n);
   state.edges.push({ id: uid(), from: p.id, to: n.id, kind:"link", label:"" });
   setSelection("node", n.id);
@@ -1792,7 +1970,7 @@ function dragSnap(v){
 }
 function updateSnapControl(){
   const b = document.getElementById("btnSnap");
-  if (b) b.classList.toggle("primary", snapToGrid);
+  if (b) b.setAttribute("aria-pressed", String(snapToGrid));
 }
 function toggleSnapToGrid(){
   snapToGrid = !snapToGrid;
@@ -2136,6 +2314,7 @@ function matchShortcut(ev, typing){
   if (!mod && key === "t") return "table";
   if (!mod && key === "d") return "todo";
   if (!mod && key === "f") return "fit";
+  if (!mod && key === "i") return "inspector";
   if (ev.key.startsWith("Arrow")) return "nudge";
   return null;
 }
@@ -2158,6 +2337,7 @@ function runShortcut(id, ev){
   if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
   if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
   if (id === "fit") return fitView();
+  if (id === "inspector") return toggleInspector();
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
 }
 function cycleNodeSelection(reverse = false){
@@ -2497,6 +2677,7 @@ function focusTitleInput(){
 }
 
 function renderInspector(){
+  updateInspectorVisibility();
   inspBody.innerHTML = "";
   if (!sel){ inspTitle.textContent = "Inspector"; renderHelp(); return; }
 
@@ -2529,7 +2710,7 @@ function renderInspector(){
     });
 
     if (n.type === "frame"){
-      frow("Color", () => swatches(TABLE_COLORS, n.color || FRAME_DEFAULT.color,
+      frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
         (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       frow("Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
         (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
@@ -2555,11 +2736,11 @@ function renderInspector(){
         t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
         return t;
       });
-      frow("Color", () => swatches(CONCEPT_COLORS, n.color,
+      frow("Color", () => swatches(conceptColors(), n.color,
         (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       frow("Text size", () => sizeStepper(conceptFont(n), 9, 48, 1,
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
+      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
     } else if (n.type === "todo"){
       frow("Notes", () => {
@@ -2569,11 +2750,11 @@ function renderInspector(){
         t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
         return t;
       });
-      frow("Color", () => swatches(CONCEPT_COLORS, n.color || TODO_COLOR_DEFAULT,
+      frow("Color", () => swatches(conceptColors(), n.color || todoColorDefault(),
         (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
+      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       frow("Collapsed", () => {
         const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
@@ -2588,11 +2769,11 @@ function renderInspector(){
         t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
         return t;
       });
-      frow("Header color", () => swatches(TABLE_COLORS, n.color,
+      frow("Header color", () => swatches(tableColors(), n.color,
         (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
         (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(FONT_COLORS, n.fontColor || "#16232F",
+      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
         (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       frow("Collapsed", () => {
         const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
@@ -2682,7 +2863,7 @@ function renderMultiInspector(){
   helper.className = "helper";
   helper.textContent = "Bulk edits apply to every selected node.";
   inspBody.appendChild(helper);
-  frow("Color", () => swatches([...CONCEPT_COLORS, ...TABLE_COLORS], nodes[0].color,
+  frow("Color", () => swatches([...conceptColors(), ...tableColors()], nodes[0].color,
     (c, commit) => {
       pushHistory("color:multi");
       for (const n of nodes) n.color = c;
@@ -2714,7 +2895,7 @@ function renderMultiInspector(){
         for (const n of nodes) n.fontSize = n.type === "concept" ? clampSize(v, 9, 48) : clampSize(v, 8, 28);
         commit ? render() : drawOnly();
       }));
-    frow("Text color", () => swatches(FONT_COLORS, nodes[0].fontColor || "#16232F",
+    frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
       (c, commit) => {
         pushHistory("fc:multi");
         for (const n of nodes) n.fontColor = c;
@@ -3222,6 +3403,7 @@ function newDoc(){
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
   setAutoSave(false);   // the new document has no file handle to save into
+  applyColorScheme(null);
   applyTheme("light", { render:false });
   applyDialect("ansi", { render:false });
   setPngAsShown(false);
@@ -3262,6 +3444,7 @@ document.getElementById("btnClear").addEventListener("click", () => {
 document.getElementById("btnUndo").addEventListener("click", undo);
 document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
+document.getElementById("btnInspector").addEventListener("click", toggleInspector);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
 document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
@@ -3604,7 +3787,7 @@ function importParsedDDL(parsed){
   parsed.tables.forEach((src, i) => {
     const col = i % 4, row = Math.floor(i / 4);
     const n = { id:uid(), type:"table", x:start.x + col*300, y:start.y + row*220,
-      title:src.title, notes:"", color:TABLE_COLORS[i % TABLE_COLORS.length],
+      title:src.title, notes:"", color:tableColors()[i % tableColors().length],
       fields:src.fields.map(f => ({ id:uid(), name:f.name, type:f.type, pk:!!f.pk, fk:!!f.fk,
         nullable:f.nullable !== false, default:f.default, unique:!!f.unique, index:!!f.index, comment:f.comment })) };
     state.nodes.push(n);
@@ -3745,7 +3928,7 @@ function importCSVText(text, name = "imported_csv"){
   pushHistory();
   const c = viewCenter();
   state.nodes.push({ id:uid(), type:"table", x:c.x-95, y:c.y-40, title:inferred.name,
-    notes:"", color:TABLE_COLORS[state.nodes.filter(n => n.type === "table").length % TABLE_COLORS.length],
+    notes:"", color:tableColors()[state.nodes.filter(n => n.type === "table").length % tableColors().length],
     fields:inferred.fields.map(f => ({...f, id:uid()})) });
   render();
   return inferred;
@@ -3960,7 +4143,7 @@ function nodeMenu(n, x, y){
   showCtx(x, y, m => {
     ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
               : n.type === "todo" ? "List color" : "Header color");
-    ctxSwatches(m, (n.type === "concept" || n.type === "todo") ? CONCEPT_COLORS : TABLE_COLORS, n.color,
+    ctxSwatches(m, (n.type === "concept" || n.type === "todo") ? conceptColors() : tableColors(), n.color,
       (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
     if (n.type === "concept"){
       ctxLabel(m, "Shape");
@@ -3970,7 +4153,7 @@ function nodeMenu(n, x, y){
       ctxLabel(m, "Text size");
       ctxSizeRow(m, n, targets);
       ctxLabel(m, "Text color");
-      ctxSwatches(m, FONT_COLORS, n.fontColor || "#16232F",
+      ctxSwatches(m, fontColors(), n.fontColor || "#16232F",
         (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
     }
     ctxSep(m);
@@ -4147,7 +4330,7 @@ function perfSeed(n = 500){
   clearSelection();
   for (let i = 0; i < n; i++){
     state.nodes.push({ id:uid(), type:"table", x:(i%25)*230, y:Math.floor(i/25)*130,
-      title:"bench_" + i, color:TABLE_COLORS[i % TABLE_COLORS.length], notes:"",
+      title:"bench_" + i, color:tableColors()[i % tableColors().length], notes:"",
       fields:[{id:uid(), name:"id", type:"INT", pk:true, fk:false, nullable:false},
               {id:uid(), name:"value", type:"VARCHAR(255)", pk:false, fk:false, nullable:true}] });
   }
@@ -4163,6 +4346,7 @@ render();
 syncHistoryButtons();
 updateDocLabel();
 syncAriaLabels();
+setupMenus();
 updateDialectControls();
 updateSnapControl();
 updateAutoSaveControl();
@@ -4257,6 +4441,20 @@ window.__T = {
   mergeRecentColors,
   recordRecentColor,
   get recentColors(){ return recentColors; },
+  normalizeColorScheme,
+  applyColorScheme,
+  get colorScheme(){ return colorScheme; },
+  conceptColors,
+  tableColors,
+  fontColors,
+  frameColorDefault,
+  todoColorDefault,
+  themeColors,
+  autoInk,
+  relativeLuminance,
+  toggleInspector,
+  updateInspectorVisibility,
+  get inspectorPinned(){ return inspectorPinned; },
   textW,
   get textMeasureCacheSize(){ return textMeasureCache.size; },
   get renderStats(){ return renderStats; },
