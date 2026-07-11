@@ -874,7 +874,8 @@ Design keystones (apply across all Phase G items):
 - Interaction: pointer-down on the checkbox toggles `done` (`pushHistory()` per toggle, no
   coalescing); inspector editor mirrors the field editor (text input, done flag, reorder
   ↑↓, delete with `cleanFieldRefs(item.id)`, "+ add item"); node context menu gains
-  "Add item"; inline title editing (SCH-013 overlay) must work unchanged.
+  "Add item"; expanded lists also render a keyboard-accessible "+ Add item" footer inside
+  the node; inline title editing (SCH-013 overlay) must work unchanged.
 - Id hygiene (E4): extend `ensureFieldIds` and duplicate-remap to walk `n.items`;
   `hitTest` returns the item row via the shared `nodeRows` path.
 
