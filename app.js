@@ -73,8 +73,13 @@ const EDGE_CUSTOM_RELATIONSHIP = "__custom__";
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
+const SWIMLANE_DEFAULT = {
+  bodyColor:"#DCEAFE", titleColor:"#2456E6",
+  horizontal:{ w:600, h:180, titleSize:140 },
+  vertical:{ w:220, h:480, titleSize:48 }
+};
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.8.3";
+const APP_VERSION = "v1.9.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -103,6 +108,18 @@ function tableColors(){ return (colorScheme && colorScheme.table) || TABLE_COLOR
 function fontColors(){ return (colorScheme && colorScheme.font) || FONT_COLORS; }
 function frameColorDefault(){ return (colorScheme && colorScheme.frame) || FRAME_DEFAULT.color; }
 function todoColorDefault(){ return (colorScheme && colorScheme.todo) || TODO_COLOR_DEFAULT; }
+function isStructuralNode(n){ return !!n && (n.type === "frame" || n.type === "swimlane"); }
+function swimlaneOrientation(n){ return n && n.orientation === "vertical" ? "vertical" : "horizontal"; }
+function swimlaneDefaults(n){ return SWIMLANE_DEFAULT[swimlaneOrientation(n)]; }
+function setSwimlaneOrientation(n, orientation){
+  if (!n || n.type !== "swimlane") return false;
+  const next = orientation === "vertical" ? "vertical" : "horizontal";
+  if (next === swimlaneOrientation(n)) return false;
+  n.orientation = next;
+  const oldW = n.w, oldH = n.h;
+  n.w = oldH; n.h = oldW;
+  return true;
+}
 function normalizeColorScheme(raw){
   if (!raw || typeof raw !== "object") return null;
   const hex = c => typeof c === "string" ? normalizeHex(c) : null;  // document JSON is untrusted
@@ -448,7 +465,7 @@ function conceptContainsPoint(n, r, point){
 function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
-    if (n.type === "frame") continue;
+    if (isStructuralNode(n)) continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
     if (!conceptContainsPoint(n, r, w)) continue;
     let field = null;
@@ -554,6 +571,11 @@ function cleanEdgeForDocument(e){
 function cleanNodeForDocument(n){
   const out = {...n};
   if (Array.isArray(out.fields)) out.fields = out.fields.map(cleanFieldForDocument);
+  if (out.type === "swimlane"){
+    out.orientation = swimlaneOrientation(out);
+    out.color = normalizeHex(out.color) || SWIMLANE_DEFAULT.bodyColor;
+    out.titleColor = normalizeHex(out.titleColor) || SWIMLANE_DEFAULT.titleColor;
+  }
   if (!out.notes) out.notes = out.notes || "";
   return out;
 }
@@ -597,6 +619,16 @@ function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
+  for (const n of state.nodes){
+    if (!n || n.type !== "swimlane") continue;
+    n.orientation = swimlaneOrientation(n);
+    const defaults = swimlaneDefaults(n);
+    n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Lane";
+    n.color = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
+    n.titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
+    n.w = clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
+    n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
+  }
   for (const e of state.edges){
     for (const key of ["orthoX", "orthoY"]){
       const value = Number(e[key]);
@@ -997,6 +1029,14 @@ function nodeSize(n){
       h: clampSize(n.h || FRAME_DEFAULT.h, 90, 4000)
     };
   }
+  if (n.type === "swimlane"){
+    const orientation = swimlaneOrientation(n);
+    const defaults = swimlaneDefaults(n);
+    return {
+      w: clampSize(n.w || defaults.w, orientation === "vertical" ? 120 : 260, 4000),
+      h: clampSize(n.h || defaults.h, orientation === "vertical" ? 260 : 100, 4000)
+    };
+  }
   if (n.type === "concept"){
     const fs = conceptFont(n);
     const shape = conceptShape(n);
@@ -1074,13 +1114,14 @@ function documentBounds(nodes = state.nodes){
   }
   return { x:x0, y:y0, w:x1-x0, h:y1-y0, cx:(x0+x1)/2, cy:(y0+y1)/2 };
 }
-function frameContainedNodes(frame){
-  const fr = nodeRect(frame);
-  return state.nodes.filter(n => n.type !== "frame" && n.id !== frame.id).filter(n => {
+function containerContainedNodes(container){
+  const fr = nodeRect(container);
+  return state.nodes.filter(n => !isStructuralNode(n) && n.id !== container.id).filter(n => {
     const r = nodeRect(n);
     return r.cx >= fr.x && r.cx <= fr.x + fr.w && r.cy >= fr.y && r.cy <= fr.y + fr.h;
   });
 }
+function frameContainedNodes(frame){ return containerContainedNodes(frame); }
 
 /* point on rect boundary toward an external point */
 function anchorOnRect(r, px, py){
@@ -1242,15 +1283,17 @@ function render(){
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
-  for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
+  for (const n of state.nodes) if (isStructuralNode(n)) drawStructuralNode(n);
   for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  for (const n of state.nodes) if (!isStructuralNode(n)) drawNode(n);
   drawEdgeGrips();
   const frames = state.nodes.filter(n => n.type === "frame").length;
-  const nodes = state.nodes.length - frames;
+  const lanes = state.nodes.filter(n => n.type === "swimlane").length;
+  const nodes = state.nodes.length - frames - lanes;
+  const structural = [frames ? `${frames} frame${frames === 1 ? "" : "s"}` : "",
+                      lanes ? `${lanes} lane${lanes === 1 ? "" : "s"}` : ""].filter(Boolean);
   document.getElementById("countLabel").textContent =
-    frames ? `${nodes} nodes · ${frames} frames · ${state.edges.length} edges`
-           : `${nodes} nodes · ${state.edges.length} edges`;
+    `${nodes} nodes${structural.length ? ` · ${structural.join(" · ")}` : ""} · ${state.edges.length} edges`;
   renderMinimap();
   renderInspector();
   updateAlignMenu();
@@ -1348,9 +1391,10 @@ function renderMinimap(){
   for (const n of state.nodes){
     const r = nodeRect(n);
     const p = tx.toMini({x:r.x, y:r.y});
+    const structural = isStructuralNode(n);
     const fill = n.type === "frame" ? n.color || frameColorDefault() : n.color || t.ink;
-    el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:n.type === "frame" ? 2 : 1.5,
-                fill, opacity:n.type === "frame" ? .18 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
+    el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:structural ? 2 : 1.5,
+                fill, opacity:structural ? .30 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
   }
   el("rect", {x:tx.viewport.x, y:tx.viewport.y, width:tx.viewport.w, height:tx.viewport.h,
               fill:"none", stroke:"#C63A3A", "stroke-width":1.2}, minimap);
@@ -1378,7 +1422,7 @@ function edgeFieldPairs(e){
 function edgeEndpoints(e){
   const a = nodeById(e.from), b = nodeById(e.to);
   if (!a || !b) return null;
-  if (a.type === "frame" || b.type === "frame") return null;
+  if (isStructuralNode(a) || isStructuralNode(b)) return null;
   const ra = nodeRect(a), rb = nodeRect(b);
   const firstPair = edgeFieldPairs(e)[0] || {};
   const fromField = firstPair.fromField || e.fromField;
@@ -1395,13 +1439,16 @@ function edgeEndpoints(e){
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
            pinnedA: ia < 0 && !!e.fromAnchor, pinnedB: ib < 0 && !!e.toAnchor };
 }
-function curveEdgePath(pa, pb){
+function curveEdgeCommand(pa, pb){
   const dx = Math.max(40, Math.abs(pb.x - pa.x) * 0.45);
   const dy = Math.max(40, Math.abs(pb.y - pa.y) * 0.45);
   const c = p => p.side === "e" ? [p.x + dx, p.y] : p.side === "w" ? [p.x - dx, p.y]
             : p.side === "s" ? [p.x, p.y + dy] : [p.x, p.y - dy];
   const [c1x, c1y] = c(pa), [c2x, c2y] = c(pb);
-  return `M ${pa.x} ${pa.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${pb.x} ${pb.y}`;
+  return `C ${c1x} ${c1y}, ${c2x} ${c2y}, ${pb.x} ${pb.y}`;
+}
+function curveEdgePath(pa, pb){
+  return `M ${pa.x} ${pa.y} ${curveEdgeCommand(pa, pb)}`;
 }
 function hasCustomOrthoBend(e){
   return !!e && (Number.isFinite(e.orthoX) || Number.isFinite(e.orthoY));
@@ -1422,23 +1469,61 @@ function orthoEdgeRoute(e, pa, pb){
       x:Number.isFinite(e && e.orthoX) ? e.orthoX : mx,
       y:Number.isFinite(e && e.orthoY) ? e.orthoY : b.y
     };
-    const d = hasCustomOrthoBend(e)
+    const custom = hasCustomOrthoBend(e);
+    const d = custom
       ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${bend.x} V ${bend.y} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`
       : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${mx} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`;
-    return { d, pa, pb, a, b, bend, horizontal, auto:{x:mx, y:b.y} };
+    const points = custom
+      ? [pa, a, {x:bend.x, y:a.y}, bend, {x:b.x, y:bend.y}, b, pb]
+      : [pa, a, {x:mx, y:a.y}, {x:mx, y:b.y}, b, pb];
+    return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:mx, y:b.y} };
   }
   const my = (a.y + b.y) / 2;
   const bend = {
     x:Number.isFinite(e && e.orthoX) ? e.orthoX : b.x,
     y:Number.isFinite(e && e.orthoY) ? e.orthoY : my
   };
-  const d = hasCustomOrthoBend(e)
+  const custom = hasCustomOrthoBend(e);
+  const d = custom
     ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${bend.y} H ${bend.x} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`
     : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${my} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`;
-  return { d, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
+  const points = custom
+    ? [pa, a, {x:a.x, y:bend.y}, bend, {x:bend.x, y:b.y}, b, pb]
+    : [pa, a, {x:a.x, y:my}, {x:b.x, y:my}, b, pb];
+  return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
 }
 function orthoEdgePath(pa, pb, e = null){
   return orthoEdgeRoute(e, pa, pb).d;
+}
+function polylineMidpoint(points){
+  if (!Array.isArray(points) || !points.length) return {x:0, y:0};
+  const segments = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++){
+    const from = points[i-1], to = points[i];
+    const length = Math.hypot(to.x - from.x, to.y - from.y);
+    if (!length) continue;
+    segments.push({from, to, length});
+    total += length;
+  }
+  if (!total) return {x:points[0].x, y:points[0].y};
+  let remaining = total / 2;
+  for (const segment of segments){
+    if (remaining <= segment.length){
+      const t = remaining / segment.length;
+      return {
+        x:segment.from.x + (segment.to.x - segment.from.x) * t,
+        y:segment.from.y + (segment.to.y - segment.from.y) * t
+      };
+    }
+    remaining -= segment.length;
+  }
+  const last = points[points.length - 1];
+  return {x:last.x, y:last.y};
+}
+function edgeLabelPoint(e, ep){
+  if (e && e.routing === "ortho") return polylineMidpoint(orthoEdgeRoute(e, ep.pa, ep.pb).points);
+  return {x:(ep.pa.x + ep.pb.x)/2, y:(ep.pa.y + ep.pb.y)/2};
 }
 function nearestSnap(value, candidates, threshold){
   let best = null, distance = threshold + Number.EPSILON;
@@ -1500,14 +1585,18 @@ function notationVertex(p){
   const dir = { e:[1,0], w:[-1,0], s:[0,1], n:[0,-1] }[p.side] || [1,0];
   return { ...p, x:p.x + dir[0]*RELATION_GLYPH_LENGTH, y:p.y + dir[1]*RELATION_GLYPH_LENGTH };
 }
-/* A curved relation must meet a crow's foot at its vertex. Extending the Bezier
-   to the node would cross the fanned prongs at an angle near the endpoint. */
+/* Cardinality glyphs sit on straight, tangent-aligned endpoint geometry. The
+   Bezier runs only between the outward glyph vertices so it cannot cross a tick
+   or the fanned crow's-foot prongs at an angle. */
 function edgeRenderPath(e, ep){
   if (e.kind === "link" || e.routing === "ortho") return edgePath(e, ep.pa, ep.pb);
   const [fromGlyph, toGlyph] = relationGlyphs(e);
-  const pa = fromGlyph === "many" ? notationVertex(ep.pa) : ep.pa;
-  const pb = toGlyph === "many" ? notationVertex(ep.pb) : ep.pb;
-  return curveEdgePath(pa, pb);
+  const pa = notationVertex(ep.pa), pb = notationVertex(ep.pb);
+  const start = fromGlyph === "one"
+    ? `M ${ep.pa.x} ${ep.pa.y} L ${pa.x} ${pa.y}`
+    : `M ${pa.x} ${pa.y}`;
+  const end = toGlyph === "one" ? ` L ${ep.pb.x} ${ep.pb.y}` : "";
+  return `${start} ${curveEdgeCommand(pa, pb)}${end}`;
 }
 /* crow's-foot / tick notation drawn along the anchor's outward normal */
 function drawNotation(g, p, glyph, color){
@@ -1565,13 +1654,13 @@ function drawEdge(e){
   const pairCount = edgeFieldPairs(e).length;
   if (!isLink && pairCount > 1) label += ` · ${pairCount} cols`;
   if (label){
-    const mx = (ep.pa.x + ep.pb.x)/2, my = (ep.pa.y + ep.pb.y)/2;
+    const {x:mx, y:my} = edgeLabelPoint(e, ep);
     const w = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
     el("rect", {x:mx - w/2, y:my - 10, width:w, height:20, rx:10,
-                fill:t.labelBg, stroke:color, "stroke-width":1}, g);
+                fill:t.labelBg, stroke:color, "stroke-width":1, "data-edge-label-bg":"1"}, g);
     el("text", {x:mx, y:my + 3.5, "text-anchor":"middle", fill:color,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":10.5,
-                "font-weight":600}, g).textContent = label;
+                "font-weight":600, "data-edge-label":"1"}, g).textContent = label;
   }
 }
 
@@ -1591,6 +1680,47 @@ function drawFrame(n){
   el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
   el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
               stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+}
+function drawSwimlane(n){
+  const r = nodeRect(n);
+  const selected = isSelected("node", n.id);
+  const t = themeColors();
+  const orientation = swimlaneOrientation(n);
+  const defaults = swimlaneDefaults(n);
+  const bodyColor = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
+  const titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
+  const titleSize = Math.min(defaults.titleSize, orientation === "horizontal" ? r.w * .45 : r.h * .45);
+  const g = el("g", {"data-node":n.id, "data-swimlane":n.id, "data-orientation":orientation,
+                      transform:`translate(${r.x},${r.y})`, cursor:"grab"}, frameLayer);
+  el("rect", {width:r.w, height:r.h, rx:10, fill:bodyColor,
+              stroke:selected ? t.accent : t.ink2, "stroke-width":selected ? 2.4 : 1.4,
+              "data-swimlane-body":"1"}, g);
+  if (orientation === "horizontal"){
+    el("path", {d:`M 10 0 H ${titleSize} V ${r.h} H 10 Q 0 ${r.h} 0 ${r.h-10} V 10 Q 0 0 10 0 Z`,
+                fill:titleColor, "data-swimlane-title-band":"1"}, g);
+    el("line", {x1:titleSize, y1:0, x2:titleSize, y2:r.h, stroke:t.ink2, "stroke-width":1.2}, g);
+    el("text", {x:0, y:0, transform:`translate(${titleSize/2},${r.h/2}) rotate(-90)`,
+                "text-anchor":"middle", "dominant-baseline":"middle", fill:autoInk(titleColor),
+                "font-family":"Archivo, sans-serif", "font-size":14, "font-weight":700,
+                "data-swimlane-title":"1"}, g)
+      .textContent = truncate(n.title || "Horizontal lane", Math.max(40, r.h - 28), "700 14px Archivo, sans-serif");
+  } else {
+    el("path", {d:`M 10 0 H ${r.w-10} Q ${r.w} 0 ${r.w} 10 V ${titleSize} H 0 V 10 Q 0 0 10 0 Z`,
+                fill:titleColor, "data-swimlane-title-band":"1"}, g);
+    el("line", {x1:0, y1:titleSize, x2:r.w, y2:titleSize, stroke:t.ink2, "stroke-width":1.2}, g);
+    el("text", {x:r.w/2, y:titleSize/2, "text-anchor":"middle", "dominant-baseline":"middle",
+                fill:autoInk(titleColor), "font-family":"Archivo, sans-serif", "font-size":14,
+                "font-weight":700, "data-swimlane-title":"1"}, g)
+      .textContent = truncate(n.title || "Vertical lane", Math.max(40, r.w - 28), "700 14px Archivo, sans-serif");
+  }
+  const h = el("g", {class:"frame-resize", "data-frame-resize":n.id, cursor:"nwse-resize"}, g);
+  el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
+  el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
+              stroke:selected ? t.accent : t.ink2, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+}
+function drawStructuralNode(n){
+  if (n.type === "swimlane") drawSwimlane(n);
+  else drawFrame(n);
 }
 function drawConceptShape(g, n, r, attrs){
   const shape = conceptShape(n);
@@ -1862,7 +1992,7 @@ function truncate(str, maxW, font){
 }
 
 /* ------------------------- Mutations ------------------------------ */
-function addNode(type, x, y){
+function addNode(type, x, y, opts = {}){
   pushHistory();
   let n;
   if (type === "concept"){
@@ -1875,6 +2005,13 @@ function addNode(type, x, y){
   } else if (type === "frame"){
     n = { id: uid(), type, x, y, title:"Subject area", color:frameColorDefault(),
           w:FRAME_DEFAULT.w, h:FRAME_DEFAULT.h };
+  } else if (type === "swimlane"){
+    const orientation = opts.orientation === "vertical" ? "vertical" : "horizontal";
+    const defaults = SWIMLANE_DEFAULT[orientation];
+    n = { id:uid(), type, x, y, orientation,
+          title:orientation === "vertical" ? "Vertical lane" : "Horizontal lane",
+          color:SWIMLANE_DEFAULT.bodyColor, titleColor:SWIMLANE_DEFAULT.titleColor,
+          w:defaults.w, h:defaults.h };
   } else if (type === "todo"){
     n = { id: uid(), type, x, y, title:"To-do list", notes:"", color:todoColorDefault(),
           items:[{ id: uid(), text:"New item" }] };
@@ -1888,6 +2025,12 @@ function addNode(type, x, y){
   focusTitleInput();
   return n;
 }
+function addSwimlane(orientation, x, y){
+  const normalized = orientation === "vertical" ? "vertical" : "horizontal";
+  const defaults = SWIMLANE_DEFAULT[normalized];
+  return addNode("swimlane", x == null ? viewCenter().x - defaults.w/2 : x,
+                 y == null ? viewCenter().y - defaults.h/2 : y, {orientation:normalized});
+}
 function addTodoItem(n){
   if (!n || n.type !== "todo") return null;
   pushHistory();
@@ -1900,7 +2043,7 @@ function addTodoItem(n){
 function addEdge(from, to){
   if (from.id === to.id) return;
   let a = nodeById(from.id), b = nodeById(to.id);
-  if (!a || !b || a.type === "frame" || b.type === "frame") return;
+  if (!a || !b || isStructuralNode(a) || isStructuralNode(b)) return;
   const key = ep => ep.id + ":" + (ep.fieldId || "");
   const dup = state.edges.some(e => {
     const ef = e.from + ":" + (e.fromField || ""), et = e.to + ":" + (e.toField || "");
@@ -2282,7 +2425,7 @@ function reorderNode(id, toFront){
 }
 function addChildConcept(){
   const p = firstSelectedNode();
-  if (!p || p.type === "frame") return;
+  if (!p || isStructuralNode(p)) return;
   const r = nodeRect(p);
   pushHistory();
   const siblings = state.edges.filter(e => e.from === p.id).length;
@@ -2400,7 +2543,7 @@ function looseHit(w, tol = 16){
   if (hit) return hit;
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i];
-    if (n.type === "frame") continue;
+    if (isStructuralNode(n)) continue;
     const r = nodeRect(n);
     if (w.x >= r.x - tol && w.x <= r.x + r.w + tol && w.y >= r.y - tol && w.y <= r.y + r.h + tol)
       return { node: n, field: null };
@@ -2428,7 +2571,7 @@ function reattachEdgeEnd(e, end, hit, w){
   const n = hit.node;
   const newFrom = isFrom ? n.id : e.from;
   const newTo = isFrom ? e.to : n.id;
-  if (newFrom === newTo || n.type === "frame"){ render(); return; }
+  if (newFrom === newTo || isStructuralNode(n)){ render(); return; }
   const newFromField = isFrom ? (hit.field ? hit.field.id : "") : (e.fromField || "");
   const newToField = !isFrom ? (hit.field ? hit.field.id : "") : (e.toField || "");
   const dup = state.edges.some(o => {
@@ -2559,10 +2702,11 @@ board.addEventListener("pointerdown", ev => {
   if (resizeEl){
     const id = resizeEl.getAttribute("data-frame-resize");
     const n = nodeById(id);
-    if (!n || n.type !== "frame") return;
+    if (!n || !isStructuralNode(n)) return;
     const w = clientToWorld(ev.clientX, ev.clientY);
     setSelection("node", id);
-    drag = { mode:"frame-resize", id, start:w, w:n.w || FRAME_DEFAULT.w, h:n.h || FRAME_DEFAULT.h, moved:false };
+    const size = nodeSize(n);
+    drag = { mode:"frame-resize", id, start:w, w:size.w, h:size.h, moved:false };
     render();
     return;
   }
@@ -2643,7 +2787,7 @@ board.addEventListener("pointerdown", ev => {
     }
     if (!isSelected("node", id)) setSelection("node", id);
     const moveIds = new Set(selectionIds("node"));
-    if (n && n.type === "frame") for (const child of frameContainedNodes(n)) moveIds.add(child.id);
+    if (isStructuralNode(n)) for (const child of containerContainedNodes(n)) moveIds.add(child.id);
     const ids = [...moveIds];
     const moving = new Set(ids);
     drag = { mode:"node", id, start:w, starts: ids.map(nodeId => {
@@ -2723,8 +2867,11 @@ board.addEventListener("pointermove", ev => {
     const n = nodeById(drag.id);
     if (!n) return;
     if (!drag.moved){ pushHistory(); drag.moved = true; }
-    n.w = Math.round(Math.max(120, drag.w + (w.x - drag.start.x)) / 4) * 4;
-    n.h = Math.round(Math.max(90, drag.h + (w.y - drag.start.y)) / 4) * 4;
+    const verticalLane = n.type === "swimlane" && swimlaneOrientation(n) === "vertical";
+    const minW = n.type === "swimlane" && !verticalLane ? 260 : 120;
+    const minH = verticalLane ? 260 : n.type === "swimlane" ? 100 : 90;
+    n.w = Math.round(Math.max(minW, drag.w + (w.x - drag.start.x)) / 4) * 4;
+    n.h = Math.round(Math.max(minH, drag.h + (w.y - drag.start.y)) / 4) * 4;
     render();
   } else if (drag.mode === "ortho-bend"){
     const e = edgeById(drag.edgeId);
@@ -2906,7 +3053,7 @@ function runShortcut(id, ev){
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
 }
 function cycleNodeSelection(reverse = false){
-  const nodes = state.nodes.filter(n => n.type !== "frame");
+  const nodes = state.nodes.filter(n => !isStructuralNode(n));
   if (!nodes.length) return;
   const current = firstSelectionId("node");
   let idx = nodes.findIndex(n => n.id === current);
@@ -2999,6 +3146,17 @@ function inlineEditorBox(kind, id, rowId){
     if (n.type === "frame"){
       const p = worldToWrap(r.x + 12, r.y + 7);
       return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:28, fontSize:13 };
+    }
+    if (n.type === "swimlane"){
+      const orientation = swimlaneOrientation(n), titleSize = swimlaneDefaults(n).titleSize;
+      if (orientation === "horizontal"){
+        const p = worldToWrap(r.x + 8, r.y + r.h/2 - 16);
+        return { x:p.x, y:p.y, w:Math.max(100, (Math.min(titleSize, r.w*.45) - 16)*view.k),
+                 h:32, fontSize:13 };
+      }
+      const p = worldToWrap(r.x + 10, r.y + 8);
+      return { x:p.x, y:p.y, w:Math.max(100, (r.w - 20)*view.k),
+               h:Math.max(28, (Math.min(titleSize, r.h*.45) - 16)*view.k), fontSize:13 };
     }
     if (n.type === "concept"){
       const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
@@ -3133,6 +3291,8 @@ function paletteItems(){
     ["addTable", "Add table"],
     ["addTodo", "Add to-do list"],
     ["addFrame", "Add frame"],
+    ["addHorizontalLane", "Add horizontal swimlane"],
+    ["addVerticalLane", "Add vertical swimlane"],
     ["layoutTree", "Layout concept tree"],
     ["layoutSchema", "Layout table schema"],
     ["exportSQL", "Export SQL"],
@@ -3172,6 +3332,8 @@ function activatePaletteItem(item){
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
   if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);
   if (item.command === "addFrame") addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2);
+  if (item.command === "addHorizontalLane") addSwimlane("horizontal", c.x-SWIMLANE_DEFAULT.horizontal.w/2, c.y-SWIMLANE_DEFAULT.horizontal.h/2);
+  if (item.command === "addVerticalLane") addSwimlane("vertical", c.x-SWIMLANE_DEFAULT.vertical.w/2, c.y-SWIMLANE_DEFAULT.vertical.h/2);
   if (item.command === "layoutTree") layoutMindMapTree();
   if (item.command === "layoutSchema") layoutSchemaTables();
   if (item.command === "exportSQL") document.getElementById("btnExportSQL").click();
@@ -3455,11 +3617,53 @@ function renderInspector(){
     if (selectionCount("node") > 1){ renderMultiInspector(); return; }
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
-    const kind = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame"
+    const kind = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame" : n.type === "swimlane" ? "Swimlane"
                : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
 
-    if (n.type === "frame"){
+    if (n.type === "swimlane"){
+      inspectorSection("swimlane:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Orientation", () => {
+          const s = document.createElement("select");
+          s.id = "swimlaneOrientation";
+          for (const [value, label] of [["horizontal","Horizontal lane"],["vertical","Vertical lane"]]){
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label; o.selected = swimlaneOrientation(n) === value;
+            s.appendChild(o);
+          }
+          s.addEventListener("change", () => {
+            if (s.value === swimlaneOrientation(n)) return;
+            pushHistory();
+            setSwimlaneOrientation(n, s.value);
+            render();
+          });
+          return s;
+        });
+      });
+      inspectorSection("swimlane:appearance", "Appearance", () => {
+        const palette = [...new Set([...conceptColors(), ...tableColors()])];
+        frow("Body background", () => {
+          const control = swatches(palette, n.color || SWIMLANE_DEFAULT.bodyColor,
+            (c, commit) => { pushHistory("lane-body:"+n.id); n.color = c; commit ? render() : drawOnly(); });
+          control.id = "swimlaneBodyColor";
+          return control;
+        });
+        frow("Title background", () => {
+          const control = swatches(palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
+            (c, commit) => { pushHistory("lane-title:"+n.id); n.titleColor = c; commit ? render() : drawOnly(); });
+          control.id = "swimlaneTitleColor";
+          return control;
+        });
+      });
+      inspectorSection("swimlane:size", "Size", () => {
+        const orientation = swimlaneOrientation(n);
+        frow("Width", () => sizeStepper(nodeSize(n).w, orientation === "vertical" ? 120 : 260, 4000, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
+        frow("Height", () => sizeStepper(nodeSize(n).h, orientation === "vertical" ? 260 : 100, 4000, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
+      });
+    } else if (n.type === "frame"){
       inspectorSection("frame:basics", "Basics", () => renderNodeTitleField(n));
       inspectorSection("frame:appearance", "Appearance", () => {
         frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
@@ -3559,7 +3763,7 @@ function renderInspector(){
     }
 
     const actions = [mkBtn("Duplicate", duplicateSelection)];
-    if (n.type !== "frame") actions.push(mkBtn("Add linked concept  ⇥", addChildConcept));
+    if (!isStructuralNode(n)) actions.push(mkBtn("Add linked concept  ⇥", addChildConcept));
     inspectorActions(actions, mkBtn("Delete node", deleteSelection, "dangerbtn"));
 
   } else {
@@ -3675,7 +3879,7 @@ function renderInspector(){
 
 function renderMultiInspector(){
   const nodes = selectedNodes();
-  const nonFrames = nodes.filter(n => n.type !== "frame");
+  const nonStructural = nodes.filter(n => !isStructuralNode(n));
   setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
   inspectorSection("multi:appearance", "Appearance", () => {
     const helper = document.createElement("div");
@@ -3688,7 +3892,7 @@ function renderMultiInspector(){
         for (const n of nodes) n.color = c;
         commit ? render() : drawOnly();
       }));
-    if (nonFrames.length === nodes.length){
+    if (nonStructural.length === nodes.length){
       if (nodes.every(n => n.type === "concept")){
         frow("Shape", () => {
           const s = document.createElement("select");
@@ -4134,9 +4338,9 @@ function mkFlag(txt, on, set){
 function drawOnly(){
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
-  for (const n of state.nodes) if (n.type === "frame") drawFrame(n);
+  for (const n of state.nodes) if (isStructuralNode(n)) drawStructuralNode(n);
   for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) if (n.type !== "frame") drawNode(n);
+  for (const n of state.nodes) if (!isStructuralNode(n)) drawNode(n);
   drawEdgeGrips();
   renderMinimap();
 }
@@ -4275,6 +4479,8 @@ document.getElementById("btnSnap").addEventListener("click", toggleSnapToGrid);
 document.getElementById("btnCleanup").addEventListener("click", cleanUpToGrid);
 document.getElementById("autoSaveToggle").addEventListener("change", ev => setAutoSave(ev.target.checked));
 document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
+document.getElementById("btnAddHorizontalLane").addEventListener("click", () => addSwimlane("horizontal"));
+document.getElementById("btnAddVerticalLane").addEventListener("click", () => addSwimlane("vertical"));
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
 document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
 document.getElementById("btnLint").addEventListener("click", openLintModal);
@@ -5039,15 +5245,22 @@ function nodeMenu(n, x, y){
   showCtx(x, y, m => {
     ctxHeader(m, "node", targets.length > 1 ? `${targets.length} nodes selected` : n.title || "Untitled");
     ctxGroup(m, "node:appearance", "Appearance", panel => {
-      ctxLabel(panel, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
+      const palette = [...new Set([...conceptColors(), ...tableColors()])];
+      ctxLabel(panel, n.type === "swimlane" ? "Body background" : n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
                 : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
-      ctxSwatches(panel, (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
+      ctxSwatches(panel, n.type === "swimlane" ? palette : (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
         (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
+      if (n.type === "swimlane"){
+        ctxLabel(panel, "Title background");
+        ctxSwatches(panel, palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
+          (c, commit) => { pushHistory(targets.length > 1 ? "lane-title:multi" : "lane-title:"+n.id);
+            applyToTargets(t => { if (t.type === "swimlane") t.titleColor = c; }); commit ? render() : drawOnly(); });
+      }
       if (n.type === "concept"){
         ctxLabel(panel, "Shape");
         ctxShapeRow(panel, n, targets);
       }
-      if (n.type !== "frame"){
+      if (!isStructuralNode(n)){
         ctxLabel(panel, "Text size");
         ctxSizeRow(panel, n, targets);
         ctxLabel(panel, "Text color");
@@ -5055,9 +5268,20 @@ function nodeMenu(n, x, y){
           (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
       }
     });
+    if (n.type === "swimlane") ctxGroup(m, "node:orientation", "Orientation", panel => {
+      for (const [orientation, label] of [["horizontal","Horizontal lane"],["vertical","Vertical lane"]]){
+        ctxItem(panel, (swimlaneOrientation(n) === orientation ? "✓ " : "") + label, () => {
+          const lanes = targets.filter(t => t.type === "swimlane" && swimlaneOrientation(t) !== orientation);
+          if (!lanes.length) return;
+          pushHistory(targets.length > 1 ? "lane-orientation:multi" : "lane-orientation:"+n.id);
+          for (const lane of lanes) setSwimlaneOrientation(lane, orientation);
+          render();
+        });
+      }
+    }, {open:true});
     ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
     if (n.type === "note") ctxItem(m, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
-    if (n.type !== "frame") ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
+    if (!isStructuralNode(n)) ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table" || n.type === "todo"){
       ctxGroup(m, "node:content", n.type === "table" ? "Table content" : "List content", panel => {
         if (n.type === "table"){
@@ -5217,6 +5441,8 @@ function canvasMenu(w, x, y){
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
     ctxItem(m, "Add to-do list here", () => addNode("todo", w.x - 90, w.y - 30), {kbd:"D"});
     ctxItem(m, "Add frame here",   () => addNode("frame",   w.x - FRAME_DEFAULT.w/2, w.y - FRAME_DEFAULT.h/2));
+    ctxItem(m, "Add horizontal lane here", () => addSwimlane("horizontal", w.x - SWIMLANE_DEFAULT.horizontal.w/2, w.y - SWIMLANE_DEFAULT.horizontal.h/2));
+    ctxItem(m, "Add vertical lane here", () => addSwimlane("vertical", w.x - SWIMLANE_DEFAULT.vertical.w/2, w.y - SWIMLANE_DEFAULT.vertical.h/2));
     ctxSep(m);
     ctxItem(m, "Fit diagram", fitView, {kbd:"F"});
   });
@@ -5361,13 +5587,21 @@ window.__T = {
   documentBounds,
   hitTest,
   frameContainedNodes,
+  containerContainedNodes,
+  isStructuralNode,
+  swimlaneOrientation,
+  setSwimlaneOrientation,
+  get SWIMLANE_DEFAULT(){ return JSON.parse(JSON.stringify(SWIMLANE_DEFAULT)); },
   addNode,
+  addSwimlane,
   addEdge,
   edgeFieldPairs,
   setEdgePairs,
   edgeEndpoints,
   edgePath,
   edgeRenderPath,
+  edgeLabelPoint,
+  polylineMidpoint,
   notationVertex,
   orthoEdgeRoute,
   snapOrthoBend,
