@@ -297,10 +297,12 @@ Harness quirks you must respect:
   `looseHit`). Grips are stripped from PNG/SVG exports via `[data-edgegrip]`.
 
 **Editing surfaces**
-- Right inspector (node/table/edge editors, help + legend when nothing selected).
+- Right inspector (node/table/edge editors, help + legend when nothing selected) uses a
+  compact object header, task-grouped persistent disclosures, and a sticky action footer.
 - Multi-select inspector with bulk color, text-size, and text-color controls.
-- Right-click context menus for node (colors, text size/color, add child/related/field,
-  duplicate, z-order, delete), edge (kind quick-set, swap, delete), canvas (add here, fit).
+- Right-click context menus start with object context and keep secondary node/edge controls
+  in compact keyboard-accessible disclosures. Direct edit, create, duplicate, swap, and
+  delete actions remain immediately available; canvas actions are grouped under Create.
 - Multi-node context menu alignment/distribution tools: left/right/top/bottom, center
   horizontally/vertically, distribute horizontally/vertically.
 - Inline title editor on canvas for nodes; inline label editor for edges.
@@ -844,8 +846,8 @@ most needs.
 
 **SCH-054 · Standard flowchart shapes for concept nodes · P2 · M · Done 2026-07-09**
 
-Add the optional concept-only `shape` key with six standard symbols: Process, Decision,
-Terminator, Data (input/output), Document, and Manual input. Expose it through the
+Add the optional concept-only `shape` key with nine standard symbols: Process, Decision,
+Terminator, Data (input/output), Document, Manual input, Triangle, Circle, and Square. Expose it through the
 Inspector and concept-node context menu for individual concept nodes and concept-only
 multi-selections. Keep the default Process shape absent from JSON for backward-compatible
 compact documents; Decision's anchor points must lie on its diamond perimeter. Add jsdom
@@ -1121,6 +1123,80 @@ and PNG export without marker-definition dependencies.
 AC: both editing surfaces change every property as one undoable action; start/end arrows
 render independently; JSON and SVG retain explicit styling; undo/redo works; legacy edges
 keep their prior appearance; automated and browser interaction QA pass.
+
+---
+
+**SCH-071 · Inspector and context-menu hierarchy redesign · P1 · L · Done 2026-07-11**
+
+Replace flat inspector forms with a compact selected-object header, task-based native
+disclosures, and a sticky action footer. Preserve all control ids, editing callbacks,
+undo boundaries, and document mutations. Disclosure state persists during rerenders so a
+committed change does not unexpectedly reopen a section the user closed.
+
+Replace long, duplicated context forms with a concise object header plus capability-preserving
+Relationship, Appearance, Routing, Content, and Arrange disclosure groups. High-frequency edit,
+create, duplicate, swap, and destructive actions remain direct. Expanded context groups rerun
+viewport fitting to avoid clipping.
+
+The hierarchy defaults follow task frequency: primary Basics/Connection and common Appearance
+sections start open; secondary Notes and edge Appearance start compact. All disclosure headers
+use native keyboard behavior, explicit focus treatment, and consistent SVG chevrons.
+
+AC: every former inspector/context capability remains reachable; node, edge, multi-select, and
+canvas states have clear hierarchy; disclosure state survives render; menus are materially
+shorter by default; document serialization and canvas behavior remain unchanged; automated,
+browser interaction, and visual fidelity checks pass.
+
+---
+
+**SCH-072 · Geometric concept shapes with wrapped titles · P1 · M · Done 2026-07-13**
+
+Extend the additive concept-only `shape` key with Triangle, Circle, and Square. Expose the
+three shapes through the existing inspector selector, multi-concept editing, and context-menu
+shape grid without adding shape controls to structural primitives.
+
+Triangle, Circle, and Square use fixed-aspect SVG geometry and automatically wrap titles over
+multiple centered lines. Each shape grows until the complete title fits its safe interior text
+area, with a bounded ellipsis fallback only for pathological titles. Circle and Triangle edge
+anchors resolve against their actual silhouettes, and hit testing ignores their empty bounding-
+box corners; Square keeps conventional rectangular geometry.
+
+AC: all three shapes render and round-trip through JSON; inspector/context controls expose all
+nine concept shapes; long titles wrap without clipping; fixed aspect ratios hold; circle and
+triangle anchors and hit targets follow their visible boundaries; automated and browser QA pass.
+
+---
+
+**SCH-073 · Draggable orthogonal link waypoint · P1 · M · Done 2026-07-13**
+
+Selecting an orthogonal edge exposes a square waypoint handle on the canvas. Dragging it stores
+optional world-space `orthoX` and `orthoY` coordinates and expands the existing Manhattan route
+through that point without introducing diagonal or curved legs. Untouched edges retain the exact
+automatic midpoint route used by earlier documents.
+
+Waypoint x and y snap independently, at a zoom-adjusted screen threshold, to significant endpoint,
+outward-stub, and automatic-midpoint coordinates used by the same edge. Temporary horizontal and
+vertical guides make active snaps visible. Arrow keys nudge the focused handle; Shift uses the full
+grid interval. The inspector and edge context menu explain the interaction and reset custom routing.
+
+Custom coordinates serialize additively, sanitize on import, follow copied nodes by the paste offset,
+and are excluded with all other editing grips from SVG and PNG exports. A drag is one undo step.
+
+AC: legacy routes remain byte-for-byte unchanged until moved; custom paths remain M/L/H/V-only;
+both axes snap independently; drag, keyboard, reset, undo, JSON, copy/paste, and export behavior are
+tested; full automated and browser interaction QA pass.
+
+---
+
+**SCH-074 · Clean curved crow's-foot endpoints · P1 · S · Done 2026-07-13**
+
+Curved 1:N and N:M relation strokes terminate at the many-side crow's-foot vertex instead of
+continuing underneath its center prong to the node boundary. This gives the Bezier a precise,
+tangent-aligned meeting point and removes the doubled, crossed endpoint visible beside table rows.
+Orthogonal routing and one-side tick notation retain their existing geometry.
+
+AC: curved 1:N and N:M strokes meet every many-side symbol at its outward vertex; the stroke does
+not cross the fanned prongs; orthogonal paths are unchanged; automated and browser visual QA pass.
 
 ---
 
