@@ -795,6 +795,145 @@ function closeEnough(a, b, msg){
     assert.strictEqual(T.state.edges.find(e => e.id === edge.id).routing, "ortho", "routing key imports");
   }
 
+  /* SCH-074 — curved crow's-foot paths stop at the glyph vertex */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const edge = T.state.edges.find(e => e.kind === "1:N");
+    const ep = T.edgeEndpoints(edge);
+    const manyVertex = T.notationVertex(ep.pb);
+    const curved = T.edgeRenderPath(edge, ep);
+    assert(curved.includes(" C "), "1:N relation keeps curved routing");
+    assert(curved.endsWith(`${manyVertex.x} ${manyVertex.y}`),
+      "curved 1:N stroke ends at the many-side crow's-foot vertex");
+    assert(!curved.endsWith(`${ep.pb.x} ${ep.pb.y}`),
+      "curved 1:N stroke no longer continues under the crow's-foot prongs");
+    T.setSelection("edge", edge.id);
+    T.render();
+    assert.strictEqual(window.document.querySelector(`[data-edge="${edge.id}"] [data-edge-line]`).getAttribute("d"), curved,
+      "rendered relation uses the trimmed curved path");
+
+    edge.kind = "N:M";
+    const fromVertex = T.notationVertex(ep.pa);
+    const manyToMany = T.edgeRenderPath(edge, ep);
+    assert(manyToMany.startsWith(`M ${fromVertex.x} ${fromVertex.y}`),
+      "curved N:M stroke starts at the first crow's-foot vertex");
+    assert(manyToMany.endsWith(`${manyVertex.x} ${manyVertex.y}`),
+      "curved N:M stroke ends at the second crow's-foot vertex");
+
+    edge.routing = "ortho";
+    assert.strictEqual(T.edgeRenderPath(edge, ep), T.edgePath(edge, ep.pa, ep.pb),
+      "orthogonal relation geometry remains unchanged");
+  }
+
+  /* SCH-073 — draggable orthogonal waypoint with coordinate snapping */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const edge = T.state.edges.find(e => e.kind !== "link");
+    edge.routing = "ortho";
+    const ep = T.edgeEndpoints(edge);
+    const automatic = T.orthoEdgeRoute(null, ep.pa, ep.pb);
+    assert.strictEqual(T.edgePath(edge, ep.pa, ep.pb), automatic.d,
+      "untouched orthogonal edge keeps the legacy automatic route");
+
+    const snapped = T.snapOrthoBend(edge,
+      {x:automatic.a.x + 3, y:automatic.a.y - 3}, ep, 6);
+    assert.strictEqual(snapped.x, automatic.a.x, "waypoint x snaps to a significant stub coordinate");
+    assert.strictEqual(snapped.y, automatic.a.y, "waypoint y snaps independently to a significant stub coordinate");
+    const free = T.snapOrthoBend(edge,
+      {x:Math.max(...snapped.xCandidates) + 30.4, y:Math.max(...snapped.yCandidates) + 30.4}, ep, 6);
+    assert.strictEqual(free.snapX, null, "waypoint x stays free outside the snap threshold");
+    assert.strictEqual(free.snapY, null, "waypoint y stays free outside the snap threshold");
+
+    T.setSelection("edge", edge.id);
+    T.render();
+    let handle = window.document.querySelector(`[data-edgebend="${edge.id}"]`);
+    assert(handle, "selected orthogonal edge exposes a canvas waypoint handle");
+    assert.strictEqual(window.document.querySelectorAll("[data-edgebend]").length, 1,
+      "only the selected orthogonal edge exposes a waypoint handle");
+    const beforeUndo = T.undoDepth;
+    firePointer(window, handle, "pointerdown", {clientX:automatic.bend.x, clientY:automatic.bend.y});
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+    assert.strictEqual(edge.orthoX, automatic.a.x, "pointer drag snaps waypoint x");
+    assert.strictEqual(edge.orthoY, automatic.a.y, "pointer drag snaps waypoint y");
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "waypoint drag creates one undo step");
+    assert(window.document.querySelector("[data-ortho-snap-x]"), "x snap draws an alignment guide");
+    assert(window.document.querySelector("[data-ortho-snap-y]"), "y snap draws an alignment guide");
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "continued waypoint movement stays in one undo step");
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+    assert(!window.document.querySelector("[data-ortho-snap-x], [data-ortho-snap-y]"),
+      "snap guides clear when the drag ends");
+    const customPath = T.edgePath(edge, ep.pa, ep.pb);
+    assert(!customPath.includes("C") && /^[MLHV0-9 .-]+$/.test(customPath),
+      "custom waypoint route remains purely orthogonal");
+    assert(customPath.includes(`H ${edge.orthoX}`) && customPath.includes(`V ${edge.orthoY}`),
+      "custom route passes through both waypoint coordinates");
+
+    const parsed = JSON.parse(T.serializeDocument());
+    const saved = parsed.edges.find(e => e.id === edge.id);
+    assert.strictEqual(saved.orthoX, edge.orthoX, "waypoint x serializes");
+    assert.strictEqual(saved.orthoY, edge.orthoY, "waypoint y serializes");
+    const { window:importWindow } = makeDom();
+    importWindow.__T.importDocText(JSON.stringify(parsed));
+    const imported = importWindow.__T.state.edges.find(e => e.id === edge.id);
+    assert.strictEqual(imported.orthoX, edge.orthoX, "waypoint x imports");
+    assert.strictEqual(imported.orthoY, edge.orthoY, "waypoint y imports");
+    const copied = T.remapPayload(T.cloneSelectionPayload([edge.from, edge.to]), 36);
+    assert.strictEqual(copied.edges[0].orthoX, edge.orthoX + 36, "copied waypoint x follows copied nodes");
+    assert.strictEqual(copied.edges[0].orthoY, edge.orthoY + 36, "copied waypoint y follows copied nodes");
+    assert(!T.serializedSvg(true).includes("data-edgebend"), "SVG export excludes the editing waypoint");
+    const savedBend = {x:edge.orthoX, y:edge.orthoY};
+    edge.orthoX = 2400;
+    edge.orthoY = -1300;
+    const expandedBounds = T.documentBounds();
+    assert(expandedBounds.x + expandedBounds.w >= edge.orthoX && expandedBounds.y <= edge.orthoY,
+      "document bounds include a custom waypoint outside the node bounds");
+    edge.orthoX = savedBend.x;
+    edge.orthoY = savedBend.y;
+    T.render();
+
+    const reset = window.document.getElementById("edgeResetOrthoBend");
+    assert(reset && !reset.disabled, "inspector offers reset for a moved waypoint");
+    reset.click();
+    assert.strictEqual(edge.orthoX, undefined, "inspector reset clears waypoint x");
+    assert.strictEqual(edge.orthoY, undefined, "inspector reset clears waypoint y");
+    assert.strictEqual(T.edgePath(edge, ep.pa, ep.pb), automatic.d,
+      "reset restores the automatic orthogonal route");
+
+    handle = window.document.querySelector(`[data-edgebend="${edge.id}"]`);
+    const keyboardStart = T.orthoEdgeRoute(edge, ep.pa, ep.pb).bend.x;
+    handle.dispatchEvent(new window.KeyboardEvent("keydown", {key:"ArrowRight", bubbles:true, cancelable:true}));
+    assert.strictEqual(edge.orthoX, keyboardStart + 4, "keyboard can nudge the waypoint");
+
+    const beforeGroupMove = {x:edge.orthoX, y:edge.orthoY};
+    T.setSelection("node", [edge.from, edge.to]);
+    T.render();
+    const fromNode = T.state.nodes.find(n => n.id === edge.from);
+    const fromGroup = window.document.querySelector(`[data-node="${edge.from}"]`);
+    firePointer(window, fromGroup, "pointerdown", {clientX:fromNode.x + 4, clientY:fromNode.y + 4});
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:fromNode.x + 28, clientY:fromNode.y + 28});
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      {clientX:fromNode.x + 28, clientY:fromNode.y + 28});
+    assert.strictEqual(edge.orthoX, beforeGroupMove.x + 24, "moving both endpoints translates waypoint x");
+    assert.strictEqual(edge.orthoY, beforeGroupMove.y + 24, "moving both endpoints translates waypoint y");
+
+    T.setSelection("edge", edge.id);
+    T.render();
+    T.edgeMenu(edge, 20, 20);
+    const contextReset = [...window.document.querySelectorAll("#ctxMenu .ctxitem")]
+      .find(button => button.textContent.includes("Reset to automatic"));
+    assert(contextReset, "edge context menu offers waypoint reset");
+    contextReset.click();
+    assert.strictEqual(edge.orthoX, undefined, "context-menu reset clears waypoint x");
+    assert.strictEqual(edge.orthoY, undefined, "context-menu reset clears waypoint y");
+  }
+
   /* SCH-043 — minimap */
   {
     const { window } = makeDom();
@@ -1705,6 +1844,48 @@ function closeEnough(a, b, msg){
       assert(window.document.querySelector(`[data-node="${concept.id}"] [data-node-shape="${id}"]`),
         `${id} renders as a standard flowchart symbol`);
     }
+    sameList(T.FLOWCHART_SHAPES.slice(-3).map(shape => shape.id), ["triangle","circle","square"],
+      "triangle, circle, and square are available as concept shapes");
+    const originalTitle = concept.title;
+    concept.title = "A carefully wrapped label inside the selected shape";
+    for (const shape of ["triangle","circle","square"]){
+      T.setConceptShape(concept, shape);
+      T.render();
+      const layout = T.conceptWrappedLayout(concept);
+      const rect = T.nodeRect(concept);
+      const lines = [...window.document.querySelectorAll(
+        `[data-node="${concept.id}"] [data-concept-line]`)];
+      assert(layout && layout.lines.length >= 2, `${shape} wraps a long title over multiple lines`);
+      assert.strictEqual(lines.length, layout.lines.length, `${shape} renders every wrapped title line`);
+      assert(lines.every(line => T.textW(line.textContent, layout.font) <= layout.maxWidth + .01),
+        `${shape} keeps each rendered line inside its safe text width`);
+      assert.strictEqual(lines.map(line => line.textContent).join(" "), concept.title,
+        `${shape} preserves the complete title while wrapping`);
+      if (shape === "triangle")
+        assert(Math.abs(rect.h / rect.w - .866) < .01, "triangle keeps an equilateral-style aspect ratio");
+      else assert.strictEqual(rect.w, rect.h, `${shape} keeps equal width and height`);
+      const cornerHit = T.hitTest({x:rect.x + 2, y:rect.y + 2});
+      if (shape === "square") assert(cornerHit && cornerHit.node.id === concept.id,
+        "square uses its full rectangular hit area");
+      else assert.strictEqual(cornerHit, null,
+        `${shape} ignores empty bounding-box corners during hit testing`);
+    }
+    T.setConceptShape(concept, "circle");
+    const circleRect = T.nodeRect(concept);
+    const circleAnchor = T.nodeAnchor(concept, null, T.nodeRect(target));
+    const circleRadius = Math.hypot(
+      (circleAnchor.x - circleRect.cx) / (circleRect.w/2),
+      (circleAnchor.y - circleRect.cy) / (circleRect.h/2));
+    assert(Math.abs(circleRadius - 1) < .001, "circle edge anchors land on the circle boundary");
+    T.setConceptShape(concept, "triangle");
+    const triangleRect = T.nodeRect(concept);
+    const triangleAnchor = T.nodeAnchor(concept, null, T.nodeRect(target));
+    const triangleLocalY = triangleAnchor.y - triangleRect.y;
+    const triangleHalfWidth = (triangleLocalY / triangleRect.h) * (triangleRect.w/2);
+    assert(Math.abs(Math.abs(triangleAnchor.x - triangleRect.cx) - triangleHalfWidth) < .001 ||
+           Math.abs(triangleLocalY - triangleRect.h) < .001,
+      "triangle edge anchors land on a visible triangle side");
+    concept.title = originalTitle;
     T.setConceptShape(concept, "document");
     T.render();
     const saved = JSON.parse(T.serializeDocument());
@@ -1716,7 +1897,7 @@ function closeEnough(a, b, msg){
 
     T.setSelection("node", concept.id);
     T.nodeMenu(concept, 10, 10);
-    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length, 6,
+    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length, 9,
       "concept context menu exposes every standard flowchart shape");
     window.document.querySelector('#ctxMenu [data-shape-option="terminator"]').click();
     assert.strictEqual(concept.shape, "terminator", "context-menu shape selection updates the concept");
@@ -1967,6 +2148,177 @@ function closeEnough(a, b, msg){
     assert.strictEqual(T.inspectorPinned, false, "toggling works in-memory without localStorage");
     assert.strictEqual(window.document.getElementById("inspector").hidden, true,
       "in-memory unpinned inspector hides without a selection");
+  }
+
+  /* Inspector/context-menu capability characterization before SCH-071 hierarchy redesign. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    assert(doc.getElementById("titleInput"), "concept inspector retains title editing");
+    assert(doc.querySelector('[aria-label="Flowchart shape"]'), "concept inspector retains shape editing");
+    assert(doc.querySelector('[aria-label="Font size"]'), "concept inspector retains text sizing");
+    assert(doc.querySelectorAll("#inspBody .swatch").length >= 10, "concept inspector retains fill and text palettes");
+
+    T.nodeMenu(concept, 20, 20);
+    let menu = doc.getElementById("ctxMenu");
+    assert(menu.querySelector('[data-shape-option="decision"]'), "concept menu retains shape actions");
+    assert(menu.querySelector('[aria-label="Font size"]'), "concept menu retains text sizing");
+    assert(menu.querySelectorAll(".swatch").length >= 10, "concept menu retains fill and text palettes");
+    assert([...menu.querySelectorAll(".ctxitem span")].some(s => s.textContent === "Add linked concept"),
+      "concept menu retains linked-node creation");
+
+    const edge = T.state.edges.find(e => e.label === "drives");
+    T.setSelection("edge", edge.id);
+    T.render();
+    assert(doc.getElementById("edgeRelationshipSelect"), "edge inspector retains relationship presets");
+    assert(doc.getElementById("edgeLineStyle"), "edge inspector retains line styling");
+    assert(doc.getElementById("edgeStartArrow") && doc.getElementById("edgeEndArrow"),
+      "edge inspector retains arrow controls");
+
+    T.edgeMenu(edge, 20, 20);
+    menu = doc.getElementById("ctxMenu");
+    assert(menu.querySelector('[data-edge-relationship]'), "edge menu retains relationship presets");
+    assert(menu.querySelector('[data-edge-arrow-toggle="start"]') && menu.querySelector('[data-edge-arrow-toggle="end"]'),
+      "edge menu retains arrow controls");
+    assert(menu.querySelector('[aria-label="Line style"]') && menu.querySelector('[aria-label="Line width"]'),
+      "edge menu retains line style and width controls");
+    assert([...menu.querySelectorAll(".ctxitem span")].some(s => s.textContent === "Swap direction"),
+      "edge menu retains direction swapping");
+  }
+
+  /* SCH-071 — task-grouped inspector and compact context disclosures. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    const concept = T.state.nodes.find(n => n.title === "Tiered rewards");
+    T.selectNode(concept.id);
+    assert.strictEqual(doc.querySelector("#inspTitle .inspector-kind").textContent, "Concept node",
+      "inspector header identifies the selected object type");
+    assert.strictEqual(doc.querySelector("#inspTitle .inspector-name").textContent, "Tiered rewards",
+      "inspector header identifies the selected object");
+    let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
+    sameList(sections.map(s => s.querySelector("summary span").textContent), ["Basics","Appearance","Notes"],
+      "concept inspector groups controls by task");
+    assert(sections[0].open && sections[1].open && !sections[2].open,
+      "primary inspector sections start open while secondary notes stay compact");
+    const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
+    appearance.open = false;
+    appearance.dispatchEvent(new window.Event("toggle"));
+    T.render();
+    assert.strictEqual(doc.querySelector('[data-inspector-section="concept:appearance"]').open, false,
+      "inspector disclosure state survives committed rerenders");
+    assert(doc.querySelector('[data-inspector-section="concept:basics"] #titleInput'),
+      "title editing lives in Basics");
+    const groupedTitle = doc.getElementById("titleInput");
+    groupedTitle.value = "Tier strategy";
+    groupedTitle.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(doc.querySelector("#inspTitle .inspector-name").textContent, "Tier strategy",
+      "selected-object header follows live title edits");
+    groupedTitle.value = "Tiered rewards";
+    groupedTitle.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert(doc.querySelector('[data-inspector-section="concept:notes"] textarea'),
+      "notes editing lives in Notes");
+    assert(doc.querySelector("#inspBody .inspector-actions"), "node actions use a dedicated sticky footer");
+
+    T.nodeMenu(concept, 20, 20);
+    let menu = doc.getElementById("ctxMenu");
+    assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
+      "node menu starts with object context");
+    sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
+      ["Appearance","Arrange"], "node menu groups secondary controls into disclosures");
+    assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
+      "context disclosures start compact");
+    assert(menu.querySelector('[data-ctx-group="node:appearance"] [data-shape-option="decision"]'),
+      "collapsed appearance group retains shape capability");
+
+    const edge = T.state.edges.find(e => e.label === "drives");
+    T.edgeMenu(edge, 20, 20);
+    menu = doc.getElementById("ctxMenu");
+    sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
+      ["Relationship","Appearance","Routing"], "edge menu groups controls by task");
+    assert(menu.querySelector('[data-ctx-group="edge:appearance"] [aria-label="Line width"]'),
+      "edge appearance disclosure retains line controls");
+    assert(menu.querySelector('[data-ctx-group="edge:relationship"] [data-edge-relationship]'),
+      "edge relationship disclosure retains presets");
+    const edgeAppearanceGroup = menu.querySelector('[data-ctx-group="edge:appearance"]');
+    edgeAppearanceGroup.open = true;
+    edgeAppearanceGroup.dispatchEvent(new window.Event("toggle"));
+    T.edgeMenu(edge, 20, 20);
+    assert(doc.querySelector('[data-ctx-group="edge:appearance"]').open,
+      "context disclosure state survives reopening the menu");
+
+    T.setSelection("edge", edge.id);
+    T.render();
+    let relationship = doc.getElementById("edgeRelationshipSelect");
+    relationship.value = "Supports";
+    relationship.dispatchEvent(new window.Event("change", {bubbles:true}));
+    const edgeLabelSection = doc.querySelector('[data-inspector-section="edge:label"]');
+    edgeLabelSection.open = false;
+    edgeLabelSection.dispatchEvent(new window.Event("toggle"));
+    relationship = doc.getElementById("edgeRelationshipSelect");
+    relationship.value = "__custom__";
+    relationship.dispatchEvent(new window.Event("change", {bubbles:true}));
+    await delay(10);
+    assert(doc.querySelector('[data-inspector-section="edge:label"]').open,
+      "custom relationship action reopens its target inspector section");
+    assert.strictEqual(doc.activeElement.id, "edgeLabelInput",
+      "custom relationship action focuses its revealed label input");
+
+    const board = doc.getElementById("board");
+    firePointer(window, board, "contextmenu", {clientX:800, clientY:700});
+    menu = doc.getElementById("ctxMenu");
+    assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Create or navigate",
+      "canvas menu explains its scope");
+    assert([...menu.querySelectorAll(".ctxitem span")].some(s => s.textContent === "Add rich note here"),
+      "canvas menu retains all creation actions");
+
+    T.importDocText(JSON.stringify({version:1,nextId:9,edges:[],nodes:[
+      {id:"f1",type:"frame",x:0,y:0,title:"Area",color:"#2456E6",w:300,h:200},
+      {id:"n1",type:"note",x:20,y:20,title:"Context",content:"Body",color:"#FFE9A8",w:300},
+      {id:"d1",type:"todo",x:380,y:20,title:"Tasks",notes:"",color:"#E9E2F8",items:[{id:"i1",text:"One"}]},
+      {id:"t1",type:"table",x:380,y:240,title:"records",notes:"",color:"#16232F",
+       fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
+    ]}));
+    const expectedSections = {
+      f1:["Basics","Appearance","Size"],
+      n1:["Basics","Content","Appearance"],
+      d1:["Basics","Appearance","Notes","Items"],
+      t1:["Basics","Appearance","Notes","Fields"]
+    };
+    for (const [id, expected] of Object.entries(expectedSections)){
+      T.setSelection("node", id);
+      T.render();
+      sameList([...doc.querySelectorAll("#inspBody .inspector-section summary span")].map(s => s.textContent), expected,
+        `${id} inspector uses the expected task hierarchy`);
+      assert(doc.querySelector("#inspBody .inspector-actions"), `${id} inspector retains its action footer`);
+    }
+    T.setSelection("node", "n1");
+    T.render();
+    const noteContentSection = doc.querySelector('[data-inspector-section="note:content"]');
+    noteContentSection.open = false;
+    noteContentSection.dispatchEvent(new window.Event("toggle"));
+    T.nodeMenu(T.state.nodes.find(n => n.id === "n1"), 20, 20);
+    const editNote = [...doc.querySelectorAll("#ctxMenu .ctxitem")]
+      .find(button => button.textContent.includes("Edit note content"));
+    editNote.click();
+    await delay(10);
+    assert(doc.querySelector('[data-inspector-section="note:content"]').open,
+      "direct note edit reopens a collapsed Content section");
+    assert.strictEqual(doc.activeElement.id, "noteContentInput",
+      "direct note edit focuses the revealed Markdown input");
+    const noteBasics = doc.querySelector('[data-inspector-section="note:basics"]');
+    noteBasics.open = false;
+    noteBasics.dispatchEvent(new window.Event("toggle"));
+    T.addNode("note", 720, 420);
+    await delay(10);
+    assert(doc.querySelector('[data-inspector-section="note:basics"]').open,
+      "new-node title focus reopens a collapsed Basics section");
+    assert.strictEqual(doc.activeElement.id, "titleInput",
+      "new-node creation focuses the revealed title input");
   }
 
   /* scheme theme overrides follow light/dark toggling */

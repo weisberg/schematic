@@ -43,9 +43,14 @@ const FLOWCHART_SHAPES = [
   ["terminator", "Terminator"],
   ["data", "Data (input/output)"],
   ["document", "Document"],
-  ["manualInput", "Manual input"]
+  ["manualInput", "Manual input"],
+  ["triangle", "Triangle"],
+  ["circle", "Circle"],
+  ["square", "Square"]
 ];
 const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
+const WRAPPED_CONCEPT_SHAPES = new Set(["triangle", "circle", "square"]);
+const CUSTOM_BOUNDARY_CONCEPT_SHAPES = new Set(["decision", "triangle", "circle"]);
 const EDGE_RELATIONSHIPS = [
   ["Contains", "Parent-child structure"],
   ["Depends on", "Execution dependency"],
@@ -69,7 +74,7 @@ const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.7.3";
+const APP_VERSION = "v1.8.3";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -424,12 +429,28 @@ function cleanFieldRefs(fid){
     }
   }
 }
+function conceptContainsPoint(n, r, point){
+  if (!n || n.type !== "concept") return true;
+  const shape = conceptShape(n);
+  const x = point.x - r.x, y = point.y - r.y;
+  if (shape === "circle"){
+    const dx = (x - r.w/2) / (r.w/2), dy = (y - r.h/2) / (r.h/2);
+    return dx*dx + dy*dy <= 1;
+  }
+  if (shape === "triangle"){
+    if (y < 0 || y > r.h) return false;
+    const halfWidth = (y / r.h) * (r.w/2);
+    return x >= r.w/2 - halfWidth && x <= r.w/2 + halfWidth;
+  }
+  return true;
+}
 /* topmost node (and row, for tables/todos) under a world point */
 function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
     if (n.type === "frame") continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
+    if (!conceptContainsPoint(n, r, w)) continue;
     let field = null;
     const rows = n.collapsed ? null : nodeRows(n);
     if (rows && rows.length){
@@ -515,6 +536,11 @@ function cleanEdgeForDocument(e){
   if (!out.fromField) delete out.fromField;
   if (!out.toField) delete out.toField;
   if (!out.routing || out.routing === "curve") delete out.routing;
+  for (const key of ["orthoX", "orthoY"]){
+    const value = Number(out[key]);
+    if (Number.isFinite(value)) out[key] = value;
+    else delete out[key];
+  }
   if (out.startArrow !== true) delete out.startArrow;
   if (out.endArrow !== true) delete out.endArrow;
   const lineColor = normalizeHex(out.lineColor);
@@ -571,6 +597,13 @@ function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
+  for (const e of state.edges){
+    for (const key of ["orthoX", "orthoY"]){
+      const value = Number(e[key]);
+      if (Number.isFinite(value)) e[key] = value;
+      else delete e[key];
+    }
+  }
   state.nextId = migrated.nextId;
   ensureFieldIds();
   applyColorScheme(migrated.meta ? migrated.meta.colorScheme : null);
@@ -897,6 +930,51 @@ function setConceptShape(n, shape){
   if (next === "process") delete n.shape;
   else n.shape = next;
 }
+function wrapConceptTitle(text, font, maxWidth){
+  const words = String(text || "Untitled").trim().split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  const pushWord = word => {
+    const next = line ? line + " " + word : word;
+    if (textW(next, font) <= maxWidth){ line = next; return; }
+    if (line){ lines.push(line); line = ""; }
+    if (textW(word, font) <= maxWidth){ line = word; return; }
+    let part = "";
+    for (const ch of word){
+      if (part && textW(part + ch, font) > maxWidth){ lines.push(part); part = ch; }
+      else part += ch;
+    }
+    line = part;
+  };
+  for (const word of words) pushWord(word);
+  if (line) lines.push(line);
+  return lines.length ? lines : ["Untitled"];
+}
+function conceptWrappedLayout(n){
+  const shape = conceptShape(n), fs = conceptFont(n);
+  if (!WRAPPED_CONCEPT_SHAPES.has(shape)) return null;
+  const font = `600 ${fs}px Archivo, sans-serif`;
+  const lineH = Math.ceil(fs * 1.28);
+  const spec = shape === "triangle"
+    ? { min:180, widthRatio:.46, heightRatio:.38, centerY:.64, heightFor:size => Math.round(size * .866) }
+    : shape === "circle"
+      ? { min:140, widthRatio:.64, heightRatio:.58, centerY:.5, heightFor:size => size }
+      : { min:120, widthRatio:.74, heightRatio:.72, centerY:.5, heightFor:size => size };
+  let layout = null;
+  for (let size = spec.min; size <= 420; size += 10){
+    const h = spec.heightFor(size);
+    const maxWidth = Math.max(44, Math.round(size * spec.widthRatio));
+    const lines = wrapConceptTitle(n.title || "Untitled", font, maxWidth);
+    const maxLines = Math.max(1, Math.floor(h * spec.heightRatio / lineH));
+    layout = { w:size, h, fs, font, lineH, lines, maxLines, maxWidth, centerY:h * spec.centerY };
+    if (lines.length <= maxLines) return layout;
+  }
+  const visible = layout.lines.slice(0, layout.maxLines);
+  let last = visible[visible.length - 1] || "";
+  while (last && textW(last + "…", font) > layout.maxWidth) last = last.slice(0, -1);
+  visible[visible.length - 1] = (last || "").trimEnd() + "…";
+  return {...layout, lines:visible, truncated:true};
+}
 function conceptTextWidth(shape, w){
   return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
 }
@@ -922,6 +1000,8 @@ function nodeSize(n){
   if (n.type === "concept"){
     const fs = conceptFont(n);
     const shape = conceptShape(n);
+    const wrapped = conceptWrappedLayout(n);
+    if (wrapped) return { w:wrapped.w, h:wrapped.h };
     if (shape === "decision"){
       const h = Math.max(80, Math.round(fs * 3.15 + 38));
       const w = Math.max(160, h * 1.6, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) + 72);
@@ -982,6 +1062,16 @@ function documentBounds(nodes = state.nodes){
     x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
     x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
   }
+  if (nodes === state.nodes){
+    for (const e of state.edges){
+      if (e.routing !== "ortho" || !hasCustomOrthoBend(e)) continue;
+      const ep = edgeEndpoints(e);
+      if (!ep) continue;
+      const bend = orthoEdgeRoute(e, ep.pa, ep.pb).bend;
+      x0 = Math.min(x0, bend.x); y0 = Math.min(y0, bend.y);
+      x1 = Math.max(x1, bend.x); y1 = Math.max(y1, bend.y);
+    }
+  }
   return { x:x0, y:y0, w:x1-x0, h:y1-y0, cx:(x0+x1)/2, cy:(y0+y1)/2 };
 }
 function frameContainedNodes(frame){
@@ -1019,17 +1109,44 @@ function anchorPointsForRect(r){
     bl:{x:r.x,     y:r.y+r.h},   bc:{x:r.cx, y:r.y+r.h},   br:{x:r.x+r.w, y:r.y+r.h}
   };
 }
-/* Diamond anchors sit on the diamond itself rather than its bounding box. */
+function rayPolygonBoundary(r, ref, points){
+  const origin = {x:r.cx, y:r.cy};
+  const ray = {x:ref.x - origin.x, y:ref.y - origin.y};
+  const cross = (a, b) => a.x*b.y - a.y*b.x;
+  let best = null;
+  for (let i = 0; i < points.length; i++){
+    const a = points[i], b = points[(i + 1) % points.length];
+    const edge = {x:b.x - a.x, y:b.y - a.y};
+    const delta = {x:a.x - origin.x, y:a.y - origin.y};
+    const denom = cross(ray, edge);
+    if (Math.abs(denom) < 1e-9) continue;
+    const t = cross(delta, edge) / denom;
+    const u = cross(delta, ray) / denom;
+    if (t >= 0 && u >= 0 && u <= 1 && (!best || t < best.t))
+      best = {t, x:origin.x + ray.x*t, y:origin.y + ray.y*t};
+  }
+  return best ? {x:best.x, y:best.y} : {x:ref.x, y:ref.y};
+}
+/* Non-rectangular concept anchors sit on the rendered shape, not its bounding box. */
 function conceptBoundaryPoint(n, r, ref){
-  if (conceptShape(n) !== "decision") return { x:ref.x, y:ref.y };
+  const shape = conceptShape(n);
+  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)) return { x:ref.x, y:ref.y };
   const dx = ref.x - r.cx, dy = ref.y - r.cy;
   if (!dx && !dy) return { x:r.cx, y:r.cy };
+  if (shape === "circle"){
+    const scale = 1 / Math.sqrt((dx/(r.w/2))**2 + (dy/(r.h/2))**2);
+    return {x:r.cx + dx*scale, y:r.cy + dy*scale};
+  }
+  if (shape === "triangle")
+    return rayPolygonBoundary(r, ref, [
+      {x:r.cx, y:r.y}, {x:r.x+r.w, y:r.y+r.h}, {x:r.x, y:r.y+r.h}
+    ]);
   const scale = 1 / (Math.abs(dx) / (r.w/2) + Math.abs(dy) / (r.h/2));
   return { x:r.cx + dx * scale, y:r.cy + dy * scale };
 }
 function anchorPointsForNode(n, r = nodeRect(n)){
   const pts = anchorPointsForRect(r);
-  if (conceptShape(n) !== "decision") return pts;
+  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(conceptShape(n))) return pts;
   for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key]);
   return pts;
 }
@@ -1051,9 +1168,8 @@ function nodeAnchor(n, key, ref){
   const r = nodeRect(n);
   const pts = anchorPointsForNode(n, r);
   let k = key && pts[key] ? key : null;
-  /* Unpinned Decision connections use the actual diamond intersection, so an edge
-     never appears to begin in the empty corner of its rectangular bounding box. */
-  if (!k && conceptShape(n) === "decision"){
+  /* Unpinned non-rectangular concepts use their actual silhouette intersection. */
+  if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(conceptShape(n))){
     const p = conceptBoundaryPoint(n, r, ref);
     const dx = ref.x - r.cx, dy = ref.y - r.cy;
     const horiz = Math.abs(dx) / r.w >= Math.abs(dy) / r.h;
@@ -1287,7 +1403,10 @@ function curveEdgePath(pa, pb){
   const [c1x, c1y] = c(pa), [c2x, c2y] = c(pb);
   return `M ${pa.x} ${pa.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${pb.x} ${pb.y}`;
 }
-function orthoEdgePath(pa, pb){
+function hasCustomOrthoBend(e){
+  return !!e && (Number.isFinite(e.orthoX) || Number.isFinite(e.orthoY));
+}
+function orthoEdgeRoute(e, pa, pb){
   const stub = 12;
   const out = p => {
     if (p.side === "e") return { x:p.x + stub, y:p.y };
@@ -1296,16 +1415,66 @@ function orthoEdgePath(pa, pb){
     return { x:p.x, y:p.y - stub };
   };
   const a = out(pa), b = out(pb);
-  if (pa.side === "e" || pa.side === "w" || pb.side === "e" || pb.side === "w"){
+  const horizontal = pa.side === "e" || pa.side === "w" || pb.side === "e" || pb.side === "w";
+  if (horizontal){
     const mx = (a.x + b.x) / 2;
-    return `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${mx} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`;
+    const bend = {
+      x:Number.isFinite(e && e.orthoX) ? e.orthoX : mx,
+      y:Number.isFinite(e && e.orthoY) ? e.orthoY : b.y
+    };
+    const d = hasCustomOrthoBend(e)
+      ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${bend.x} V ${bend.y} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`
+      : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${mx} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`;
+    return { d, pa, pb, a, b, bend, horizontal, auto:{x:mx, y:b.y} };
   }
   const my = (a.y + b.y) / 2;
-  return `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${my} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`;
+  const bend = {
+    x:Number.isFinite(e && e.orthoX) ? e.orthoX : b.x,
+    y:Number.isFinite(e && e.orthoY) ? e.orthoY : my
+  };
+  const d = hasCustomOrthoBend(e)
+    ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${bend.y} H ${bend.x} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`
+    : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${my} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`;
+  return { d, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
+}
+function orthoEdgePath(pa, pb, e = null){
+  return orthoEdgeRoute(e, pa, pb).d;
+}
+function nearestSnap(value, candidates, threshold){
+  let best = null, distance = threshold + Number.EPSILON;
+  for (const candidate of candidates){
+    const nextDistance = Math.abs(value - candidate);
+    if (nextDistance <= distance){ best = candidate; distance = nextDistance; }
+  }
+  return best;
+}
+function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k){
+  if (!ep) return { x:point.x, y:point.y, snapX:null, snapY:null };
+  const route = orthoEdgeRoute(null, ep.pa, ep.pb);
+  const xs = [...new Set([route.pa.x, route.a.x, route.auto.x, route.b.x, route.pb.x])];
+  const ys = [...new Set([route.pa.y, route.a.y, route.auto.y, route.b.y, route.pb.y])];
+  const snapX = nearestSnap(point.x, xs, threshold);
+  const snapY = nearestSnap(point.y, ys, threshold);
+  return {
+    x:snapX == null ? Math.round(point.x) : snapX,
+    y:snapY == null ? Math.round(point.y) : snapY,
+    snapX,
+    snapY,
+    xCandidates:xs,
+    yCandidates:ys
+  };
+}
+function resetOrthoBend(e){
+  if (!hasCustomOrthoBend(e)) return false;
+  pushHistory();
+  delete e.orthoX;
+  delete e.orthoY;
+  render();
+  return true;
 }
 function edgePath(e, pa, pb){
   if (!pb){ pb = pa; pa = e; e = null; }
-  return e && e.routing === "ortho" ? orthoEdgePath(pa, pb) : curveEdgePath(pa, pb);
+  return e && e.routing === "ortho" ? orthoEdgePath(pa, pb, e) : curveEdgePath(pa, pb);
 }
 function edgeLineColor(e, colors = themeColors()){
   return normalizeHex(e && e.lineColor) || (e && e.kind === "link" ? colors.link : colors.edge);
@@ -1322,12 +1491,30 @@ function edgeDashArray(e){
   const style = edgeLineStyle(e);
   return style === "dash" ? "5 5" : style === "dot" ? "1 5" : "none";
 }
+const RELATION_GLYPH_LENGTH = 12;
+function relationGlyphs(e){
+  return e.kind === "1:1" ? ["one","one"]
+       : e.kind === "1:N" ? ["one","many"] : ["many","many"];
+}
+function notationVertex(p){
+  const dir = { e:[1,0], w:[-1,0], s:[0,1], n:[0,-1] }[p.side] || [1,0];
+  return { ...p, x:p.x + dir[0]*RELATION_GLYPH_LENGTH, y:p.y + dir[1]*RELATION_GLYPH_LENGTH };
+}
+/* A curved relation must meet a crow's foot at its vertex. Extending the Bezier
+   to the node would cross the fanned prongs at an angle near the endpoint. */
+function edgeRenderPath(e, ep){
+  if (e.kind === "link" || e.routing === "ortho") return edgePath(e, ep.pa, ep.pb);
+  const [fromGlyph, toGlyph] = relationGlyphs(e);
+  const pa = fromGlyph === "many" ? notationVertex(ep.pa) : ep.pa;
+  const pb = toGlyph === "many" ? notationVertex(ep.pb) : ep.pb;
+  return curveEdgePath(pa, pb);
+}
 /* crow's-foot / tick notation drawn along the anchor's outward normal */
 function drawNotation(g, p, glyph, color){
   const dir = { e:[1,0], w:[-1,0], s:[0,1], n:[0,-1] }[p.side];
   const nx = dir[0], ny = dir[1];          // outward from node
   const px = -ny, py = nx;                  // perpendicular
-  const L = 12, S = 6;
+  const L = RELATION_GLYPH_LENGTH, S = 6;
   if (glyph === "one"){                     // single tick at distance L
     const bx = p.x + nx*L, by = p.y + ny*L;
     el("line", {x1:bx - px*S, y1:by - py*S, x2:bx + px*S, y2:by + py*S,
@@ -1358,7 +1545,7 @@ function drawEdge(e){
   const color = edgeLineColor(e, t);
   const width = edgeLineWidth(e);
   const g = el("g", {"data-edge": e.id, cursor:"pointer"}, edgeLayer);
-  const d = edgePath(e, ep.pa, ep.pb);
+  const d = edgeRenderPath(e, ep);
   el("path", {d, fill:"none", stroke:"transparent", "stroke-width":14}, g); // hit area
   if (selected) el("path", {d, fill:"none", stroke:t.accent, "stroke-width":width + 3,
                             opacity:.28, "stroke-linecap":"round", "data-edge-selection":"1"}, g);
@@ -1368,8 +1555,7 @@ function drawEdge(e){
   if (e.startArrow === true) drawEdgeArrow(g, ep.pa, color, width, "start");
   if (e.endArrow === true) drawEdgeArrow(g, ep.pb, color, width, "end");
   if (!isLink){
-    const [gf, gt] = e.kind === "1:1" ? ["one","one"]
-                   : e.kind === "1:N" ? ["one","many"] : ["many","many"];
+    const [gf, gt] = relationGlyphs(e);
     drawNotation(g, ep.pa, gf, color);
     drawNotation(g, ep.pb, gt, color);
   }
@@ -1410,6 +1596,10 @@ function drawConceptShape(g, n, r, attrs){
   const shape = conceptShape(n);
   const common = { ...attrs, "data-node-shape":shape, "stroke-linejoin":"round" };
   if (shape === "process") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
+  if (shape === "square") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
+  if (shape === "circle") return el("ellipse", {cx:r.w/2, cy:r.h/2, rx:r.w/2, ry:r.h/2, ...common}, g);
+  if (shape === "triangle")
+    return el("path", {d:`M ${r.w/2} 0 L ${r.w} ${r.h} L 0 ${r.h} Z`, ...common}, g);
   if (shape === "terminator") return el("rect", {width:r.w, height:r.h, rx:r.h/2, ...common}, g);
   if (shape === "decision")
     return el("path", {d:`M ${r.w/2} 0 L ${r.w} ${r.h/2} L ${r.w/2} ${r.h} L 0 ${r.h/2} Z`, ...common}, g);
@@ -1482,15 +1672,29 @@ function drawNode(n){
     const fs = conceptFont(n);
     const fc = n.fontColor || autoInk(n.color || conceptColors()[0], t);
     const shape = conceptShape(n);
+    const wrapped = conceptWrappedLayout(n);
     drawConceptShape(g, n, r, {fill:n.color || conceptColors()[0],
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.2});
-    const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
-                "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
-    titleText.textContent = truncate(n.title || "Untitled", conceptTextWidth(shape, r.w), `600 ${fs}px Archivo, sans-serif`);
+    if (wrapped){
+      const titleText = el("text", {"text-anchor":"middle", fill:fc, "pointer-events":"none",
+                  "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600,
+                  "data-concept-wrapped":"1"}, g);
+      const firstY = wrapped.centerY - ((wrapped.lines.length - 1) * wrapped.lineH)/2 + fs*.35;
+      wrapped.lines.forEach((line, i) => {
+        const span = el("tspan", {x:r.w/2, y:firstY + i*wrapped.lineH, "data-concept-line":i+1}, titleText);
+        span.textContent = line;
+      });
+    } else {
+      const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
+                  "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
+      titleText.textContent = truncate(n.title || "Untitled", conceptTextWidth(shape, r.w), `600 ${fs}px Archivo, sans-serif`);
+    }
     if (n.notes){
-      const noteAtSide = shape === "decision" || shape === "terminator" || shape === "document";
-      el("circle", {cx:noteAtSide ? r.w - 14 : r.w - 12, cy:noteAtSide ? r.h/2 : 12,
+      const noteAtSide = shape === "decision" || shape === "terminator" || shape === "document" || shape === "circle";
+      const noteX = shape === "triangle" ? r.w*.72 : noteAtSide ? r.w - 14 : r.w - 12;
+      const noteY = shape === "triangle" ? r.h*.74 : noteAtSide ? r.h/2 : 12;
+      el("circle", {cx:noteX, cy:noteY,
                     r:3.2, fill:t.ink, opacity:.55}, g);
     }
   } else if (n.type === "note"){
@@ -1778,6 +1982,8 @@ function remapPayload(payload, offset = 36){
     e.id = edgeMap.get(src.id);
     e.from = nodeMap.get(src.from);
     e.to = nodeMap.get(src.to);
+    if (Number.isFinite(e.orthoX)) e.orthoX += offset;
+    if (Number.isFinite(e.orthoY)) e.orthoY += offset;
     if (e.fromField) e.fromField = fieldMap.get(e.fromField) || e.fromField;
     if (e.toField) e.toField = fieldMap.get(e.toField) || e.toField;
     if (Array.isArray(e.pairs)){
@@ -2143,6 +2349,44 @@ function drawEdgeGrips(){
   const ep = edgeEndpoints(e);
   if (!ep) return;
   const t = themeColors();
+  if (e.routing === "ortho"){
+    const route = orthoEdgeRoute(e, ep.pa, ep.pb);
+    const activeSnap = drag && drag.mode === "ortho-bend" && drag.edgeId === e.id ? drag.snap : null;
+    if (activeSnap && activeSnap.snapX != null){
+      const ys = [route.pa.y, route.pb.y, route.a.y, route.b.y, route.bend.y];
+      el("line", {x1:activeSnap.snapX, y1:Math.min(...ys)-36, x2:activeSnap.snapX, y2:Math.max(...ys)+36,
+                  stroke:t.accent, "stroke-width":1, "stroke-dasharray":"4 4", opacity:.72,
+                  "pointer-events":"none", "data-ortho-snap-x":"1"}, draftLayer);
+    }
+    if (activeSnap && activeSnap.snapY != null){
+      const xs = [route.pa.x, route.pb.x, route.a.x, route.b.x, route.bend.x];
+      el("line", {x1:Math.min(...xs)-36, y1:activeSnap.snapY, x2:Math.max(...xs)+36, y2:activeSnap.snapY,
+                  stroke:t.accent, "stroke-width":1, "stroke-dasharray":"4 4", opacity:.72,
+                  "pointer-events":"none", "data-ortho-snap-y":"1"}, draftLayer);
+    }
+    const bend = el("g", {"data-edgebend":e.id, cursor:"move", role:"button", tabindex:0,
+                           "aria-label":`Move orthogonal link waypoint at ${Math.round(route.bend.x)}, ${Math.round(route.bend.y)}`}, draftLayer);
+    el("circle", {cx:route.bend.x, cy:route.bend.y, r:14, fill:"transparent"}, bend);
+    el("rect", {x:route.bend.x-5, y:route.bend.y-5, width:10, height:10, rx:2,
+                fill:t.panel, stroke:t.accent, "stroke-width":2}, bend);
+    el("title", {}, bend).textContent = "Drag to adjust this orthogonal link";
+    bend.addEventListener("keydown", ev => {
+      const delta = {ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1]}[ev.key];
+      if (!delta) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const step = ev.shiftKey ? GRID_SNAP : 4;
+      const next = {x:route.bend.x + delta[0]*step, y:route.bend.y + delta[1]*step};
+      pushHistory("ortho-bend:" + e.id);
+      e.orthoX = next.x;
+      e.orthoY = next.y;
+      render();
+      requestAnimationFrame(() => {
+        const nextHandle = document.querySelector(`[data-edgebend="${e.id}"]`);
+        if (nextHandle) nextHandle.focus();
+      });
+    });
+  }
   for (const [end, p] of [["from", ep.pa], ["to", ep.pb]]){
     const gg = el("g", {"data-edgegrip": e.id, "data-gripend": end, cursor:"move"}, draftLayer);
     el("circle", {cx:p.x, cy:p.y, r:12, fill:"transparent"}, gg);
@@ -2255,6 +2499,7 @@ board.addEventListener("pointerdown", ev => {
   const handleEl = ev.target.closest("[data-handle]");
   const collapseEl = ev.target.closest("[data-collapse]");
   const resizeEl = ev.target.closest("[data-frame-resize]");
+  const edgeBendEl = ev.target.closest("[data-edgebend]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
@@ -2331,6 +2576,19 @@ board.addEventListener("pointerdown", ev => {
   }
 
   /* drag a selected edge's endpoint grip to move that end to another point */
+  if (edgeBendEl){
+    lastPress = null;
+    const e = edgeById(edgeBendEl.getAttribute("data-edgebend"));
+    const ep = e && edgeEndpoints(e);
+    if (!e || e.routing !== "ortho" || !ep) return;
+    const route = orthoEdgeRoute(e, ep.pa, ep.pb);
+    const start = clientToWorld(ev.clientX, ev.clientY);
+    drag = { mode:"ortho-bend", edgeId:e.id, start,
+             offset:{x:route.bend.x-start.x, y:route.bend.y-start.y},
+             original:{x:route.bend.x, y:route.bend.y}, moved:false, snap:null };
+    return;
+  }
+
   const gripEl = ev.target.closest("[data-edgegrip]");
   if (gripEl){
     lastPress = null;
@@ -2387,10 +2645,17 @@ board.addEventListener("pointerdown", ev => {
     const moveIds = new Set(selectionIds("node"));
     if (n && n.type === "frame") for (const child of frameContainedNodes(n)) moveIds.add(child.id);
     const ids = [...moveIds];
+    const moving = new Set(ids);
     drag = { mode:"node", id, start:w, starts: ids.map(nodeId => {
       const dn = nodeById(nodeId);
       return { id:nodeId, x:dn.x, y:dn.y };
-    }).filter(Boolean), moved:false };
+    }).filter(Boolean), bendStarts:state.edges
+      .filter(e => hasCustomOrthoBend(e) && moving.has(e.from) && moving.has(e.to))
+      .map(e => {
+        const ep = edgeEndpoints(e);
+        const bend = ep ? orthoEdgeRoute(e, ep.pa, ep.pb).bend : {x:e.orthoX, y:e.orthoY};
+        return {id:e.id, x:bend.x, y:bend.y};
+      }).filter(bend => Number.isFinite(bend.x) && Number.isFinite(bend.y)), moved:false };
     render();
     return;
   }
@@ -2439,6 +2704,18 @@ board.addEventListener("pointermove", ev => {
       n.x = dragSnap(start.x + dx);
       n.y = dragSnap(start.y + dy);
     }
+    const primaryStart = drag.starts.find(start => start.id === drag.id);
+    const primaryNode = primaryStart && nodeById(drag.id);
+    if (primaryStart && primaryNode){
+      const routeDx = primaryNode.x - primaryStart.x;
+      const routeDy = primaryNode.y - primaryStart.y;
+      for (const bendStart of drag.bendStarts){
+        const e = edgeById(bendStart.id);
+        if (!e) continue;
+        e.orthoX = bendStart.x + routeDx;
+        e.orthoY = bendStart.y + routeDy;
+      }
+    }
     if (state.nodes.length > 150) fastDragRender(drag.starts.map(s => s.id));
     else render();
   } else if (drag.mode === "frame-resize"){
@@ -2449,6 +2726,18 @@ board.addEventListener("pointermove", ev => {
     n.w = Math.round(Math.max(120, drag.w + (w.x - drag.start.x)) / 4) * 4;
     n.h = Math.round(Math.max(90, drag.h + (w.y - drag.start.y)) / 4) * 4;
     render();
+  } else if (drag.mode === "ortho-bend"){
+    const e = edgeById(drag.edgeId);
+    const ep = e && edgeEndpoints(e);
+    if (!e || !ep) return;
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    if (!drag.moved && Math.hypot(w.x - drag.start.x, w.y - drag.start.y) <= 1 / view.k) return;
+    if (!drag.moved){ pushHistory(); drag.moved = true; }
+    const snapped = snapOrthoBend(e, {x:w.x + drag.offset.x, y:w.y + drag.offset.y}, ep);
+    e.orthoX = snapped.x;
+    e.orthoY = snapped.y;
+    drag.snap = snapped;
+    drawOnly();
   } else if (drag.mode === "marquee"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     drag.current = w;
@@ -2529,6 +2818,9 @@ board.addEventListener("pointerup", ev => {
     const hit = looseHit(w);
     if (e && hit) reattachEdgeEnd(e, drag.end, hit, w);
     else render();   // dropped on empty canvas: no change, redraw grips
+  } else if (drag.mode === "ortho-bend"){
+    drag.snap = null;
+    render();
   }
   board.classList.remove("panning","connecting");
   drag = null;
@@ -2537,8 +2829,10 @@ board.addEventListener("pointercancel", ev => {
   activePointers.delete(ev.pointerId);
   clearLongPress();
   if (activePointers.size < 2) touchGesture = null;
+  const redrawBend = drag && drag.mode === "ortho-bend";
   drag = null;
   board.classList.remove("panning","connecting");
+  if (redrawBend) render();
 });
 
 board.addEventListener("wheel", ev => {
@@ -2949,20 +3243,30 @@ function closeShortcutModal(){
 /* -------------------------- Inspector ----------------------------- */
 const inspBody = document.getElementById("inspBody");
 const inspTitle = document.getElementById("inspTitle");
+let inspectorMount = inspBody;
+
+function appendInspector(node){
+  inspectorMount.appendChild(node);
+  return node;
+}
 
 function focusTitleInput(){
+  const n = singleSelectedNode();
+  if (n) openInspectorSection(n.type + ":basics");
   requestAnimationFrame(() => {
     const i = document.getElementById("titleInput");
     if (i){ i.focus(); i.select(); }
   });
 }
 function focusNoteInput(){
+  openInspectorSection("note:content");
   requestAnimationFrame(() => {
     const i = document.getElementById("noteContentInput");
     if (i) i.focus();
   });
 }
 function focusEdgeLabelInput(){
+  openInspectorSection("edge:label");
   requestAnimationFrame(() => {
     const i = document.getElementById("edgeLabelInput");
     if (i){ i.focus(); i.select(); }
@@ -3024,147 +3328,245 @@ function edgeStyleSelect(e, id, opts = {}){
   return s;
 }
 
+const inspectorDisclosureState = new Map();
+function openInspectorSection(key){
+  const details = document.querySelector(`[data-inspector-section="${key}"]`);
+  if (!details) return false;
+  details.open = true;
+  inspectorDisclosureState.set(key, true);
+  return true;
+}
+function disclosureChevron(){
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("disclosure-chevron");
+  const path = document.createElementNS(SVGNS, "path");
+  path.setAttribute("d", "M4 6l4 4 4-4");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.6");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
+}
+function setInspectorHeader(kind, name, opts = {}){
+  inspTitle.innerHTML = "";
+  const type = document.createElement("span");
+  type.className = "inspector-kind";
+  type.textContent = kind;
+  inspTitle.appendChild(type);
+  if (name){
+    const row = document.createElement("span");
+    row.className = "inspector-name-row";
+    if (opts.kind === "edge") row.appendChild(contextIcon("edge"));
+    else if (opts.kind === "node"){
+      const mark = document.createElement("span");
+      mark.className = "inspector-object-mark";
+      mark.style.background = opts.color || "transparent";
+      row.appendChild(mark);
+    }
+    const title = document.createElement("span");
+    title.className = "inspector-name";
+    title.textContent = name;
+    row.appendChild(title);
+    inspTitle.appendChild(row);
+  }
+}
+function inspectorSection(key, title, build, opts = {}){
+  const details = document.createElement("details");
+  details.className = "inspector-section";
+  details.setAttribute("data-inspector-section", key);
+  const stored = inspectorDisclosureState.get(key);
+  details.open = stored == null ? opts.open !== false : stored;
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  label.textContent = title;
+  summary.append(label, disclosureChevron());
+  const body = document.createElement("div");
+  body.className = "inspector-section-body";
+  details.append(summary, body);
+  appendInspector(details);
+  const previous = inspectorMount;
+  inspectorMount = body;
+  try { build(); } finally { inspectorMount = previous; }
+  details.addEventListener("toggle", () => inspectorDisclosureState.set(key, details.open));
+  return details;
+}
+function inspectorActions(buttons, danger, opts = {}){
+  const footer = document.createElement("div");
+  footer.className = "inspector-actions";
+  if (buttons.length || opts.inlineDanger){
+    const row = document.createElement("div");
+    row.className = "rowbtns";
+    for (const button of buttons) row.appendChild(button);
+    if (danger && opts.inlineDanger) row.appendChild(danger);
+    footer.appendChild(row);
+  }
+  if (danger && !opts.inlineDanger) footer.appendChild(danger);
+  appendInspector(footer);
+}
+function renderNodeTitleField(n){
+  frow(n.type === "table" ? "Table name" : "Title", () => {
+    const i = mkInput(n.title, v => {
+      n.title = v;
+      const headerName = document.querySelector("#inspTitle .inspector-name");
+      if (headerName) headerName.textContent = v;
+      drawOnly();
+    });
+    i.id = "titleInput";
+    if (n.type === "table"){
+      let prev = n.title;
+      i.addEventListener("focus", () => { prev = n.title; });
+      i.addEventListener("blur", () => {
+        if (tableNameConflict(n, n.title)){
+          showNoticeModal("Duplicate table name",
+            `A table named "${ident(n.title)}" already exists. Table names must be unique.`);
+          n.title = prev;
+          i.value = prev;
+          const headerName = document.querySelector("#inspTitle .inspector-name");
+          if (headerName) headerName.textContent = prev;
+          drawOnly();
+        }
+      });
+    }
+    return i;
+  });
+}
+function renderNodeNotesField(n){
+  frow("Notes", () => {
+    const t = document.createElement("textarea");
+    t.value = n.notes || "";
+    t.placeholder = "Add notes…";
+    t.addEventListener("focus", pushHistoryOnce());
+    t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
+    return t;
+  });
+}
+
 function renderInspector(){
   updateInspectorVisibility();
   inspBody.innerHTML = "";
-  if (!sel){ inspTitle.textContent = "Inspector"; renderHelp(); return; }
+  inspectorMount = inspBody;
+  if (!sel){ setInspectorHeader("Inspector"); renderHelp(); return; }
 
   if (sel.kind === "node"){
     if (selectionCount("node") > 1){ renderMultiInspector(); return; }
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
-    inspTitle.textContent = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame"
-                          : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note" : "Table node";
-
-    frow(n.type === "table" ? "Table name" : "Title", () => {
-      const i = mkInput(n.title, v => { n.title = v; drawOnly(); });
-      i.id = "titleInput";
-      if (n.type === "table"){
-        /* duplicate names are rejected on commit (issue #46); live typing may pass
-           through a conflicting prefix without nagging */
-        let prev = n.title;
-        i.addEventListener("focus", () => { prev = n.title; });
-        i.addEventListener("blur", () => {
-          if (tableNameConflict(n, n.title)){
-            showNoticeModal("Duplicate table name",
-              `A table named "${ident(n.title)}" already exists. Table names must be unique.`);
-            n.title = prev;
-            i.value = prev;
-            drawOnly();
-          }
-        });
-      }
-      return i;
-    });
+    const kind = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame"
+               : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note" : "Table node";
+    setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
 
     if (n.type === "frame"){
-      frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
-        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
-      frow("Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
-        (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
-      frow("Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
-        (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
+      inspectorSection("frame:basics", "Basics", () => renderNodeTitleField(n));
+      inspectorSection("frame:appearance", "Appearance", () => {
+        frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+      });
+      inspectorSection("frame:size", "Size", () => {
+        frow("Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
+        frow("Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
+      });
     } else if (n.type === "concept"){
-      frow("Shape", () => {
-        const s = document.createElement("select");
-        s.setAttribute("aria-label", "Flowchart shape");
-        for (const [value, label] of FLOWCHART_SHAPES){
-          const o = document.createElement("option");
-          o.value = value; o.textContent = label;
-          if (conceptShape(n) === value) o.selected = true;
-          s.appendChild(o);
-        }
-        s.addEventListener("change", () => { pushHistory(); setConceptShape(n, s.value); render(); });
-        return s;
+      inspectorSection("concept:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Shape", () => {
+          const s = document.createElement("select");
+          s.setAttribute("aria-label", "Flowchart shape");
+          for (const [value, label] of FLOWCHART_SHAPES){
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label;
+            if (conceptShape(n) === value) o.selected = true;
+            s.appendChild(o);
+          }
+          s.addEventListener("change", () => { pushHistory(); setConceptShape(n, s.value); render(); });
+          return s;
+        });
       });
-      frow("Notes", () => {
-        const t = document.createElement("textarea");
-        t.value = n.notes || "";
-        t.addEventListener("focus", pushHistoryOnce());
-        t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
-        return t;
+      inspectorSection("concept:appearance", "Appearance", () => {
+        frow("Color", () => swatches(conceptColors(), n.color,
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        frow("Text size", () => sizeStepper(conceptFont(n), 9, 48, 1,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+        frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
+          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       });
-      frow("Color", () => swatches(conceptColors(), n.color,
-        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
-      frow("Text size", () => sizeStepper(conceptFont(n), 9, 48, 1,
-        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      inspectorSection("concept:notes", "Notes", () => renderNodeNotesField(n), {open:false});
     } else if (n.type === "note"){
-      frow("Content (Markdown)", () => {
-        const t = document.createElement("textarea");
-        t.id = "noteContentInput";
-        t.rows = 10;
-        t.value = n.content || "";
-        t.placeholder = "Write a note…";
-        t.addEventListener("focus", pushHistoryOnce());
-        t.addEventListener("input", () => { n.content = t.value; drawOnly(); });
-        return t;
+      inspectorSection("note:basics", "Basics", () => renderNodeTitleField(n));
+      inspectorSection("note:content", "Content", () => {
+        frow("Markdown", () => {
+          const t = document.createElement("textarea");
+          t.id = "noteContentInput";
+          t.rows = 10;
+          t.value = n.content || "";
+          t.placeholder = "Write a note…";
+          t.addEventListener("focus", pushHistoryOnce());
+          t.addEventListener("input", () => { n.content = t.value; drawOnly(); });
+          return t;
+        });
+        const help = document.createElement("div");
+        help.className = "helper";
+        help.textContent = "Formatting: # heading, - bullet, - [ ] task, **bold**, _italic_, and `code`.";
+        appendInspector(help);
       });
-      const help = document.createElement("div");
-      help.className = "helper";
-      help.textContent = "Formatting: # heading, - bullet, - [ ] task, **bold**, _italic_, and `code`.";
-      inspBody.appendChild(help);
-      frow("Color", () => swatches(conceptColors(), n.color || conceptColors()[0],
-        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
-      frow("Width", () => sizeStepper(n.w || NOTE_W_DEFAULT, 220, 720, 20,
-        (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
-      frow("Text size", () => sizeStepper(noteFont(n), 10, 28, 1,
-        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      inspectorSection("note:appearance", "Appearance", () => {
+        frow("Color", () => swatches(conceptColors(), n.color || conceptColors()[0],
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        frow("Width", () => sizeStepper(n.w || NOTE_W_DEFAULT, 220, 720, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
+        frow("Text size", () => sizeStepper(noteFont(n), 10, 28, 1,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+        frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
+          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      });
     } else if (n.type === "todo"){
-      frow("Notes", () => {
-        const t = document.createElement("textarea");
-        t.value = n.notes || "";
-        t.addEventListener("focus", pushHistoryOnce());
-        t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
-        return t;
+      inspectorSection("todo:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("List display", () => mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed,
+          v => { n.collapsed = v; render(); }));
       });
-      frow("Color", () => swatches(conceptColors(), n.color || todoColorDefault(),
-        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
-      frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
-        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
-      frow("Collapsed", () => {
-        const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
-        return b;
+      inspectorSection("todo:appearance", "Appearance", () => {
+        frow("Color", () => swatches(conceptColors(), n.color || todoColorDefault(),
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+        frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
+          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       });
-      renderItemEditor(n);
+      inspectorSection("todo:notes", "Notes", () => renderNodeNotesField(n), {open:false});
+      inspectorSection("todo:items", "Items", () => renderItemEditor(n));
     } else {
-      frow("Notes", () => {
-        const t = document.createElement("textarea");
-        t.value = n.notes || "";
-        t.addEventListener("focus", pushHistoryOnce());
-        t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
-        return t;
+      inspectorSection("table:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Field display", () => mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed,
+          v => { n.collapsed = v; render(); }));
       });
-      frow("Header color", () => swatches(tableColors(), n.color,
-        (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
-      frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
-        (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
-      frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-        (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
-      frow("Collapsed", () => {
-        const b = mkFlag(n.collapsed ? "COLLAPSED" : "EXPANDED", !!n.collapsed, v => { n.collapsed = v; render(); });
-        return b;
+      inspectorSection("table:appearance", "Appearance", () => {
+        frow("Header color", () => swatches(tableColors(), n.color,
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+        frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
+          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       });
-      renderFieldEditor(n);
+      inspectorSection("table:notes", "Notes", () => renderNodeNotesField(n), {open:false});
+      inspectorSection("table:fields", "Fields", () => renderFieldEditor(n));
     }
 
-    const div = document.createElement("div");
-    div.className = "rowbtns";
-    div.appendChild(mkBtn("Duplicate", duplicateSelection));
-    if (n.type !== "frame") div.appendChild(mkBtn("Add linked concept  ⇥", addChildConcept));
-    inspBody.appendChild(div);
-    inspBody.appendChild(mkBtn("Delete node", deleteSelection, "dangerbtn"));
+    const actions = [mkBtn("Duplicate", duplicateSelection)];
+    if (n.type !== "frame") actions.push(mkBtn("Add linked concept  ⇥", addChildConcept));
+    inspectorActions(actions, mkBtn("Delete node", deleteSelection, "dangerbtn"));
 
   } else {
     const e = singleSelectedEdge();
     if (!e){ clearSelection(); renderHelp(); return; }
-    inspTitle.textContent = "Edge";
     const a = nodeById(e.from), b = nodeById(e.to);
+    setInspectorHeader("Edge", `${a.title} → ${b.title}`, {kind:"edge"});
     const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
       const rows = fid ? nodeRows(n) : null;
@@ -3175,9 +3577,9 @@ function renderInspector(){
     p.className = "helper";
     p.innerHTML = `<b>${endName(a, e.fromField)}</b> → <b>${endName(b, e.toField)}</b>` +
       (e.kind !== "link" ? `<br>Convention: <em>from</em> = the “one” side, <em>to</em> = the “many” side.` : "");
-    inspBody.appendChild(p);
-
-    if (!touchesLinkOnlyNode) frow("Type", () => {
+    inspectorSection("edge:connection", "Connection", () => {
+      appendInspector(p);
+      if (!touchesLinkOnlyNode) frow("Type", () => {
       const s = document.createElement("select");
       for (const k of ["link","1:1","1:N","N:M"]){
         const o = document.createElement("option");
@@ -3186,9 +3588,9 @@ function renderInspector(){
         s.appendChild(o);
       }
       s.addEventListener("change", () => { pushHistory(); e.kind = s.value; render(); });
-      return s;
-    });
-    frow("Routing", () => {
+        return s;
+      });
+      frow("Routing", () => {
       const s = document.createElement("select");
       for (const k of ["curve","ortho"]){
         const o = document.createElement("option");
@@ -3202,9 +3604,25 @@ function renderInspector(){
         else delete e.routing;
         render();
       });
-      return s;
+        return s;
+      });
+      if (e.routing === "ortho"){
+        const helper = document.createElement("div");
+        helper.className = "helper";
+        helper.textContent = "Drag the square waypoint on the canvas. It snaps to this link’s endpoint, stub, and midpoint coordinates.";
+        appendInspector(helper);
+        frow("Waypoint", () => {
+          const button = mkBtn("Reset to automatic", () => resetOrthoBend(e));
+          button.id = "edgeResetOrthoBend";
+          button.disabled = !hasCustomOrthoBend(e);
+          return button;
+        });
+      }
+      if (a.type === "table" && b.type === "table" && e.kind !== "link") renderPairEditor(a, b, e);
+      else renderEdgeEndControls(a, b, e);
     });
-    frow("Arrows", () => {
+    inspectorSection("edge:appearance", "Appearance", () => {
+      frow("Arrows", () => {
       const row = document.createElement("div");
       row.className = "edgearrowrow";
       const start = mkFlag("START", !!e.startArrow, on => { setEdgeArrow(e, "startArrow", on); render(); });
@@ -3213,110 +3631,98 @@ function renderInspector(){
       start.setAttribute("aria-label", "Toggle start arrow");
       end.setAttribute("aria-label", "Toggle end arrow");
       row.append(start, end);
-      return row;
-    });
-    frow("Line style", () => edgeStyleSelect(e, "edgeLineStyle"));
-    frow("Line width", () => sizeStepper(edgeLineWidth(e), 1, 8, .5,
-      (v, commit) => {
-        pushHistory("edge-width:"+e.id);
-        e.lineWidth = v;
-        commit ? render() : drawOnly();
-      }, { ariaLabel:"Line width" }));
-    frow("Line color", () => {
-      const control = swatches(tableColors(), edgeLineColor(e),
-        (c, commit) => {
-          pushHistory("edge-color:"+e.id);
-          e.lineColor = c;
-          commit ? render() : drawOnly();
-        });
-      control.id = "edgeLineColor";
-      return control;
-    });
-    if (a.type === "table" && b.type === "table" && e.kind !== "link") renderPairEditor(a, b, e);
-    else {
-      attachRow("From", a, e, "fromField");
-      attachRow("To",   b, e, "toField");
-    }
-    const firstPair = edgeFieldPairs(e)[0] || {};
-    if (!(firstPair.fromField || e.fromField)) anchorRow("From", e, "fromAnchor");
-    if (!(firstPair.toField || e.toField)) anchorRow("To", e, "toAnchor");
-    frow("Relationship", () => edgeRelationshipSelect(e, { id:"edgeRelationshipSelect", onCustom:focusEdgeLabelInput }));
-    frow("Label text", () => {
-      const i = mkInput(e.label, v => {
-        e.label = v;
-        const s = document.getElementById("edgeRelationshipSelect");
-        if (s) s.value = edgeRelationshipValue(v);
-        drawOnly();
+        return row;
       });
-      i.id = "edgeLabelInput";
-      i.placeholder = "Custom relationship text";
-      return i;
+      frow("Line style", () => edgeStyleSelect(e, "edgeLineStyle"));
+      frow("Line width", () => sizeStepper(edgeLineWidth(e), 1, 8, .5,
+        (v, commit) => {
+          pushHistory("edge-width:"+e.id);
+          e.lineWidth = v;
+          commit ? render() : drawOnly();
+        }, { ariaLabel:"Line width" }));
+      frow("Line color", () => {
+        const control = swatches(tableColors(), edgeLineColor(e),
+          (c, commit) => {
+            pushHistory("edge-color:"+e.id);
+            e.lineColor = c;
+            commit ? render() : drawOnly();
+          });
+        control.id = "edgeLineColor";
+        return control;
+      });
+    }, {open:false});
+    inspectorSection("edge:label", "Label", () => {
+      frow("Relationship", () => edgeRelationshipSelect(e, { id:"edgeRelationshipSelect", onCustom:focusEdgeLabelInput }));
+      frow("Label text", () => {
+        const i = mkInput(e.label, v => {
+          e.label = v;
+          const s = document.getElementById("edgeRelationshipSelect");
+          if (s) s.value = edgeRelationshipValue(v);
+          drawOnly();
+        });
+        i.id = "edgeLabelInput";
+        i.placeholder = "Custom relationship text";
+        return i;
+      });
     });
-
-    const div = document.createElement("div");
-    div.className = "rowbtns";
-    div.appendChild(mkBtn("Swap direction", () => {
+    inspectorActions([mkBtn("Swap direction", () => {
       pushHistory();
       swapEdgeDirection(e);
       render();
-    }));
-    div.appendChild(mkBtn("Delete edge", deleteSelection, "dangerbtn"));
-    inspBody.appendChild(div);
+    })], mkBtn("Delete edge", deleteSelection, "dangerbtn"), {inlineDanger:true});
   }
 }
 
 function renderMultiInspector(){
   const nodes = selectedNodes();
   const nonFrames = nodes.filter(n => n.type !== "frame");
-  inspTitle.textContent = `${nodes.length} nodes selected`;
-  const helper = document.createElement("div");
-  helper.className = "helper";
-  helper.textContent = "Bulk edits apply to every selected node.";
-  inspBody.appendChild(helper);
-  frow("Color", () => swatches([...conceptColors(), ...tableColors()], nodes[0].color,
-    (c, commit) => {
-      pushHistory("color:multi");
-      for (const n of nodes) n.color = c;
-      commit ? render() : drawOnly();
-    }));
-  if (nonFrames.length === nodes.length){
-    if (nodes.every(n => n.type === "concept")){
-      frow("Shape", () => {
-        const s = document.createElement("select");
-        s.setAttribute("aria-label", "Flowchart shape");
-        const current = conceptShape(nodes[0]);
-        for (const [value, label] of FLOWCHART_SHAPES){
-          const o = document.createElement("option");
-          o.value = value; o.textContent = label;
-          if (current === value) o.selected = true;
-          s.appendChild(o);
-        }
-        s.addEventListener("change", () => {
-          pushHistory();
-          for (const n of nodes) setConceptShape(n, s.value);
-          render();
-        });
-        return s;
-      });
-    }
-    frow("Text size", () => sizeStepper(nodeTextSize(nodes[0]),
-      8, 48, 1, (v, commit) => {
-        pushHistory("fs:multi");
-        for (const n of nodes) n.fontSize = clampNodeTextSize(n, v);
-        commit ? render() : drawOnly();
-      }));
-    frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
+  setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
+  inspectorSection("multi:appearance", "Appearance", () => {
+    const helper = document.createElement("div");
+    helper.className = "helper";
+    helper.textContent = "Changes apply to every selected node.";
+    appendInspector(helper);
+    frow("Color", () => swatches([...conceptColors(), ...tableColors()], nodes[0].color,
       (c, commit) => {
-        pushHistory("fc:multi");
-        for (const n of nodes) n.fontColor = c;
+        pushHistory("color:multi");
+        for (const n of nodes) n.color = c;
         commit ? render() : drawOnly();
       }));
-  }
-  const div = document.createElement("div");
-  div.className = "rowbtns";
-  div.appendChild(mkBtn("Duplicate", duplicateSelection));
-  div.appendChild(mkBtn("Delete", deleteSelection, "dangerbtn"));
-  inspBody.appendChild(div);
+    if (nonFrames.length === nodes.length){
+      if (nodes.every(n => n.type === "concept")){
+        frow("Shape", () => {
+          const s = document.createElement("select");
+          s.setAttribute("aria-label", "Flowchart shape");
+          const current = conceptShape(nodes[0]);
+          for (const [value, label] of FLOWCHART_SHAPES){
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label;
+            if (current === value) o.selected = true;
+            s.appendChild(o);
+          }
+          s.addEventListener("change", () => {
+            pushHistory();
+            for (const n of nodes) setConceptShape(n, s.value);
+            render();
+          });
+          return s;
+        });
+      }
+      frow("Text size", () => sizeStepper(nodeTextSize(nodes[0]),
+        8, 48, 1, (v, commit) => {
+          pushHistory("fs:multi");
+          for (const n of nodes) n.fontSize = clampNodeTextSize(n, v);
+          commit ? render() : drawOnly();
+        }));
+      frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
+        (c, commit) => {
+          pushHistory("fc:multi");
+          for (const n of nodes) n.fontColor = c;
+          commit ? render() : drawOnly();
+        }));
+    }
+  });
+  inspectorActions([mkBtn("Duplicate", duplicateSelection)], mkBtn("Delete", deleteSelection, "dangerbtn"));
 }
 
 /* swap an edge's direction, carrying row bindings and pinned anchor points */
@@ -3372,6 +3778,26 @@ function attachRow(which, node, e, key){
     });
     return s;
   });
+}
+function renderEdgeEndControls(a, b, e){
+  const grid = document.createElement("div");
+  grid.className = "edge-end-grid";
+  appendInspector(grid);
+  const firstPair = edgeFieldPairs(e)[0] || {};
+  const ends = [
+    {which:"From", node:a, fieldKey:"fromField", anchorKey:"fromAnchor", bound:firstPair.fromField || e.fromField},
+    {which:"To", node:b, fieldKey:"toField", anchorKey:"toAnchor", bound:firstPair.toField || e.toField}
+  ];
+  const previous = inspectorMount;
+  for (const end of ends){
+    const column = document.createElement("div");
+    column.className = "edge-end-column";
+    grid.appendChild(column);
+    inspectorMount = column;
+    attachRow(end.which, end.node, e, end.fieldKey);
+    if (!end.bound) anchorRow(end.which, e, end.anchorKey);
+  }
+  inspectorMount = previous;
 }
 function setEdgePairs(e, pairs){
   e.pairs = pairs.filter(p => p.fromField || p.toField);
@@ -3439,16 +3865,11 @@ function renderPairEditor(a, b, e){
     setEdgePairs(e, next);
     render();
   }));
-  inspBody.appendChild(wrapD);
+  appendInspector(wrapD);
 }
 
 function renderFieldEditor(n){
   const wrapD = document.createElement("div");
-  const lab = document.createElement("label");
-  lab.textContent = "Fields";
-  lab.style.cssText = "font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px";
-  wrapD.appendChild(lab);
-
   n.fields.forEach((f, i) => {
     const row = document.createElement("div");
     row.className = "fieldrow";
@@ -3488,7 +3909,7 @@ function renderFieldEditor(n){
     n.fields.push({id: uid(), name:"field_" + (n.fields.length+1), type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
     render();
   }));
-  inspBody.appendChild(wrapD);
+  appendInspector(wrapD);
 
   if (!document.getElementById("sqltypes")){
     const dl = document.createElement("datalist");
@@ -3508,11 +3929,6 @@ function moveField(n, i, d){
 
 function renderItemEditor(n){
   const wrapD = document.createElement("div");
-  const lab = document.createElement("label");
-  lab.textContent = "Items";
-  lab.style.cssText = "font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px";
-  wrapD.appendChild(lab);
-
   n.items.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "fieldrow";
@@ -3530,7 +3946,7 @@ function renderItemEditor(n){
   });
 
   wrapD.appendChild(mkBtn("+ Add item", () => addTodoItem(n)));
-  inspBody.appendChild(wrapD);
+  appendInspector(wrapD);
 }
 
 function renderHelp(){
@@ -3565,7 +3981,7 @@ function renderHelp(){
     <p style="margin-top:12px"><b>Persistence</b><br>
     Use <b>Open</b>, <b>Save</b>, and <b>Save As</b> for local document workflow. Unsupported browsers fall back to <b>JSON ↓</b> downloads and <b>Import</b> uploads.
     <b>SQL</b> drafts CREATE TABLE statements from table nodes and 1:N edges.</p>`;
-  inspBody.appendChild(h);
+  appendInspector(h);
 }
 
 /* small builders */
@@ -3575,7 +3991,7 @@ function frow(label, buildCtrl){
   const l = document.createElement("label");
   l.textContent = label;
   d.append(l, buildCtrl());
-  inspBody.appendChild(d);
+  appendInspector(d);
 }
 function mkInput(val, onInput){
   const i = document.createElement("input");
@@ -4298,7 +4714,7 @@ function serializedSvg(asShown = true){
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
   if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y]").forEach(h => h.remove());
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
   clone.insertBefore(style, clone.firstChild);
@@ -4442,7 +4858,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
   const bg = g.querySelector("[data-bg]");
   const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
   if (bg) bg.setAttribute("fill", bgColor);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y]").forEach(h => h.remove());
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
@@ -4468,19 +4884,80 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
 const ctxMenu = document.createElement("div");
 ctxMenu.id = "ctxMenu";
 document.body.appendChild(ctxMenu);
+let ctxAnchor = {x:0, y:0};
+const ctxDisclosureState = new Map();
 
 function hideCtx(){ ctxMenu.style.display = "none"; ctxMenu.innerHTML = ""; }
+function fitCtxMenu(){
+  requestAnimationFrame(() => {
+    const r = ctxMenu.getBoundingClientRect();
+    ctxMenu.style.left = (ctxAnchor.x + r.width > window.innerWidth ? Math.max(4, ctxAnchor.x - r.width) : ctxAnchor.x) + "px";
+    ctxMenu.style.top = (ctxAnchor.y + r.height > window.innerHeight ? Math.max(4, ctxAnchor.y - r.height) : ctxAnchor.y) + "px";
+  });
+}
 function showCtx(x, y, build){
   ctxMenu.innerHTML = "";
   build(ctxMenu);
+  ctxAnchor = {x, y};
   ctxMenu.style.display = "block";
   ctxMenu.style.left = x + "px";
   ctxMenu.style.top  = y + "px";
-  requestAnimationFrame(() => {                       // flip if overflowing viewport
-    const r = ctxMenu.getBoundingClientRect();
-    if (r.right  > window.innerWidth)  ctxMenu.style.left = Math.max(4, x - r.width)  + "px";
-    if (r.bottom > window.innerHeight) ctxMenu.style.top  = Math.max(4, y - r.height) + "px";
+  fitCtxMenu();
+}
+function contextIcon(kind){
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("ctxicon");
+  const shape = document.createElementNS(SVGNS, kind === "edge" ? "path" : "rect");
+  if (kind === "edge"){
+    shape.setAttribute("d", "M3 4c7 0 7 12 14 12M3 4l3-2M3 4l2 3M17 16l-3-2M17 16l-2 2");
+    shape.setAttribute("fill", "none");
+  } else {
+    shape.setAttribute("x", "3"); shape.setAttribute("y", "4");
+    shape.setAttribute("width", "14"); shape.setAttribute("height", "12"); shape.setAttribute("rx", "3");
+    shape.setAttribute("fill", "none");
+  }
+  shape.setAttribute("stroke", "currentColor");
+  shape.setAttribute("stroke-width", "1.4");
+  shape.setAttribute("stroke-linecap", "round");
+  shape.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(shape);
+  return svg;
+}
+function ctxHeader(parent, kind, title){
+  const header = document.createElement("div");
+  header.className = "ctxhead";
+  header.appendChild(contextIcon(kind));
+  const copy = document.createElement("div");
+  const type = document.createElement("small");
+  type.textContent = kind === "edge" ? "Edge" : kind === "canvas" ? "Canvas" : "Node";
+  const name = document.createElement("strong");
+  name.textContent = title;
+  copy.append(type, name);
+  header.appendChild(copy);
+  parent.appendChild(header);
+}
+function ctxGroup(parent, key, label, build, opts = {}){
+  const details = document.createElement("details");
+  details.className = "ctxgroup";
+  details.setAttribute("data-ctx-group", key);
+  const stored = ctxDisclosureState.get(key);
+  details.open = stored == null ? !!opts.open : stored;
+  const summary = document.createElement("summary");
+  const text = document.createElement("span");
+  text.textContent = label;
+  summary.append(text, disclosureChevron());
+  const body = document.createElement("div");
+  body.className = "ctxgroupbody";
+  build(body);
+  details.append(summary, body);
+  details.addEventListener("toggle", () => {
+    ctxDisclosureState.set(key, details.open);
+    fitCtxMenu();
   });
+  parent.appendChild(details);
+  return details;
 }
 function ctxItem(parent, label, fn, opts = {}){
   const b = document.createElement("button");
@@ -4560,63 +5037,69 @@ function nodeMenu(n, x, y){
     for (const t of targets) fn(t);
   };
   showCtx(x, y, m => {
-    ctxLabel(m, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
-              : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
-    ctxSwatches(m, (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
-      (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
-    if (n.type === "concept"){
-      ctxLabel(m, "Shape");
-      ctxShapeRow(m, n, targets);
-    }
-    if (n.type !== "frame"){
-      ctxLabel(m, "Text size");
-      ctxSizeRow(m, n, targets);
-      ctxLabel(m, "Text color");
-      ctxSwatches(m, fontColors(), n.fontColor || "#16232F",
-        (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
-    }
-    ctxSep(m);
+    ctxHeader(m, "node", targets.length > 1 ? `${targets.length} nodes selected` : n.title || "Untitled");
+    ctxGroup(m, "node:appearance", "Appearance", panel => {
+      ctxLabel(panel, n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
+                : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
+      ctxSwatches(panel, (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
+        (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
+      if (n.type === "concept"){
+        ctxLabel(panel, "Shape");
+        ctxShapeRow(panel, n, targets);
+      }
+      if (n.type !== "frame"){
+        ctxLabel(panel, "Text size");
+        ctxSizeRow(panel, n, targets);
+        ctxLabel(panel, "Text color");
+        ctxSwatches(panel, fontColors(), n.fontColor || "#16232F",
+          (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
+      }
+    });
     ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
     if (n.type === "note") ctxItem(m, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
     if (n.type !== "frame") ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
-    if (n.type === "table"){
-      ctxItem(m, "Add related table (1:N)", () => addRelatedTable(n.id));
-      ctxItem(m, n.collapsed ? "Expand fields" : "Collapse fields", () => {
-        pushHistory();
-        n.collapsed = !n.collapsed;
-        render();
+    if (n.type === "table" || n.type === "todo"){
+      ctxGroup(m, "node:content", n.type === "table" ? "Table content" : "List content", panel => {
+        if (n.type === "table"){
+          ctxItem(panel, "Add related table (1:N)", () => addRelatedTable(n.id));
+          ctxItem(panel, n.collapsed ? "Expand fields" : "Collapse fields", () => {
+            pushHistory();
+            n.collapsed = !n.collapsed;
+            render();
+          });
+          ctxItem(panel, "Add field", () => {
+            pushHistory();
+            n.fields.push({id: uid(), name:"field_" + (n.fields.length+1),
+                           type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
+            render();
+          });
+        } else {
+          ctxItem(panel, n.collapsed ? "Expand items" : "Collapse items", () => {
+            pushHistory();
+            n.collapsed = !n.collapsed;
+            render();
+          });
+          ctxItem(panel, "Add item", () => addTodoItem(n));
+        }
       });
-      ctxItem(m, "Add field", () => {
-        pushHistory();
-        n.fields.push({id: uid(), name:"field_" + (n.fields.length+1),
-                       type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
-        render();
-      });
-    }
-    if (n.type === "todo"){
-      ctxItem(m, n.collapsed ? "Expand items" : "Collapse items", () => {
-        pushHistory();
-        n.collapsed = !n.collapsed;
-        render();
-      });
-      ctxItem(m, "Add item", () => addTodoItem(n));
     }
     ctxItem(m, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
-    if (targets.length >= 2){
-      ctxSep(m);
-      ctxLabel(m, "Align");
-      ctxItem(m, "Align left", () => alignSelection("left"));
-      ctxItem(m, "Align right", () => alignSelection("right"));
-      ctxItem(m, "Align top", () => alignSelection("top"));
-      ctxItem(m, "Align bottom", () => alignSelection("bottom"));
-      ctxItem(m, "Center horizontally", () => alignSelection("centerX"));
-      ctxItem(m, "Center vertically", () => alignSelection("centerY"));
-      ctxItem(m, "Distribute horizontally", () => alignSelection("distributeX"));
-      ctxItem(m, "Distribute vertically", () => alignSelection("distributeY"));
-    }
-    ctxSep(m);
-    ctxItem(m, "Bring to front", () => reorderNode(n.id, true));
-    ctxItem(m, "Send to back",   () => reorderNode(n.id, false));
+    ctxGroup(m, "node:arrange", "Arrange", panel => {
+      if (targets.length >= 2){
+        ctxLabel(panel, "Align selection");
+        ctxItem(panel, "Align left", () => alignSelection("left"));
+        ctxItem(panel, "Align right", () => alignSelection("right"));
+        ctxItem(panel, "Align top", () => alignSelection("top"));
+        ctxItem(panel, "Align bottom", () => alignSelection("bottom"));
+        ctxItem(panel, "Center horizontally", () => alignSelection("centerX"));
+        ctxItem(panel, "Center vertically", () => alignSelection("centerY"));
+        ctxItem(panel, "Distribute horizontally", () => alignSelection("distributeX"));
+        ctxItem(panel, "Distribute vertically", () => alignSelection("distributeY"));
+        ctxSep(panel);
+      }
+      ctxItem(panel, "Bring to front", () => reorderNode(n.id, true));
+      ctxItem(panel, "Send to back",   () => reorderNode(n.id, false));
+    });
     ctxSep(m);
     ctxItem(m, "Delete node", deleteSelection, {kbd:"Del", danger:true});
   });
@@ -4625,83 +5108,96 @@ function edgeMenu(e, x, y){
   const a = nodeById(e.from), b = nodeById(e.to);
   const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
   showCtx(x, y, m => {
-    if (!touchesLinkOnlyNode){
-      ctxLabel(m, "Relation type");
-      const row = document.createElement("div");
-      row.className = "kindrow";
-      for (const k of ["link","1:1","1:N","N:M"]){
-        const btn = document.createElement("button");
-        btn.textContent = k;
-        if (e.kind === k) btn.className = "on";
-        btn.addEventListener("click", () => { hideCtx(); pushHistory(); e.kind = k; render(); });
-        row.appendChild(btn);
+    ctxHeader(m, "edge", `${a.title} → ${b.title}`);
+    ctxGroup(m, "edge:relationship", "Relationship", panel => {
+      if (!touchesLinkOnlyNode){
+        ctxLabel(panel, "Relation type");
+        const row = document.createElement("div");
+        row.className = "kindrow";
+        for (const k of ["link","1:1","1:N","N:M"]){
+          const btn = document.createElement("button");
+          btn.textContent = k;
+          if (e.kind === k) btn.className = "on";
+          btn.addEventListener("click", () => { hideCtx(); pushHistory(); e.kind = k; render(); });
+          row.appendChild(btn);
+        }
+        panel.appendChild(row);
       }
-      m.appendChild(row);
-    }
-    ctxLabel(m, "Relationship");
-    const relationshipRow = document.createElement("div");
-    relationshipRow.className = "swrow";
-    relationshipRow.appendChild(edgeRelationshipSelect(e, {
-      close:hideCtx,
-      onCustom:() => startInlineEditor("edge", e.id)
-    }));
-    m.appendChild(relationshipRow);
-    ctxLabel(m, "Arrows");
-    const arrowRow = document.createElement("div");
-    arrowRow.className = "kindrow";
-    for (const [key, label] of [["startArrow","Start"],["endArrow","End"]]){
-      const btn = document.createElement("button");
-      btn.textContent = label;
-      btn.setAttribute("data-edge-arrow-toggle", key === "startArrow" ? "start" : "end");
-      if (e[key]) btn.className = "on";
-      btn.addEventListener("click", () => {
-        hideCtx();
-        pushHistory();
-        setEdgeArrow(e, key, !e[key]);
-        render();
-      });
-      arrowRow.appendChild(btn);
-    }
-    m.appendChild(arrowRow);
-    ctxLabel(m, "Line style");
-    const styleRow = document.createElement("div");
-    styleRow.className = "swrow";
-    styleRow.appendChild(edgeStyleSelect(e, null, {close:hideCtx}));
-    m.appendChild(styleRow);
-    ctxLabel(m, "Line width");
-    const widthRow = document.createElement("div");
-    widthRow.className = "swrow";
-    widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
-      (v, commit) => {
-        pushHistory("edge-width:"+e.id);
-        e.lineWidth = v;
-        if (commit){ hideCtx(); render(); } else drawOnly();
-      }, {ariaLabel:"Line width"}));
-    m.appendChild(widthRow);
-    ctxLabel(m, "Line color");
-    ctxSwatches(m, tableColors(), edgeLineColor(e),
-      (c, commit) => {
-        pushHistory("edge-color:"+e.id);
-        e.lineColor = c;
-        commit ? render() : drawOnly();
-      });
-    ctxLabel(m, "Routing");
-    const routeRow = document.createElement("div");
-    routeRow.className = "kindrow";
-    for (const k of ["curve","ortho"]){
-      const b = document.createElement("button");
-      b.textContent = k === "curve" ? "Curve" : "Ortho";
-      if ((e.routing || "curve") === k) b.className = "on";
-      b.addEventListener("click", () => {
-        hideCtx();
-        pushHistory();
-        if (k === "ortho") e.routing = "ortho"; else delete e.routing;
-        render();
-      });
-      routeRow.appendChild(b);
-    }
-    m.appendChild(routeRow);
-    ctxSep(m);
+      ctxLabel(panel, "Relationship preset");
+      const relationshipRow = document.createElement("div");
+      relationshipRow.className = "swrow";
+      relationshipRow.appendChild(edgeRelationshipSelect(e, {
+        close:hideCtx,
+        onCustom:() => startInlineEditor("edge", e.id)
+      }));
+      panel.appendChild(relationshipRow);
+    });
+    ctxGroup(m, "edge:appearance", "Appearance", panel => {
+      ctxLabel(panel, "Arrows");
+      const arrowRow = document.createElement("div");
+      arrowRow.className = "kindrow";
+      for (const [key, label] of [["startArrow","Start"],["endArrow","End"]]){
+        const btn = document.createElement("button");
+        btn.textContent = label;
+        btn.setAttribute("data-edge-arrow-toggle", key === "startArrow" ? "start" : "end");
+        if (e[key]) btn.className = "on";
+        btn.addEventListener("click", () => {
+          hideCtx();
+          pushHistory();
+          setEdgeArrow(e, key, !e[key]);
+          render();
+        });
+        arrowRow.appendChild(btn);
+      }
+      panel.appendChild(arrowRow);
+      ctxLabel(panel, "Line style");
+      const styleRow = document.createElement("div");
+      styleRow.className = "swrow";
+      styleRow.appendChild(edgeStyleSelect(e, null, {close:hideCtx}));
+      panel.appendChild(styleRow);
+      ctxLabel(panel, "Line width");
+      const widthRow = document.createElement("div");
+      widthRow.className = "swrow";
+      widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
+        (v, commit) => {
+          pushHistory("edge-width:"+e.id);
+          e.lineWidth = v;
+          if (commit){ hideCtx(); render(); } else drawOnly();
+        }, {ariaLabel:"Line width"}));
+      panel.appendChild(widthRow);
+      ctxLabel(panel, "Line color");
+      ctxSwatches(panel, tableColors(), edgeLineColor(e),
+        (c, commit) => {
+          pushHistory("edge-color:"+e.id);
+          e.lineColor = c;
+          commit ? render() : drawOnly();
+        });
+    });
+    ctxGroup(m, "edge:routing", "Routing", panel => {
+      const routeRow = document.createElement("div");
+      routeRow.className = "kindrow";
+      for (const k of ["curve","ortho"]){
+        const button = document.createElement("button");
+        button.textContent = k === "curve" ? "Curve" : "Ortho";
+        if ((e.routing || "curve") === k) button.className = "on";
+        button.addEventListener("click", () => {
+          hideCtx();
+          pushHistory();
+          if (k === "ortho") e.routing = "ortho"; else delete e.routing;
+          render();
+        });
+        routeRow.appendChild(button);
+      }
+      panel.appendChild(routeRow);
+      if (e.routing === "ortho"){
+        ctxLabel(panel, "Waypoint");
+        const note = document.createElement("div");
+        note.className = "ctxhint";
+        note.textContent = "Drag the square handle on the canvas; each axis snaps independently.";
+        panel.appendChild(note);
+        if (hasCustomOrthoBend(e)) ctxItem(panel, "Reset to automatic", () => resetOrthoBend(e));
+      }
+    });
     ctxItem(m, "Swap direction", () => {
       pushHistory();
       swapEdgeDirection(e);
@@ -4714,6 +5210,8 @@ function edgeMenu(e, x, y){
 }
 function canvasMenu(w, x, y){
   showCtx(x, y, m => {
+    ctxHeader(m, "canvas", "Create or navigate");
+    ctxLabel(m, "Create");
     ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
     ctxItem(m, "Add rich note here", () => addNode("note", w.x - NOTE_W_DEFAULT/2, w.y - 60), {kbd:"N"});
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
@@ -4845,6 +5343,9 @@ window.__T = {
   nodeRect,
   conceptShape,
   setConceptShape,
+  wrapConceptTitle,
+  conceptWrappedLayout,
+  conceptContainsPoint,
   get FLOWCHART_SHAPES(){ return FLOWCHART_SHAPES.map(([id, label]) => ({id, label})); },
   get EDGE_RELATIONSHIPS(){ return EDGE_RELATIONSHIPS.map(([name, meaning]) => ({name, meaning})); },
   nodeMenu,
@@ -4866,6 +5367,12 @@ window.__T = {
   setEdgePairs,
   edgeEndpoints,
   edgePath,
+  edgeRenderPath,
+  notationVertex,
+  orthoEdgeRoute,
+  snapOrthoBend,
+  hasCustomOrthoBend,
+  resetOrthoBend,
   lintDocument,
   openLintModal,
   closeLintModal,
@@ -4932,6 +5439,7 @@ window.__T = {
   get renderStats(){ return renderStats; },
   selectNode(id){ setSelection("node", id); render(); },
   cloneSelectionPayload,
+  remapPayload,
   copySelection,
   pasteSelection,
   deleteSelection,
