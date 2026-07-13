@@ -1200,6 +1200,47 @@ not cross the fanned prongs; orthogonal paths are unchanged; automated and brows
 
 ---
 
+**SCH-075 · Align curved relation starts with cardinality ticks · P1 · S · Done 2026-07-13**
+
+Give every curved relation a short straight segment between a one-side table anchor and its
+cardinality tick. Begin or end the Bezier at the tick's outward vertex, tangent to that segment,
+so the perpendicular bar never intersects a bend. Many-side endpoints continue to terminate at
+their crow's-foot vertices, and orthogonal routes retain their existing geometry.
+
+AC: curved 1:N and 1:1 starts cross their one-side ticks on straight segments; 1:1 ends receive the
+same treatment; N:M crow's feet remain clean; orthogonal paths are unchanged; automated and browser
+visual QA pass.
+
+---
+
+**SCH-076 · Follow orthogonal routes with edge labels · P1 · S · Done 2026-07-13**
+
+Place every orthogonal edge label at the halfway point of the actual Manhattan path by cumulative
+segment length. Recalculate that position during waypoint drags so a custom detour carries its label
+onto the reshaped route instead of leaving it at the static midpoint between the endpoint nodes.
+Curved links retain their existing endpoint-midpoint label placement.
+
+AC: automatic and custom orthogonal labels sit on their routed paths; moving a waypoint updates the
+label during the drag; reset and subsequent endpoint movement recalculate it; curved label placement
+is unchanged; automated and browser interaction QA pass.
+
+---
+
+**SCH-077 · Horizontal and vertical swimlanes · P1 · M · Done 2026-07-13**
+
+Add swimlanes as structural canvas primitives behind edges and content nodes. A horizontal lane is
+a wide band with a title rail on the left; a vertical lane is a tall band with a title header at the
+top. Lane titles are editable, body and title backgrounds are independently configurable, and lanes
+move contained content using the same center-point containment rule as frames. Lanes are intentionally
+not link endpoints.
+
+AC: toolbar, canvas menu, and command palette create both orientations; inspector and right-click menu
+edit orientation and independent colors; resize, move-with-contents, duplicate, undo/redo, JSON round-trip,
+SVG export, minimap, and counts work; invalid imported lane values are normalized; automated and browser
+interaction QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.

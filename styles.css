@@ -56,6 +56,8 @@
   .menubtn{border-color:transparent;background:none;font-weight:600;padding:6px 10px;border-radius:6px}
   .menubtn:hover,.menu.open .menubtn{background:var(--hover);border-color:transparent}
   .menu.open .menubtn{color:var(--ink)}
+  .lane-add-btn{border-color:var(--line);background:var(--panel);font-weight:600;padding:6px 11px}
+  .lane-add-btn:hover,.menu.open .lane-add-btn{border-color:var(--line);background:var(--hover)}
   .menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:208px;
              display:none;flex-direction:column;padding:5px;background:var(--panel);
              border:1px solid var(--line);border-radius:9px;

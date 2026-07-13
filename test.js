@@ -795,15 +795,18 @@ function closeEnough(a, b, msg){
     assert.strictEqual(T.state.edges.find(e => e.id === edge.id).routing, "ortho", "routing key imports");
   }
 
-  /* SCH-074 — curved crow's-foot paths stop at the glyph vertex */
+  /* SCH-074/SCH-075 — curved cardinality paths meet glyphs on straight stubs */
   {
     const { window } = makeDom();
     const T = window.__T;
     const edge = T.state.edges.find(e => e.kind === "1:N");
     const ep = T.edgeEndpoints(edge);
+    const oneVertex = T.notationVertex(ep.pa);
     const manyVertex = T.notationVertex(ep.pb);
     const curved = T.edgeRenderPath(edge, ep);
     assert(curved.includes(" C "), "1:N relation keeps curved routing");
+    assert(curved.startsWith(`M ${ep.pa.x} ${ep.pa.y} L ${oneVertex.x} ${oneVertex.y} C `),
+      "curved 1:N stroke reaches the one-side tick on a straight stub before bending");
     assert(curved.endsWith(`${manyVertex.x} ${manyVertex.y}`),
       "curved 1:N stroke ends at the many-side crow's-foot vertex");
     assert(!curved.endsWith(`${ep.pb.x} ${ep.pb.y}`),
@@ -811,12 +814,18 @@ function closeEnough(a, b, msg){
     T.setSelection("edge", edge.id);
     T.render();
     assert.strictEqual(window.document.querySelector(`[data-edge="${edge.id}"] [data-edge-line]`).getAttribute("d"), curved,
-      "rendered relation uses the trimmed curved path");
+      "rendered relation uses the glyph-aligned curved path");
+
+    edge.kind = "1:1";
+    const oneToOne = T.edgeRenderPath(edge, ep);
+    assert(oneToOne.startsWith(`M ${ep.pa.x} ${ep.pa.y} L ${oneVertex.x} ${oneVertex.y} C `),
+      "curved 1:1 stroke uses a straight stub through its start tick");
+    assert(oneToOne.endsWith(`${manyVertex.x} ${manyVertex.y} L ${ep.pb.x} ${ep.pb.y}`),
+      "curved 1:1 stroke uses a straight stub through its end tick");
 
     edge.kind = "N:M";
-    const fromVertex = T.notationVertex(ep.pa);
     const manyToMany = T.edgeRenderPath(edge, ep);
-    assert(manyToMany.startsWith(`M ${fromVertex.x} ${fromVertex.y}`),
+    assert(manyToMany.startsWith(`M ${oneVertex.x} ${oneVertex.y}`),
       "curved N:M stroke starts at the first crow's-foot vertex");
     assert(manyToMany.endsWith(`${manyVertex.x} ${manyVertex.y}`),
       "curved N:M stroke ends at the second crow's-foot vertex");
@@ -836,6 +845,17 @@ function closeEnough(a, b, msg){
     const automatic = T.orthoEdgeRoute(null, ep.pa, ep.pb);
     assert.strictEqual(T.edgePath(edge, ep.pa, ep.pb), automatic.d,
       "untouched orthogonal edge keeps the legacy automatic route");
+    const lengthMidpoint = T.polylineMidpoint([{x:0,y:0}, {x:0,y:10}, {x:30,y:10}]);
+    assert.strictEqual(lengthMidpoint.x, 10, "polyline midpoint follows cumulative segment length on x");
+    assert.strictEqual(lengthMidpoint.y, 10, "polyline midpoint follows cumulative segment length on y");
+    const automaticLabel = T.edgeLabelPoint(edge, ep);
+    const previewEdge = {...edge, orthoX:automatic.bend.x + 160, orthoY:automatic.bend.y + 120};
+    const previewRoute = T.orthoEdgeRoute(previewEdge, ep.pa, ep.pb);
+    const previewLabel = T.edgeLabelPoint(previewEdge, ep);
+    assert.deepStrictEqual(previewLabel, T.polylineMidpoint(previewRoute.points),
+      "custom orthogonal label uses the routed polyline midpoint");
+    assert.notDeepStrictEqual(previewLabel, automaticLabel,
+      "moving the waypoint changes the orthogonal label position");
 
     const snapped = T.snapOrthoBend(edge,
       {x:automatic.a.x + 3, y:automatic.a.y - 3}, ep, 6);
@@ -858,6 +878,12 @@ function closeEnough(a, b, msg){
       {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
     assert.strictEqual(edge.orthoX, automatic.a.x, "pointer drag snaps waypoint x");
     assert.strictEqual(edge.orthoY, automatic.a.y, "pointer drag snaps waypoint y");
+    const draggedLabel = T.edgeLabelPoint(edge, ep);
+    const labelText = window.document.querySelector(`[data-edge="${edge.id}"] [data-edge-label]`);
+    assert.strictEqual(Number(labelText.getAttribute("x")), draggedLabel.x,
+      "waypoint drag redraws the label at the routed midpoint x");
+    assert.strictEqual(Number(labelText.getAttribute("y")), draggedLabel.y + 3.5,
+      "waypoint drag redraws the label at the routed midpoint y");
     assert.strictEqual(T.undoDepth, beforeUndo + 1, "waypoint drag creates one undo step");
     assert(window.document.querySelector("[data-ortho-snap-x]"), "x snap draws an alignment guide");
     assert(window.document.querySelector("[data-ortho-snap-y]"), "y snap draws an alignment guide");
@@ -904,6 +930,9 @@ function closeEnough(a, b, msg){
     assert.strictEqual(edge.orthoY, undefined, "inspector reset clears waypoint y");
     assert.strictEqual(T.edgePath(edge, ep.pa, ep.pb), automatic.d,
       "reset restores the automatic orthogonal route");
+    const resetLabel = T.edgeLabelPoint(edge, ep);
+    assert.strictEqual(resetLabel.x, automaticLabel.x, "reset restores the automatic label x");
+    assert.strictEqual(resetLabel.y, automaticLabel.y, "reset restores the automatic label y");
 
     handle = window.document.querySelector(`[data-edgebend="${edge.id}"]`);
     const keyboardStart = T.orthoEdgeRoute(edge, ep.pa, ep.pb).bend.x;
@@ -1022,6 +1051,109 @@ function closeEnough(a, b, msg){
     assert(parsed.nodes.some(n => n.type === "frame" && n.w && n.h), "frame JSON round-trips dimensions");
     T.importDocText(JSON.stringify(parsed));
     assert(T.state.nodes.some(n => n.type === "frame" && n.title === "Area"), "frame imports from JSON");
+  }
+
+  /* SCH-077 — horizontal and vertical swimlanes */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    T.importDocText(JSON.stringify({ version:1, nextId:5, nodes:[
+      { id:"lane1", type:"swimlane", orientation:"horizontal", x:0, y:0, title:"Delivery",
+        color:"#dceafe", titleColor:"#2456e6", w:600, h:180 },
+      { id:"n2", type:"concept", x:180, y:60, title:"Inside", notes:"", color:"#FFE9A8" },
+      { id:"n3", type:"concept", x:700, y:60, title:"Outside", notes:"", color:"#CFE8FF" }
+    ], edges:[] }));
+    T.setView({ x:0, y:0, k:1 });
+    T.render();
+    const lane = T.state.nodes.find(n => n.id === "lane1");
+    const inside = T.state.nodes.find(n => n.id === "n2");
+    const outside = T.state.nodes.find(n => n.id === "n3");
+
+    assert(T.isStructuralNode(lane), "swimlanes are structural canvas objects");
+    assert.strictEqual(T.swimlaneOrientation(lane), "horizontal", "horizontal orientation is retained");
+    sameList(T.containerContainedNodes(lane).map(n => n.id), ["n2"], "swimlane detects contained node centers");
+    const laneGroup = doc.querySelector('[data-swimlane="lane1"]');
+    assert(laneGroup && laneGroup.getAttribute("data-orientation") === "horizontal", "horizontal swimlane renders");
+    assert(laneGroup.querySelector('[data-swimlane-body]').getAttribute("fill") === "#dceafe", "body uses its own background");
+    assert(laneGroup.querySelector('[data-swimlane-title-band]').getAttribute("fill") === "#2456e6", "title uses its own background");
+    assert.strictEqual(laneGroup.closest("#frameLayer").id, "frameLayer", "swimlanes render behind edges and nodes");
+    assert.strictEqual(laneGroup.querySelector("[data-handle]"), null, "swimlanes do not expose link handles");
+    assert.strictEqual(T.hitTest({x:20, y:120}), null, "hitTest ignores swimlanes for link targeting");
+    T.addEdge({id:"lane1"}, {id:"n2"});
+    assert.strictEqual(T.state.edges.length, 0, "swimlanes cannot be edge endpoints");
+
+    const beforeDepth = T.undoDepth;
+    const before = { laneX:lane.x, insideX:inside.x, outsideX:outside.x };
+    firePointer(window, laneGroup, "pointerdown", {clientX:10, clientY:10});
+    firePointer(window, doc.getElementById("board"), "pointermove", {clientX:58, clientY:34});
+    firePointer(window, doc.getElementById("board"), "pointerup", {clientX:58, clientY:34});
+    assert.strictEqual(T.undoDepth, beforeDepth + 1, "swimlane drag creates one undo entry");
+    assert(lane.x > before.laneX && inside.x > before.insideX, "swimlane drag moves contained content");
+    assert.strictEqual(outside.x, before.outsideX, "swimlane drag leaves outside content alone");
+    T.undo();
+
+    T.selectNode("lane1");
+    const titleInput = doc.getElementById("titleInput");
+    titleInput.value = "Product delivery";
+    titleInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(T.state.nodes.find(n => n.id === "lane1").title, "Product delivery", "lane title is editable in the inspector");
+    const bodyWell = doc.querySelector("#swimlaneBodyColor input[type=color]");
+    bodyWell.value = "#c20029";
+    bodyWell.dispatchEvent(new window.Event("change", {bubbles:true}));
+    const titleWell = doc.querySelector("#swimlaneTitleColor input[type=color]");
+    titleWell.value = "#007873";
+    titleWell.dispatchEvent(new window.Event("change", {bubbles:true}));
+    const edited = T.state.nodes.find(n => n.id === "lane1");
+    assert.strictEqual(edited.color, "#c20029", "body background changes independently");
+    assert.strictEqual(edited.titleColor, "#007873", "title background changes independently");
+
+    const orientation = doc.getElementById("swimlaneOrientation");
+    orientation.value = "vertical";
+    orientation.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(edited.orientation, "vertical", "inspector changes swimlane orientation");
+    assert.strictEqual(doc.querySelector('[data-swimlane="lane1"]').getAttribute("data-orientation"), "vertical",
+      "orientation change updates rendered geometry");
+
+    T.nodeMenu(edited, 10, 10);
+    const menuText = doc.getElementById("ctxMenu").textContent;
+    assert(menuText.includes("Body background") && menuText.includes("Title background"),
+      "right-click menu exposes independent swimlane colors");
+    assert(menuText.includes("Horizontal lane") && menuText.includes("Vertical lane"),
+      "right-click menu exposes orientation choices");
+
+    const parsed = JSON.parse(T.serializeDocument());
+    const saved = parsed.nodes.find(n => n.id === "lane1");
+    assert.strictEqual(saved.orientation, "vertical", "JSON saves swimlane orientation");
+    assert.strictEqual(saved.color, "#c20029", "JSON saves swimlane body background");
+    assert.strictEqual(saved.titleColor, "#007873", "JSON saves swimlane title background");
+    const svg = T.serializedSvg(true);
+    assert(svg.includes("data-swimlane-body") && svg.includes("data-swimlane-title-band"), "SVG export includes swimlane artwork");
+    assert(!svg.includes("data-frame-resize"), "SVG export removes the swimlane resize handle");
+    assert(doc.getElementById("countLabel").textContent.includes("1 lane"), "footer counts swimlanes separately");
+
+    T.importDocText(JSON.stringify({ version:1, nextId:2, nodes:[
+      {id:"bad", type:"swimlane", orientation:"diagonal", x:0, y:0, title:"", color:"nope", titleColor:"#xyz", w:-2, h:0}
+    ], edges:[] }));
+    const normalized = T.state.nodes[0];
+    assert.strictEqual(normalized.orientation, "horizontal", "invalid imported orientation falls back safely");
+    assert.strictEqual(normalized.color, "#DCEAFE", "invalid imported body background is normalized");
+    assert.strictEqual(normalized.titleColor, "#2456E6", "invalid imported title background is normalized");
+    assert(T.nodeRect(normalized).w >= 260 && T.nodeRect(normalized).h >= 100, "invalid imported dimensions are clamped");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    for (const id of ["btnAddSwimlane","btnAddHorizontalLane","btnAddVerticalLane"])
+      assert(doc.getElementById(id), `swimlane toolbar control #${id} exists`);
+    doc.getElementById("btnAddHorizontalLane").click();
+    doc.getElementById("btnAddVerticalLane").click();
+    sameList(T.state.nodes.filter(n => n.type === "swimlane").map(T.swimlaneOrientation), ["horizontal","vertical"],
+      "toolbar creates both swimlane orientations");
+    const commands = T.paletteItems().filter(item => item.type === "command").map(item => item.command);
+    assert(commands.includes("addHorizontalLane") && commands.includes("addVerticalLane"),
+      "command palette exposes both swimlane orientations");
   }
 
   /* SCH-020 — extended field metadata */
@@ -2041,7 +2173,8 @@ function closeEnough(a, b, msg){
     for (const id of ["btnNew","btnOpen","btnSave","btnSaveAs","btnExportJSON","btnImportJSON",
                       "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
                       "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept",
-                      "btnAddTable","btnAddTodo","btnAddFrame","btnUndo","btnRedo","btnFit",
+                      "btnAddTable","btnAddTodo","btnAddFrame","btnAddSwimlane","btnAddHorizontalLane",
+                      "btnAddVerticalLane","btnUndo","btnRedo","btnFit",
                       "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup",
                       "btnAlignMenu","btnAlignTop","btnAlignMiddle","btnAlignBottom",
                       "btnAlignLeft","btnAlignCenter","btnAlignRight"])
@@ -2049,7 +2182,7 @@ function closeEnough(a, b, msg){
 
     // menus: open, switch, outside-close, Escape-close without nuking selection
     const menus = [...doc.querySelectorAll("header .menu")];
-    assert.strictEqual(menus.length, 4, "toolbar exposes File / Export / Layout / Align menus");
+    assert.strictEqual(menus.length, 5, "toolbar exposes File / Export / Layout / Align / Lane menus");
     const [fileMenu, exportMenu] = menus;
     fileMenu.querySelector(".menubtn").click();
     assert(fileMenu.classList.contains("open"), "clicking a menu trigger opens its panel");
