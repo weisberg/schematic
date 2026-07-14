@@ -1156,6 +1156,115 @@ function closeEnough(a, b, msg){
       "command palette exposes both swimlane orientations");
   }
 
+  /* SCH-078 — plain text with optional shapes */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:4, nodes:[
+      {id:"txt", type:"text", x:0, y:0, title:"Diagram title", color:"#cfe8ff", fontSize:24, w:260},
+      {id:"idea", type:"concept", x:420, y:90, title:"Linked idea", notes:"", color:"#FFE9A8"}
+    ], edges:[]}));
+    T.setView({x:0, y:0, k:1});
+    T.clearSelection();
+    T.render();
+    const textNode = T.state.nodes.find(n => n.id === "txt");
+    assert.strictEqual(T.textBoxShape(textNode), "none", "plain text defaults to no visible box");
+    assert(T.nodeRect(textNode).w < textNode.w, "short no-box text uses a tight hit and link boundary");
+    let textGroup = doc.querySelector('[data-text-box="txt"]');
+    assert(textGroup, "plain text renders as its own canvas primitive");
+    assert.strictEqual(textGroup.getAttribute("data-text-shape"), "none", "render records the no-box shape");
+    assert.strictEqual(textGroup.querySelector('[data-text-hit]').getAttribute("stroke"), "none",
+      "unselected no-box text has no visible outline");
+    assert.strictEqual(textGroup.querySelector('[data-plain-text]').textContent, "Diagram title", "plain text content renders");
+    assert(textGroup.querySelector('[data-handle="txt"][data-anchor="mr"]').classList.contains("anchorhandle"),
+      "no-box link handle stays hidden until hover or selection");
+
+    T.selectNode("txt");
+    assert(doc.getElementById("inspTitle").textContent.includes("Plain text"), "inspector identifies the plain-text primitive");
+    const titleInput = doc.getElementById("titleInput");
+    titleInput.value = "Customer journey overview";
+    titleInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(textNode.title, "Customer journey overview", "inspector edits the text content");
+    const shapeSelect = doc.getElementById("textBoxShape");
+    sameList([...shapeSelect.options].map(o => o.value), T.TEXT_BOX_SHAPES.map(s => s.id),
+      "text shape selector exposes no-box and every standard shape");
+    const bgWell = doc.querySelector('#textBoxBackground input[type="color"]');
+    bgWell.value = "#c20029";
+    bgWell.dispatchEvent(new window.Event("change", {bubbles:true}));
+    const inkWell = doc.querySelector('#textBoxTextColor input[type="color"]');
+    inkWell.value = "#ffffff";
+    inkWell.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(textNode.color, "#c20029", "shape background is editable");
+    assert.strictEqual(textNode.fontColor, "#ffffff", "plain-text color is editable");
+
+    shapeSelect.value = "circle";
+    shapeSelect.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(T.textBoxShape(textNode), "circle", "inspector applies an arbitrary standard shape");
+    const circleRect = T.nodeRect(textNode);
+    assert.strictEqual(circleRect.w, circleRect.h, "circle text box keeps a circular aspect ratio");
+    textGroup = doc.querySelector('[data-text-box="txt"]');
+    assert(textGroup.querySelector('ellipse[data-text-shape-surface="circle"]'), "circle text box renders a circle surface");
+    assert(textGroup.querySelectorAll('[data-text-line]').length > 1, "shaped text wraps within the available shape area");
+    assert.strictEqual(T.hitTest({x:textNode.x + 2, y:textNode.y + 2}), null,
+      "circle text box hit testing ignores transparent bounding-box corners");
+    T.addEdge({id:"txt"}, {id:"idea"});
+    assert.strictEqual(T.state.edges.length, 1, "plain text links to other nodes");
+    assert.strictEqual(T.state.edges[0].kind, "link", "plain text creates a freeform link rather than a data relation");
+    assert(T.edgeEndpoints(T.state.edges[0]).pa.x > textNode.x + circleRect.w*.9,
+      "links meet the rendered circle silhouette");
+    for (const {id} of T.TEXT_BOX_SHAPES.filter(shape => shape.id !== "none")){
+      T.setTextBoxShape(textNode, id);
+      T.render();
+      assert(doc.querySelector(`[data-text-box="txt"] [data-text-shape-surface="${id}"]`),
+        `plain text renders the ${id} shape`);
+    }
+    T.setTextBoxShape(textNode, "circle");
+    T.render();
+
+    T.nodeMenu(textNode, 10, 10);
+    const menuText = doc.getElementById("ctxMenu").textContent;
+    for (const label of ["Shape background","No box (text only)","Maximum width","Text size","Text color","Edit text"])
+      assert(menuText.includes(label), `right-click menu exposes ${label}`);
+
+    T.setTextBoxShape(textNode, "none");
+    T.selectNode("txt");
+    const svg = T.serializedSvg(true);
+    assert(svg.includes("data-plain-text"), "SVG export retains plain text");
+    assert(!svg.includes("data-text-selection"), "SVG export removes the no-box editing outline");
+    const saved = JSON.parse(T.serializeDocument()).nodes.find(n => n.id === "txt");
+    assert.strictEqual(saved.shape, undefined, "no-box shape stays compact in JSON");
+    assert.strictEqual(saved.color, "#c20029", "JSON saves the optional shape background");
+    assert.strictEqual(saved.fontColor, "#ffffff", "JSON saves plain-text color");
+    T.duplicateSelection();
+    const copies = T.state.nodes.filter(n => n.type === "text");
+    assert.strictEqual(copies.length, 2, "plain text duplicates like other nodes");
+    assert(copies.every(n => n.title === "Customer journey overview"), "duplicate preserves text content");
+
+    T.importDocText(JSON.stringify({version:1, nextId:2, nodes:[
+      {id:"bad", type:"text", x:0, y:0, title:"", shape:"starburst", color:"nope", fontColor:"invalid", fontSize:500, w:-5}
+    ], edges:[]}));
+    const normalized = T.state.nodes[0];
+    assert.strictEqual(normalized.title, "Text", "empty imported plain text receives a usable fallback");
+    assert.strictEqual(T.textBoxShape(normalized), "none", "invalid imported shape falls back to no box");
+    assert.strictEqual(normalized.color, "#CFE8FF", "invalid imported background receives a safe default");
+    assert.strictEqual(normalized.fontColor, undefined, "invalid imported text color is removed");
+    assert.strictEqual(normalized.fontSize, 72, "imported text size is clamped");
+    assert.strictEqual(normalized.w, 80, "imported maximum width is clamped");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    assert(doc.getElementById("btnAddText"), "toolbar exposes the plain-text primitive");
+    assert(T.SHORTCUTS.some(s => s.keys === "X" && /plain text/i.test(s.title)), "X shortcut is registered for plain text");
+    doc.getElementById("btnAddText").click();
+    assert(T.state.nodes.some(n => n.type === "text"), "toolbar creates plain text");
+    assert(T.paletteItems().some(item => item.command === "addText"), "command palette exposes plain text creation");
+    firePointer(window, doc.getElementById("board"), "contextmenu", {clientX:1100, clientY:700});
+    assert(doc.getElementById("ctxMenu").textContent.includes("Add plain text here"),
+      "canvas right-click menu exposes plain text creation");
+  }
+
   /* SCH-020 — extended field metadata */
   {
     const { window } = makeDom();
@@ -2172,7 +2281,7 @@ function closeEnough(a, b, msg){
     // every historical toolbar action keeps its id (handlers bind by id)
     for (const id of ["btnNew","btnOpen","btnSave","btnSaveAs","btnExportJSON","btnImportJSON",
                       "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
-                      "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept",
+                      "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept","btnAddText","btnAddNote",
                       "btnAddTable","btnAddTodo","btnAddFrame","btnAddSwimlane","btnAddHorizontalLane",
                       "btnAddVerticalLane","btnUndo","btnRedo","btnFit",
                       "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup",
