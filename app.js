@@ -49,6 +49,8 @@ const FLOWCHART_SHAPES = [
   ["square", "Square"]
 ];
 const FLOWCHART_SHAPE_SET = new Set(FLOWCHART_SHAPES.map(([id]) => id));
+const TEXT_BOX_SHAPES = [["none", "No box (text only)"], ...FLOWCHART_SHAPES];
+const TEXT_BOX_SHAPE_SET = new Set(TEXT_BOX_SHAPES.map(([id]) => id));
 const WRAPPED_CONCEPT_SHAPES = new Set(["triangle", "circle", "square"]);
 const CUSTOM_BOUNDARY_CONCEPT_SHAPES = new Set(["decision", "triangle", "circle"]);
 const EDGE_RELATIONSHIPS = [
@@ -72,6 +74,7 @@ const EDGE_RELATIONSHIPS = [
 const EDGE_CUSTOM_RELATIONSHIP = "__custom__";
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
+const TEXT_FS_DEFAULT = 24, TEXT_W_DEFAULT = 260;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const SWIMLANE_DEFAULT = {
   bodyColor:"#DCEAFE", titleColor:"#2456E6",
@@ -79,7 +82,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.9.0";
+const APP_VERSION = "v1.10.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const THEME = {
   light: {
@@ -217,6 +220,7 @@ const SHORTCUTS = [
   { id:"palette", keys:"Ctrl/Cmd+K", title:"Quick jump / command palette" },
   { id:"help", keys:"?", title:"Shortcut cheat sheet" },
   { id:"concept", keys:"C", title:"Add concept" },
+  { id:"text", keys:"X", title:"Add plain text" },
   { id:"note", keys:"N", title:"Add rich note" },
   { id:"table", keys:"T", title:"Add table" },
   { id:"todo", keys:"D", title:"Add to-do list" },
@@ -427,7 +431,7 @@ function nodeRows(n){
   if (n.type === "todo") return n.items;
   return null;
 }
-function linkOnlyNode(n){ return !!n && (n.type === "todo" || n.type === "note"); }
+function linkOnlyNode(n){ return !!n && (n.type === "todo" || n.type === "note" || n.type === "text"); }
 /* field-level references: edges may carry fromField / toField (row ids) */
 function ensureFieldIds(){
   for (const n of state.nodes){
@@ -446,9 +450,14 @@ function cleanFieldRefs(fid){
     }
   }
 }
-function conceptContainsPoint(n, r, point){
-  if (!n || n.type !== "concept") return true;
-  const shape = conceptShape(n);
+function visualNodeShape(n){
+  if (n && n.type === "concept") return conceptShape(n);
+  if (n && n.type === "text") return textBoxShape(n);
+  return null;
+}
+function nodeContainsPoint(n, r, point){
+  const shape = visualNodeShape(n);
+  if (!shape || shape === "none") return true;
   const x = point.x - r.x, y = point.y - r.y;
   if (shape === "circle"){
     const dx = (x - r.w/2) / (r.w/2), dy = (y - r.h/2) / (r.h/2);
@@ -461,13 +470,16 @@ function conceptContainsPoint(n, r, point){
   }
   return true;
 }
+function conceptContainsPoint(n, r, point){
+  return !n || n.type !== "concept" ? true : nodeContainsPoint(n, r, point);
+}
 /* topmost node (and row, for tables/todos) under a world point */
 function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
     if (isStructuralNode(n)) continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
-    if (!conceptContainsPoint(n, r, w)) continue;
+    if (!nodeContainsPoint(n, r, w)) continue;
     let field = null;
     const rows = n.collapsed ? null : nodeRows(n);
     if (rows && rows.length){
@@ -576,6 +588,15 @@ function cleanNodeForDocument(n){
     out.color = normalizeHex(out.color) || SWIMLANE_DEFAULT.bodyColor;
     out.titleColor = normalizeHex(out.titleColor) || SWIMLANE_DEFAULT.titleColor;
   }
+  if (out.type === "text"){
+    const shape = textBoxShape(out);
+    if (shape === "none") delete out.shape; else out.shape = shape;
+    out.color = normalizeHex(out.color) || CONCEPT_COLORS[1];
+    const fontColor = normalizeHex(out.fontColor);
+    if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
+    out.fontSize = textBoxFont(out);
+    out.w = clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
+  }
   if (!out.notes) out.notes = out.notes || "";
   return out;
 }
@@ -620,14 +641,24 @@ function applyDocument(d, opts = {}){
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
   for (const n of state.nodes){
-    if (!n || n.type !== "swimlane") continue;
-    n.orientation = swimlaneOrientation(n);
-    const defaults = swimlaneDefaults(n);
-    n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Lane";
-    n.color = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
-    n.titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
-    n.w = clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
-    n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
+    if (!n) continue;
+    if (n.type === "swimlane"){
+      n.orientation = swimlaneOrientation(n);
+      const defaults = swimlaneDefaults(n);
+      n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Lane";
+      n.color = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
+      n.titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
+      n.w = clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
+      n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
+    } else if (n.type === "text"){
+      n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Text";
+      setTextBoxShape(n, n.shape);
+      n.color = normalizeHex(n.color) || CONCEPT_COLORS[1];
+      const fontColor = normalizeHex(n.fontColor);
+      if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
+      n.fontSize = textBoxFont(n);
+      n.w = clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
+    }
   }
   for (const e of state.edges){
     for (const key of ["orthoX", "orthoY"]){
@@ -847,10 +878,13 @@ window.addEventListener("beforeunload", ev => {
 function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; return Math.min(hi, Math.max(lo, v)); }
 function conceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
 function noteFont(n){ return clampSize(n.fontSize || NOTE_FS_DEFAULT, 10, 28); }
-function nodeTextSize(n){ return n.type === "concept" ? conceptFont(n) : n.type === "note" ? noteFont(n) : tableMetrics(n).base; }
+function textBoxFont(n){ return clampSize(n.fontSize || TEXT_FS_DEFAULT, 10, 72); }
+function nodeTextSize(n){ return n.type === "concept" ? conceptFont(n) : n.type === "note" ? noteFont(n)
+  : n.type === "text" ? textBoxFont(n) : tableMetrics(n).base; }
 function clampNodeTextSize(n, value){
   return n.type === "concept" ? clampSize(value, 9, 48)
-       : n.type === "note" ? clampSize(value, 10, 28) : clampSize(value, 8, 28);
+       : n.type === "note" ? clampSize(value, 10, 28)
+       : n.type === "text" ? clampSize(value, 10, 72) : clampSize(value, 8, 28);
 }
 function richNoteInline(text){
   const source = String(text || "");
@@ -962,6 +996,15 @@ function setConceptShape(n, shape){
   if (next === "process") delete n.shape;
   else n.shape = next;
 }
+function textBoxShape(n){
+  return n && n.type === "text" && TEXT_BOX_SHAPE_SET.has(n.shape) ? n.shape : "none";
+}
+function setTextBoxShape(n, shape){
+  if (!n || n.type !== "text") return;
+  const next = TEXT_BOX_SHAPE_SET.has(shape) ? shape : "none";
+  if (next === "none") delete n.shape;
+  else n.shape = next;
+}
 function wrapConceptTitle(text, font, maxWidth){
   const words = String(text || "Untitled").trim().split(/\s+/).filter(Boolean);
   const lines = [];
@@ -1010,6 +1053,50 @@ function conceptWrappedLayout(n){
 function conceptTextWidth(shape, w){
   return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
 }
+function limitedWrappedLines(text, font, maxWidth, maxLines){
+  const lines = wrapConceptTitle(text, font, maxWidth);
+  if (lines.length <= maxLines) return lines;
+  const visible = lines.slice(0, maxLines);
+  let last = visible[visible.length - 1] || "";
+  while (last && textW(last + "…", font) > maxWidth) last = last.slice(0, -1);
+  visible[visible.length - 1] = (last || "").trimEnd() + "…";
+  return visible;
+}
+function textBoxLayout(n){
+  const shape = textBoxShape(n);
+  const fs = textBoxFont(n);
+  const font = `600 ${fs}px Archivo, sans-serif`;
+  const lineH = Math.ceil(fs * 1.28);
+  const maxW = clampSize(n.w || TEXT_W_DEFAULT, 80, 720);
+  const title = n.title || "Text";
+  if (shape === "none"){
+    const lines = wrapConceptTitle(title, font, maxW);
+    const contentW = Math.max(...lines.map(line => textW(line, font)), fs);
+    const w = Math.max(32, Math.min(maxW, Math.ceil(contentW + 12)));
+    const h = Math.max(lineH + 8, lines.length * lineH + 8);
+    return {shape, fs, font, lineH, lines, w, h, centerY:h/2, maxWidth:maxW};
+  }
+  const w = Math.max(120, maxW);
+  let h, widthRatio, heightRatio, centerY;
+  if (shape === "triangle"){
+    h = Math.round(w * .866); widthRatio = .46; heightRatio = .38; centerY = h * .64;
+  } else if (shape === "circle" || shape === "square"){
+    h = w; widthRatio = shape === "circle" ? .64 : .74;
+    heightRatio = shape === "circle" ? .58 : .72; centerY = h/2;
+  } else if (shape === "decision"){
+    h = Math.max(120, Math.round(w * .6)); widthRatio = .48; heightRatio = .52; centerY = h/2;
+  } else {
+    widthRatio = shape === "data" || shape === "manualInput" ? .72 : .82;
+    const maxWidth = Math.max(48, Math.round(w * widthRatio));
+    const draftLines = wrapConceptTitle(title, font, maxWidth);
+    h = Math.max(shape === "terminator" ? 64 : 56, draftLines.length * lineH + 32) + (shape === "document" ? 18 : 0);
+    heightRatio = .72; centerY = shape === "document" ? (h - 12)/2 : h/2;
+  }
+  const maxWidth = Math.max(44, Math.round(w * widthRatio));
+  const maxLines = Math.max(1, Math.floor(h * heightRatio / lineH));
+  const lines = limitedWrappedLines(title, font, maxWidth, maxLines);
+  return {shape, fs, font, lineH, lines, w, h, centerY, maxWidth};
+}
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
   const base = clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28);
@@ -1051,6 +1138,10 @@ function nodeSize(n){
       (shape === "data" || shape === "manualInput" ? 56 : 44));
     const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 18 : 0);
     return { w: Math.min(w, 420), h };
+  }
+  if (n.type === "text"){
+    const layout = textBoxLayout(n);
+    return {w:layout.w, h:layout.h};
   }
   if (n.type === "note"){
     const layout = richNoteLayout(n);
@@ -1170,7 +1261,7 @@ function rayPolygonBoundary(r, ref, points){
 }
 /* Non-rectangular concept anchors sit on the rendered shape, not its bounding box. */
 function conceptBoundaryPoint(n, r, ref){
-  const shape = conceptShape(n);
+  const shape = visualNodeShape(n);
   if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)) return { x:ref.x, y:ref.y };
   const dx = ref.x - r.cx, dy = ref.y - r.cy;
   if (!dx && !dy) return { x:r.cx, y:r.cy };
@@ -1187,7 +1278,7 @@ function conceptBoundaryPoint(n, r, ref){
 }
 function anchorPointsForNode(n, r = nodeRect(n)){
   const pts = anchorPointsForRect(r);
-  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(conceptShape(n))) return pts;
+  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(visualNodeShape(n))) return pts;
   for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key]);
   return pts;
 }
@@ -1210,7 +1301,7 @@ function nodeAnchor(n, key, ref){
   const pts = anchorPointsForNode(n, r);
   let k = key && pts[key] ? key : null;
   /* Unpinned non-rectangular concepts use their actual silhouette intersection. */
-  if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(conceptShape(n))){
+  if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(visualNodeShape(n))){
     const p = conceptBoundaryPoint(n, r, ref);
     const dx = ref.x - r.cx, dy = ref.y - r.cy;
     const horiz = Math.abs(dx) / r.w >= Math.abs(dy) / r.h;
@@ -1392,7 +1483,9 @@ function renderMinimap(){
     const r = nodeRect(n);
     const p = tx.toMini({x:r.x, y:r.y});
     const structural = isStructuralNode(n);
-    const fill = n.type === "frame" ? n.color || frameColorDefault() : n.color || t.ink;
+    const cleanText = n.type === "text" && textBoxShape(n) === "none";
+    const fill = n.type === "frame" ? n.color || frameColorDefault()
+      : cleanText ? n.fontColor || t.ink : n.color || t.ink;
     el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:structural ? 2 : 1.5,
                 fill, opacity:structural ? .30 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
   }
@@ -1722,9 +1815,8 @@ function drawStructuralNode(n){
   if (n.type === "swimlane") drawSwimlane(n);
   else drawFrame(n);
 }
-function drawConceptShape(g, n, r, attrs){
-  const shape = conceptShape(n);
-  const common = { ...attrs, "data-node-shape":shape, "stroke-linejoin":"round" };
+function drawStandardShape(g, shape, r, attrs, dataAttr = "data-node-shape"){
+  const common = { ...attrs, [dataAttr]:shape, "stroke-linejoin":"round" };
   if (shape === "process") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
   if (shape === "square") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
   if (shape === "circle") return el("ellipse", {cx:r.w/2, cy:r.h/2, rx:r.w/2, ry:r.h/2, ...common}, g);
@@ -1748,6 +1840,33 @@ function drawConceptShape(g, n, r, attrs){
   }
   /* Manual input: the sloped leading edge is the conventional flowchart symbol. */
   return el("path", {d:`M 20 0 H ${r.w} L ${r.w-14} ${r.h} H 0 Z`, ...common}, g);
+}
+function drawConceptShape(g, n, r, attrs){
+  return drawStandardShape(g, conceptShape(n), r, attrs);
+}
+function drawPlainText(g, n, r, selected, t){
+  const layout = textBoxLayout(n);
+  const fill = n.color || conceptColors()[1];
+  const ink = n.fontColor || (layout.shape === "none" ? t.ink : autoInk(fill, t));
+  g.setAttribute("data-text-box", n.id);
+  g.setAttribute("data-text-shape", layout.shape);
+  if (layout.shape === "none"){
+    const attrs = {width:r.w, height:r.h, rx:4, fill:"transparent", stroke:selected ? t.accent : "none",
+                   "stroke-width":1.4, "stroke-dasharray":"4 3", "data-text-hit":"1"};
+    if (selected) attrs["data-text-selection"] = "1";
+    el("rect", attrs, g);
+  } else {
+    drawStandardShape(g, layout.shape, r, {fill,
+      stroke:selected ? t.accent : t.ink, "stroke-width":selected ? 2.2 : 1.2}, "data-text-shape-surface");
+  }
+  const text = el("text", {"text-anchor":"middle", fill:ink, "pointer-events":"none",
+              "font-family":"Archivo, sans-serif", "font-size":layout.fs, "font-weight":600,
+              "data-plain-text":"1"}, g);
+  const firstY = layout.centerY - ((layout.lines.length - 1) * layout.lineH)/2 + layout.fs*.35;
+  layout.lines.forEach((line, i) => {
+    const span = el("tspan", {x:r.w/2, y:firstY + i*layout.lineH, "data-text-line":i+1}, text);
+    span.textContent = line;
+  });
 }
 function drawRichNote(g, n, r, selected, t){
   const layout = richNoteLayout(n);
@@ -1827,6 +1946,8 @@ function drawNode(n){
       el("circle", {cx:noteX, cy:noteY,
                     r:3.2, fill:t.ink, opacity:.55}, g);
     }
+  } else if (n.type === "text"){
+    drawPlainText(g, n, r, selected, t);
   } else if (n.type === "note"){
     drawRichNote(g, n, r, selected, t);
   } else if (n.type === "todo"){
@@ -1962,7 +2083,9 @@ function drawNode(n){
   const anchorPts = anchorPointsForNode(n, { x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
   for (const key of NODE_ANCHORS){
     const p = anchorPts[key];
-    const hg = el("g", {class: key === "mr" ? "" : "anchorhandle",
+    const cleanText = n.type === "text" && textBoxShape(n) === "none";
+    const primaryVisible = key === "mr" && (!cleanText || selected);
+    const hg = el("g", {class: primaryVisible ? "" : "anchorhandle",
                         "data-handle": n.id, "data-anchor": key, cursor:"crosshair"}, g);
     el("circle", {cx:p.x, cy:p.y, r: key === "mc" ? 8 : 12, fill:"transparent"}, hg);
     el("circle", {cx:p.x, cy:p.y, r: key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
@@ -1998,6 +2121,9 @@ function addNode(type, x, y, opts = {}){
   if (type === "concept"){
     n = { id: uid(), type, x, y, title:"New idea", notes:"",
           color: conceptColors()[state.nodes.filter(n=>n.type==="concept").length % conceptColors().length] };
+  } else if (type === "text"){
+    n = {id:uid(), type, x, y, title:"Text", color:conceptColors()[1] || CONCEPT_COLORS[1],
+         fontSize:TEXT_FS_DEFAULT, w:TEXT_W_DEFAULT};
   } else if (type === "note"){
     n = { id:uid(), type, x, y, title:"Rich note",
           content:"Add context here.\n\n- Use **bold**, _italic_, or `code`\n- [ ] Track a decision",
@@ -3021,6 +3147,7 @@ function matchShortcut(ev, typing){
   if (ev.key === "Tab") return "child";
   if (ev.key === "Escape") return "escape";
   if (!mod && key === "c") return "concept";
+  if (!mod && key === "x") return "text";
   if (!mod && key === "n") return "note";
   if (!mod && key === "t") return "table";
   if (!mod && key === "d") return "todo";
@@ -3045,6 +3172,7 @@ function runShortcut(id, ev){
   if (id === "child") return addChildConcept();
   if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
   if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
+  if (id === "text"){ const c = viewCenter(); addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20); return; }
   if (id === "note"){ const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); return; }
   if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
   if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
@@ -3157,6 +3285,11 @@ function inlineEditorBox(kind, id, rowId){
       const p = worldToWrap(r.x + 10, r.y + 8);
       return { x:p.x, y:p.y, w:Math.max(100, (r.w - 20)*view.k),
                h:Math.max(28, (Math.min(titleSize, r.h*.45) - 16)*view.k), fontSize:13 };
+    }
+    if (n.type === "text"){
+      const p = worldToWrap(r.x + 4, r.y + Math.max(0, r.h/2 - 18));
+      return {x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 8), h:36,
+              fontSize:Math.max(12, textBoxFont(n)*view.k)};
     }
     if (n.type === "concept"){
       const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
@@ -3287,6 +3420,7 @@ function paletteItems(){
   }
   for (const c of [
     ["addConcept", "Add concept"],
+    ["addText", "Add plain text"],
     ["addNote", "Add rich note"],
     ["addTable", "Add table"],
     ["addTodo", "Add to-do list"],
@@ -3328,6 +3462,7 @@ function activatePaletteItem(item){
   }
   const c = viewCenter();
   if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
+  if (item.command === "addText") addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20);
   if (item.command === "addNote") addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60);
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
   if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);
@@ -3570,7 +3705,7 @@ function inspectorActions(buttons, danger, opts = {}){
   appendInspector(footer);
 }
 function renderNodeTitleField(n){
-  frow(n.type === "table" ? "Table name" : "Title", () => {
+  frow(n.type === "table" ? "Table name" : n.type === "text" ? "Text" : "Title", () => {
     const i = mkInput(n.title, v => {
       n.title = v;
       const headerName = document.querySelector("#inspTitle .inspector-name");
@@ -3618,7 +3753,8 @@ function renderInspector(){
     const n = singleSelectedNode();
     if (!n){ clearSelection(); renderHelp(); return; }
     const kind = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame" : n.type === "swimlane" ? "Swimlane"
-               : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note" : "Table node";
+               : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note"
+               : n.type === "text" ? "Plain text" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
 
     if (n.type === "swimlane"){
@@ -3700,6 +3836,51 @@ function renderInspector(){
           (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
       });
       inspectorSection("concept:notes", "Notes", () => renderNodeNotesField(n), {open:false});
+    } else if (n.type === "text"){
+      inspectorSection("text:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Shape", () => {
+          const s = document.createElement("select");
+          s.id = "textBoxShape";
+          s.setAttribute("aria-label", "Text box shape");
+          for (const [value, label] of TEXT_BOX_SHAPES){
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label;
+            if (textBoxShape(n) === value) o.selected = true;
+            s.appendChild(o);
+          }
+          s.addEventListener("change", () => { pushHistory(); setTextBoxShape(n, s.value); render(); });
+          return s;
+        });
+        if (textBoxShape(n) === "none"){
+          const help = document.createElement("div");
+          help.className = "helper";
+          help.textContent = "No box shows only the text. The dashed outline appears only while selected.";
+          appendInspector(help);
+        }
+      });
+      inspectorSection("text:appearance", "Appearance", () => {
+        frow("Shape background", () => {
+          const control = swatches(conceptColors(), n.color || conceptColors()[1],
+            (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); });
+          control.id = "textBoxBackground";
+          return control;
+        });
+        frow("Text size", () => sizeStepper(textBoxFont(n), 10, 72, 1,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); },
+          {ariaLabel:"Text size"}));
+        frow("Text color", () => {
+          const control = swatches(fontColors(), n.fontColor || themeColors().ink,
+            (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); });
+          control.id = "textBoxTextColor";
+          return control;
+        });
+      });
+      inspectorSection("text:layout", "Layout", () => {
+        frow("Maximum width", () => sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
+          {ariaLabel:"Maximum width"}));
+      });
     } else if (n.type === "note"){
       inspectorSection("note:basics", "Basics", () => renderNodeTitleField(n));
       inspectorSection("note:content", "Content", () => {
@@ -3893,12 +4074,13 @@ function renderMultiInspector(){
         commit ? render() : drawOnly();
       }));
     if (nonStructural.length === nodes.length){
-      if (nodes.every(n => n.type === "concept")){
+      if (nodes.every(n => n.type === "concept") || nodes.every(n => n.type === "text")){
         frow("Shape", () => {
           const s = document.createElement("select");
-          s.setAttribute("aria-label", "Flowchart shape");
-          const current = conceptShape(nodes[0]);
-          for (const [value, label] of FLOWCHART_SHAPES){
+          const textNodes = nodes[0].type === "text";
+          s.setAttribute("aria-label", textNodes ? "Text box shape" : "Flowchart shape");
+          const current = textNodes ? textBoxShape(nodes[0]) : conceptShape(nodes[0]);
+          for (const [value, label] of textNodes ? TEXT_BOX_SHAPES : FLOWCHART_SHAPES){
             const o = document.createElement("option");
             o.value = value; o.textContent = label;
             if (current === value) o.selected = true;
@@ -3906,7 +4088,9 @@ function renderMultiInspector(){
           }
           s.addEventListener("change", () => {
             pushHistory();
-            for (const n of nodes) setConceptShape(n, s.value);
+            for (const n of nodes){
+              if (textNodes) setTextBoxShape(n, s.value); else setConceptShape(n, s.value);
+            }
             render();
           });
           return s;
@@ -4157,9 +4341,9 @@ function renderHelp(){
   const h = document.createElement("div");
   h.className = "helper";
   h.innerHTML = `
-    <p><b>Four primitives, one canvas.</b><br>
-    Concepts sketch the business thinking, rich notes preserve formatted context, tables
-    carry the data model, and to-do lists track the work. Link them freely — a note or idea
+    <p><b>Flexible primitives, one canvas.</b><br>
+    Concepts sketch the business thinking, plain text adds titles and labels, rich notes preserve
+    formatted context, tables carry the data model, and to-do lists track the work. Link them freely — a label, note, or idea
     can point at an entity, an exact column, or the task that will deliver it.</p>
     <p style="margin-top:10px"><b>Field-level connections.</b><br>
     Hover a table to reveal ○ handles on each field row. Drag from a row to another
@@ -4177,7 +4361,7 @@ function renderHelp(){
       <line x1="36" y1="8" x2="44" y2="13" stroke="#33475C" stroke-width="1.6"/></svg>
       1:N — crow's-foot relation</div>
     <p style="margin-top:12px"><b>Shortcuts</b><br>
-    <kbd>C</kbd> concept · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
+    <kbd>C</kbd> concept · <kbd>X</kbd> plain text · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
     <kbd>Del</kbd> delete · <kbd>Ctrl+Z</kbd> undo · <kbd>Ctrl+D</kbd> duplicate ·
     <kbd>F</kbd> fit · arrows nudge</p>
     <p style="margin-top:12px"><b>Type &amp; color</b><br>
@@ -4472,6 +4656,7 @@ document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnInspector").addEventListener("click", toggleInspector);
 document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
+document.getElementById("btnAddText").addEventListener("click", () => { const c = viewCenter(); addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20); });
 document.getElementById("btnAddNote").addEventListener("click", () => { const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); });
 document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
 document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
@@ -4661,11 +4846,17 @@ function lintDocument(docState = state){
     if (!(td.items || []).length)
       issues.push({level:"warning", msg:`To-do list ${td.title || "(untitled)"} has no items`, nodeId:td.id});
   }
+  for (const textNode of nodes.filter(n => n.type === "text")){
+    if (!String(textNode.title || "").trim())
+      issues.push({level:"warning", msg:"Plain text item is empty", nodeId:textNode.id});
+  }
   for (const e of edges){
     if (e.kind === "link") continue;
     const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to);
     if (linkOnlyNode(a) || linkOnlyNode(b)){
-      const kind = a && a.type === "note" || b && b.type === "note" ? "rich note" : "to-do list";
+      const linked = linkOnlyNode(a) ? a : b;
+      const kind = linked && linked.type === "note" ? "rich note"
+        : linked && linked.type === "text" ? "plain text" : "to-do list";
       issues.push({level:"error", msg:`Relation ${e.kind} touches a ${kind} — use a link edge`, edgeId:e.id});
       continue;
     }
@@ -4920,7 +5111,7 @@ function serializedSvg(asShown = true){
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
   if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-text-selection]").forEach(h => h.remove());
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
   clone.insertBefore(style, clone.firstChild);
@@ -5064,7 +5255,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
   const bg = g.querySelector("[data-bg]");
   const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
   if (bg) bg.setAttribute("fill", bgColor);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-text-selection]").forEach(h => h.remove());
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
@@ -5201,11 +5392,11 @@ function ctxSwatches(parent, colors, current, apply){
 }
 /* compact font-size stepper for the context menu */
 function ctxSizeRow(parent, n, targets = [n]){
-  const isC = n.type === "concept", isNote = n.type === "note";
+  const isC = n.type === "concept", isNote = n.type === "note", isText = n.type === "text";
   const cur = nodeTextSize(n);
   const wrap = document.createElement("div");
   wrap.className = "swrow";
-  wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote ? 10 : 8, isC ? 48 : 28, isC || isNote ? 1 : 0.5,
+  wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote || isText ? 10 : 8, isText ? 72 : isC ? 48 : 28, isC || isNote || isText ? 1 : 0.5,
     (v, commit) => {
       pushHistory(targets.length > 1 ? "fs:multi" : "fs:"+n.id);
       for (const t of targets) t.fontSize = clampNodeTextSize(t, v);
@@ -5215,21 +5406,27 @@ function ctxSizeRow(parent, n, targets = [n]){
 }
 /* Standard concept symbols, kept compact enough to fit the right-click menu. */
 function ctxShapeRow(parent, n, targets = [n]){
-  const concepts = targets.filter(t => t.type === "concept");
-  if (n.type !== "concept" || !concepts.length) return;
+  if (n.type !== "concept" && n.type !== "text") return;
+  const matching = targets.filter(t => t.type === n.type);
+  if (!matching.length) return;
+  const options = n.type === "text" ? TEXT_BOX_SHAPES : FLOWCHART_SHAPES;
+  const current = n.type === "text" ? textBoxShape(n) : conceptShape(n);
   const row = document.createElement("div");
   row.className = "shaperow";
-  for (const [shape, label] of FLOWCHART_SHAPES){
+  for (const [shape, label] of options){
     const b = document.createElement("button");
     b.textContent = label;
     b.title = label;
     b.setAttribute("data-shape-option", shape);
-    b.setAttribute("aria-pressed", String(conceptShape(n) === shape));
-    if (conceptShape(n) === shape) b.className = "on";
+    b.setAttribute("aria-pressed", String(current === shape));
+    if (current === shape) b.className = "on";
     b.addEventListener("click", () => {
       hideCtx();
-      pushHistory(concepts.length > 1 ? "shape:multi" : "shape:" + n.id);
-      for (const target of concepts) setConceptShape(target, shape);
+      pushHistory(matching.length > 1 ? "shape:multi" : "shape:" + n.id);
+      for (const target of matching){
+        if (target.type === "text") setTextBoxShape(target, shape);
+        else setConceptShape(target, shape);
+      }
       render();
     });
     row.appendChild(b);
@@ -5246,9 +5443,9 @@ function nodeMenu(n, x, y){
     ctxHeader(m, "node", targets.length > 1 ? `${targets.length} nodes selected` : n.title || "Untitled");
     ctxGroup(m, "node:appearance", "Appearance", panel => {
       const palette = [...new Set([...conceptColors(), ...tableColors()])];
-      ctxLabel(panel, n.type === "swimlane" ? "Body background" : n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
+      ctxLabel(panel, n.type === "swimlane" ? "Body background" : n.type === "text" ? "Shape background" : n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
                 : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
-      ctxSwatches(panel, n.type === "swimlane" ? palette : (n.type === "concept" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
+      ctxSwatches(panel, n.type === "swimlane" ? palette : (n.type === "concept" || n.type === "text" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
         (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
       if (n.type === "swimlane"){
         ctxLabel(panel, "Title background");
@@ -5256,11 +5453,23 @@ function nodeMenu(n, x, y){
           (c, commit) => { pushHistory(targets.length > 1 ? "lane-title:multi" : "lane-title:"+n.id);
             applyToTargets(t => { if (t.type === "swimlane") t.titleColor = c; }); commit ? render() : drawOnly(); });
       }
-      if (n.type === "concept"){
+      if (n.type === "concept" || n.type === "text"){
         ctxLabel(panel, "Shape");
         ctxShapeRow(panel, n, targets);
       }
       if (!isStructuralNode(n)){
+        if (n.type === "text"){
+          ctxLabel(panel, "Maximum width");
+          const widthRow = document.createElement("div");
+          widthRow.className = "swrow";
+          widthRow.appendChild(sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
+            (v, commit) => {
+              pushHistory(targets.length > 1 ? "size:multi" : "size:"+n.id);
+              applyToTargets(t => { if (t.type === "text") t.w = v; });
+              commit ? render() : drawOnly();
+            }, {ariaLabel:"Maximum width"}));
+          panel.appendChild(widthRow);
+        }
         ctxLabel(panel, "Text size");
         ctxSizeRow(panel, n, targets);
         ctxLabel(panel, "Text color");
@@ -5279,7 +5488,7 @@ function nodeMenu(n, x, y){
         });
       }
     }, {open:true});
-    ctxItem(m, "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
+    ctxItem(m, n.type === "text" ? "Edit text" : "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
     if (n.type === "note") ctxItem(m, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
     if (!isStructuralNode(n)) ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
     if (n.type === "table" || n.type === "todo"){
@@ -5437,6 +5646,7 @@ function canvasMenu(w, x, y){
     ctxHeader(m, "canvas", "Create or navigate");
     ctxLabel(m, "Create");
     ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
+    ctxItem(m, "Add plain text here", () => addNode("text", w.x - TEXT_W_DEFAULT/2, w.y - 20), {kbd:"X"});
     ctxItem(m, "Add rich note here", () => addNode("note", w.x - NOTE_W_DEFAULT/2, w.y - 60), {kbd:"N"});
     ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
     ctxItem(m, "Add to-do list here", () => addNode("todo", w.x - 90, w.y - 30), {kbd:"D"});
@@ -5569,10 +5779,15 @@ window.__T = {
   nodeRect,
   conceptShape,
   setConceptShape,
+  textBoxShape,
+  setTextBoxShape,
+  textBoxLayout,
+  textBoxFont,
   wrapConceptTitle,
   conceptWrappedLayout,
   conceptContainsPoint,
   get FLOWCHART_SHAPES(){ return FLOWCHART_SHAPES.map(([id, label]) => ({id, label})); },
+  get TEXT_BOX_SHAPES(){ return TEXT_BOX_SHAPES.map(([id, label]) => ({id, label})); },
   get EDGE_RELATIONSHIPS(){ return EDGE_RELATIONSHIPS.map(([name, meaning]) => ({name, meaning})); },
   nodeMenu,
   edgeMenu,

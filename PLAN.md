@@ -1241,6 +1241,20 @@ interaction QA pass.
 
 ---
 
+**SCH-078 · Plain text with optional shapes · P1 · M · Done 2026-07-14**
+
+Add a lightweight plain-text canvas primitive for diagram titles, labels, and short phrases. It is
+distinct from rich notes, defaults to text-only rendering with no visible box, and can optionally use
+any standard flowchart shape. Plain text supports wrapping, maximum width, font size/color, shape
+background, links, inline editing, copy/duplicate, undo/redo, and normal canvas movement.
+
+AC: toolbar, keyboard, canvas menu, and command palette create plain text; inspector and right-click
+menu edit text, shape, maximum width, background, size, and text color; no-box mode exports without an
+editing outline; shaped text uses silhouette-aware hit testing and link anchors; JSON round-trip and
+invalid-value normalization work; automated and browser interaction QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.
