@@ -82,8 +82,10 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.10.0";
+const APP_VERSION = "v1.15.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
+const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
+const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
 const THEME = {
   light: {
     paper:"#EEF1F4", panel:"#FFFFFF", control:"#FBFCFD", ink:"#16232F",
@@ -574,6 +576,10 @@ function cleanEdgeForDocument(e){
   if (out.endArrow !== true) delete out.endArrow;
   const lineColor = normalizeHex(out.lineColor);
   if (lineColor) out.lineColor = lineColor; else delete out.lineColor;
+  for (const key of ["labelTextColor", "labelBackgroundColor"]){
+    const color = normalizeHex(out[key]);
+    if (color) out[key] = color; else delete out[key];
+  }
   const lineWidth = edgeLineWidth(out);
   if (lineWidth === 1.7) delete out.lineWidth; else out.lineWidth = lineWidth;
   if (!["solid","dash","dot"].includes(out.lineStyle) ||
@@ -665,6 +671,10 @@ function applyDocument(d, opts = {}){
       const value = Number(e[key]);
       if (Number.isFinite(value)) e[key] = value;
       else delete e[key];
+    }
+    for (const key of ["lineColor", "labelTextColor", "labelBackgroundColor"]){
+      const color = normalizeHex(e[key]);
+      if (color) e[key] = color; else delete e[key];
     }
   }
   state.nextId = migrated.nextId;
@@ -1657,6 +1667,12 @@ function edgePath(e, pa, pb){
 function edgeLineColor(e, colors = themeColors()){
   return normalizeHex(e && e.lineColor) || (e && e.kind === "link" ? colors.link : colors.edge);
 }
+function edgeLabelTextColor(e, colors = themeColors()){
+  return normalizeHex(e && e.labelTextColor) || edgeLineColor(e, colors);
+}
+function edgeLabelBackgroundColor(e, colors = themeColors()){
+  return normalizeHex(e && e.labelBackgroundColor) || colors.labelBg;
+}
 function edgeLineWidth(e){
   const width = Number(e && e.lineWidth);
   return Number.isFinite(width) ? Math.min(8, Math.max(1, width)) : 1.7;
@@ -1749,9 +1765,11 @@ function drawEdge(e){
   if (label){
     const {x:mx, y:my} = edgeLabelPoint(e, ep);
     const w = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
+    const labelTextColor = edgeLabelTextColor(e, t);
+    const labelBackgroundColor = edgeLabelBackgroundColor(e, t);
     el("rect", {x:mx - w/2, y:my - 10, width:w, height:20, rx:10,
-                fill:t.labelBg, stroke:color, "stroke-width":1, "data-edge-label-bg":"1"}, g);
-    el("text", {x:mx, y:my + 3.5, "text-anchor":"middle", fill:color,
+                fill:labelBackgroundColor, stroke:color, "stroke-width":1, "data-edge-label-bg":"1"}, g);
+    el("text", {x:mx, y:my + 3.5, "text-anchor":"middle", fill:labelTextColor,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":10.5,
                 "font-weight":600, "data-edge-label":"1"}, g).textContent = label;
   }
@@ -2145,6 +2163,11 @@ function addNode(type, x, y, opts = {}){
     n = { id: uid(), type:"table", x, y, title:uniqueTableTitle("new_table"), notes:"", color:themeColors("light").ink,
           fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
   }
+  if (opts.center){
+    const r = nodeRect(n);
+    n.x = x - r.w/2;
+    n.y = y - r.h/2;
+  }
   state.nodes.push(n);
   setSelection("node", n.id);
   render();
@@ -2156,6 +2179,9 @@ function addSwimlane(orientation, x, y){
   const defaults = SWIMLANE_DEFAULT[normalized];
   return addNode("swimlane", x == null ? viewCenter().x - defaults.w/2 : x,
                  y == null ? viewCenter().y - defaults.h/2 : y, {orientation:normalized});
+}
+function addNodeCentered(type, point, opts = {}){
+  return addNode(type, point.x, point.y, {...opts, center:true});
 }
 function addTodoItem(n){
   if (!n || n.type !== "todo") return null;
@@ -2731,11 +2757,71 @@ function reattachEdgeEnd(e, end, hit, w){
   render();
 }
 
-/* grid snapping (issue #40): drags always snap — to the visible dot grid when the
-   toggle is on, else to the fine 4px grid */
-function dragSnap(v){
-  const step = snapToGrid ? GRID_SNAP : 4;
+/* Grid snapping (issue #40): the toolbar toggle is persistent, while Shift is a
+   temporary override. Without either, drags retain the fine 4px positioning grid. */
+function dragSnap(v, shiftHeld = false){
+  const step = snapToGrid || shiftHeld ? GRID_SNAP : 4;
   return Math.round(v/step)*step;
+}
+function offsetRect(r, dx, dy){
+  return {x:r.x + dx, y:r.y + dy, w:r.w, h:r.h,
+          cx:r.cx + dx, cy:r.cy + dy};
+}
+function alignmentCoordinates(r){
+  return {
+    x:[{key:"left", value:r.x}, {key:"center", value:r.cx}, {key:"right", value:r.x + r.w}],
+    y:[{key:"top", value:r.y}, {key:"middle", value:r.cy}, {key:"bottom", value:r.y + r.h}]
+  };
+}
+/* Find the closest standard bounding-box alignment on each axis. The threshold is
+   supplied in world units so the caller can keep the interaction stable at every zoom. */
+function smartAlignmentSnap(movingRect, targetRects, threshold){
+  const moving = alignmentCoordinates(movingRect);
+  let xMatch = null, yMatch = null;
+  for (const target of targetRects){
+    const points = alignmentCoordinates(target);
+    for (const from of moving.x) for (const to of points.x){
+      const delta = to.value - from.value;
+      if (Math.abs(delta) <= threshold && (!xMatch || Math.abs(delta) < Math.abs(xMatch.delta)))
+        xMatch = {delta, coordinate:to.value, movingKey:from.key, targetKey:to.key, targetRect:target};
+    }
+    for (const from of moving.y) for (const to of points.y){
+      const delta = to.value - from.value;
+      if (Math.abs(delta) <= threshold && (!yMatch || Math.abs(delta) < Math.abs(yMatch.delta)))
+        yMatch = {delta, coordinate:to.value, movingKey:from.key, targetKey:to.key, targetRect:target};
+    }
+  }
+  return {dx:xMatch ? xMatch.delta : 0, dy:yMatch ? yMatch.delta : 0, xMatch, yMatch};
+}
+function alignmentGuideGeometry(snap, alignedRect, overshoot){
+  if (!snap || (!snap.xMatch && !snap.yMatch)) return null;
+  const geometry = {};
+  if (snap.xMatch){
+    const target = snap.xMatch.targetRect;
+    geometry.x = {coordinate:snap.xMatch.coordinate,
+      from:Math.min(alignedRect.y, target.y) - overshoot,
+      to:Math.max(alignedRect.y + alignedRect.h, target.y + target.h) + overshoot};
+  }
+  if (snap.yMatch){
+    const target = snap.yMatch.targetRect;
+    geometry.y = {coordinate:snap.yMatch.coordinate,
+      from:Math.min(alignedRect.x, target.x) - overshoot,
+      to:Math.max(alignedRect.x + alignedRect.w, target.x + target.w) + overshoot};
+  }
+  return geometry;
+}
+function drawAlignmentGuides(guides){
+  draftLayer.querySelectorAll("[data-align-guide-x], [data-align-guide-y]").forEach(guide => guide.remove());
+  if (!guides) return;
+  const t = themeColors();
+  if (guides.x) el("line", {x1:guides.x.coordinate, y1:guides.x.from,
+    x2:guides.x.coordinate, y2:guides.x.to, stroke:t.accent, "stroke-width":1.25,
+    "stroke-dasharray":"4 3", "vector-effect":"non-scaling-stroke", opacity:.9,
+    "pointer-events":"none", "data-align-guide-x":"1"}, draftLayer);
+  if (guides.y) el("line", {x1:guides.y.from, y1:guides.y.coordinate,
+    x2:guides.y.to, y2:guides.y.coordinate, stroke:t.accent, "stroke-width":1.25,
+    "stroke-dasharray":"4 3", "vector-effect":"non-scaling-stroke", opacity:.9,
+    "pointer-events":"none", "data-align-guide-y":"1"}, draftLayer);
 }
 function updateSnapControl(){
   const b = document.getElementById("btnSnap");
@@ -2905,14 +2991,11 @@ board.addEventListener("pointerdown", ev => {
     const id = nodeEl.getAttribute("data-node");
     const n = nodeById(id);
     const w = clientToWorld(ev.clientX, ev.clientY);
-    if (ev.shiftKey){
-      toggleNodeSelection(id);
-      drag = null;
-      render();
-      return;
-    }
-    if (!isSelected("node", id)) setSelection("node", id);
-    const moveIds = new Set(selectionIds("node"));
+    const wasSelected = isSelected("node", id);
+    if (!wasSelected && !ev.shiftKey) setSelection("node", id);
+    const selectedIds = new Set(selectionIds("node"));
+    if (ev.shiftKey && !wasSelected) selectedIds.add(id);
+    const moveIds = new Set(selectedIds);
     if (isStructuralNode(n)) for (const child of containerContainedNodes(n)) moveIds.add(child.id);
     const ids = [...moveIds];
     const moving = new Set(ids);
@@ -2925,7 +3008,10 @@ board.addEventListener("pointerdown", ev => {
         const ep = edgeEndpoints(e);
         const bend = ep ? orthoEdgeRoute(e, ep.pa, ep.pb).bend : {x:e.orthoX, y:e.orthoY};
         return {id:e.id, x:bend.x, y:bend.y};
-      }).filter(bend => Number.isFinite(bend.x) && Number.isFinite(bend.y)), moved:false };
+      }).filter(bend => Number.isFinite(bend.x) && Number.isFinite(bend.y)),
+      primaryRect:nodeRect(n),
+      targetRects:state.nodes.filter(other => !moving.has(other.id)).map(other => nodeRect(other)),
+      selectionIds:[...selectedIds], shiftToggle:!!ev.shiftKey, wasSelected, moved:false, guides:null };
     render();
     return;
   }
@@ -2966,13 +3052,23 @@ board.addEventListener("pointermove", ev => {
     applyView();
   } else if (drag.mode === "node"){
     const w = clientToWorld(ev.clientX, ev.clientY);
-    if (!drag.moved){ pushHistory(); drag.moved = true; }
+    if (!drag.moved){
+      if (drag.shiftToggle && !drag.wasSelected) setSelection("node", drag.selectionIds);
+      pushHistory();
+      drag.moved = true;
+    }
     const dx = w.x - drag.start.x, dy = w.y - drag.start.y;
+    const useGrid = snapToGrid || ev.shiftKey;
+    const alignment = useGrid ? null : smartAlignmentSnap(
+      offsetRect(drag.primaryRect, dx, dy), drag.targetRects,
+      ALIGN_GUIDE_SCREEN_THRESHOLD / view.k);
+    const alignedDx = dx + (alignment ? alignment.dx : 0);
+    const alignedDy = dy + (alignment ? alignment.dy : 0);
     for (const start of drag.starts){
       const n = nodeById(start.id);
       if (!n) continue;
-      n.x = dragSnap(start.x + dx);
-      n.y = dragSnap(start.y + dy);
+      n.x = alignment && alignment.xMatch ? start.x + alignedDx : dragSnap(start.x + dx, ev.shiftKey);
+      n.y = alignment && alignment.yMatch ? start.y + alignedDy : dragSnap(start.y + dy, ev.shiftKey);
     }
     const primaryStart = drag.starts.find(start => start.id === drag.id);
     const primaryNode = primaryStart && nodeById(drag.id);
@@ -2986,8 +3082,11 @@ board.addEventListener("pointermove", ev => {
         e.orthoY = bendStart.y + routeDy;
       }
     }
+    drag.guides = alignment && primaryNode ? alignmentGuideGeometry(
+      alignment, nodeRect(primaryNode), ALIGN_GUIDE_SCREEN_OVERSHOOT / view.k) : null;
     if (state.nodes.length > 150) fastDragRender(drag.starts.map(s => s.id));
     else render();
+    drawAlignmentGuides(drag.guides);
   } else if (drag.mode === "frame-resize"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     const n = nodeById(drag.id);
@@ -3062,7 +3161,11 @@ board.addEventListener("pointerup", ev => {
   if (drag.mode === "pan" && !drag.moved){
     clearSelection(); render();
   } else if (drag.mode === "node"){
-    if (drag.moved && state.nodes.length > 150) render();
+    const hadGuides = !!drag.guides;
+    if (!drag.moved && drag.shiftToggle){
+      toggleNodeSelection(drag.id);
+      render();
+    } else if (drag.moved && (state.nodes.length > 150 || hadGuides)) render();
   } else if (drag.mode === "marquee"){
     draftLayer.innerHTML = "";
     if (drag.moved){
@@ -3102,28 +3205,22 @@ board.addEventListener("pointercancel", ev => {
   activePointers.delete(ev.pointerId);
   clearLongPress();
   if (activePointers.size < 2) touchGesture = null;
-  const redrawBend = drag && drag.mode === "ortho-bend";
+  const redrawDraft = drag && (drag.mode === "ortho-bend" || (drag.mode === "node" && drag.guides));
   drag = null;
   board.classList.remove("panning","connecting");
-  if (redrawBend) render();
+  if (redrawDraft) render();
 });
 
 board.addEventListener("wheel", ev => {
   ev.preventDefault();
   closeInlineEditor(false);
   if (ev.shiftKey && ev.deltaY !== 0){
-    const factor = ev.deltaY < 0 ? 1.1 : 1/1.1;
-    const nk = Math.min(3, Math.max(0.2, view.k * factor));
-    const b = board.getBoundingClientRect();
-    const mx = ev.clientX - b.left, my = ev.clientY - b.top;
-    view.x = mx - (mx - view.x) * (nk/view.k);
-    view.y = my - (my - view.y) * (nk/view.k);
-    view.k = nk;
+    zoomAtClient(view.k * (ev.deltaY < 0 ? 1.1 : 1/1.1), ev.clientX, ev.clientY);
   } else {
     view.x -= ev.deltaX;
     view.y -= ev.deltaY;
+    applyView();
   }
-  applyView();
 }, { passive:false });
 
 /* -------------------------- Keyboard ------------------------------ */
@@ -3233,6 +3330,17 @@ window.addEventListener("blur", () => { spaceHeld = false; });
 function viewCenter(){
   const b = board.getBoundingClientRect();
   return clientToWorld(b.left + b.width/2, b.top + b.height/2);
+}
+function zoomAtClient(scale, clientX, clientY){
+  const b = board.getBoundingClientRect();
+  const mx = Number.isFinite(clientX) ? clientX - b.left : b.width/2;
+  const my = Number.isFinite(clientY) ? clientY - b.top : b.height/2;
+  const next = Math.min(3, Math.max(0.2, Number(scale) || 1));
+  view.x = mx - (mx - view.x) * (next/view.k);
+  view.y = my - (my - view.y) * (next/view.k);
+  view.k = next;
+  applyView();
+  return view.k;
 }
 function fitView(){
   if (!state.nodes.length) return;
@@ -4049,6 +4157,36 @@ function renderInspector(){
         i.placeholder = "Custom relationship text";
         return i;
       });
+      frow("Text color", () => {
+        const control = colorOverrideControl(fontColors(), e.labelTextColor, edgeLineColor(e),
+          (c, commit) => {
+            pushHistory("edge-label-text:"+e.id);
+            e.labelTextColor = c;
+            commit ? render() : drawOnly();
+          }, () => {
+            if (!normalizeHex(e.labelTextColor)) return;
+            pushHistory();
+            delete e.labelTextColor;
+            render();
+          }, {inheritLabel:"link color", key:"label-text"});
+        control.id = "edgeLabelTextColor";
+        return control;
+      });
+      frow("Background color", () => {
+        const control = colorOverrideControl(conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
+          (c, commit) => {
+            pushHistory("edge-label-background:"+e.id);
+            e.labelBackgroundColor = c;
+            commit ? render() : drawOnly();
+          }, () => {
+            if (!normalizeHex(e.labelBackgroundColor)) return;
+            pushHistory();
+            delete e.labelBackgroundColor;
+            render();
+          }, {inheritLabel:"canvas background", key:"label-background"});
+        control.id = "edgeLabelBackgroundColor";
+        return control;
+      });
     });
     inspectorActions([mkBtn("Swap direction", () => {
       pushHistory();
@@ -4363,7 +4501,7 @@ function renderHelp(){
     <p style="margin-top:12px"><b>Shortcuts</b><br>
     <kbd>C</kbd> concept · <kbd>X</kbd> plain text · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
     <kbd>Del</kbd> delete · <kbd>Ctrl+Z</kbd> undo · <kbd>Ctrl+D</kbd> duplicate ·
-    <kbd>F</kbd> fit · arrows nudge</p>
+    <kbd>F</kbd> fit · <kbd>Shift</kbd>+drag snap · arrows nudge</p>
     <p style="margin-top:12px"><b>Type &amp; color</b><br>
     Select a node to set fill, <b>text size</b>, and <b>text color</b> in this panel — or right-click for the same. Nodes grow to fit larger text.</p>
     <p style="margin-top:12px"><b>Persistence</b><br>
@@ -4509,6 +4647,19 @@ function swatches(colors, current, apply){
   if (recentColors.length)
     wrap.appendChild(swatchRow(recentColors, current, apply, "swatches recent"));
   wrap.appendChild(customColorRow(current, apply));
+  return wrap;
+}
+function colorOverrideControl(colors, explicit, fallback, apply, reset, opts = {}){
+  const inherited = !normalizeHex(explicit);
+  const wrap = swatches(colors, inherited ? fallback : explicit, apply);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "flag colorinherit" + (inherited ? " on" : "");
+  button.textContent = inherited ? `Using ${opts.inheritLabel}` : `Reset to ${opts.inheritLabel}`;
+  button.setAttribute("aria-pressed", String(inherited));
+  button.setAttribute("data-color-inherit", opts.key || "color");
+  button.addEventListener("click", reset);
+  wrap.insertBefore(button, wrap.firstChild);
   return wrap;
 }
 function mkFlag(txt, on, set){
@@ -5111,7 +5262,7 @@ function serializedSvg(asShown = true){
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
   if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-text-selection]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-align-guide-x], [data-align-guide-y], [data-text-selection]").forEach(h => h.remove());
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
   clone.insertBefore(style, clone.firstChild);
@@ -5255,7 +5406,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
   const bg = g.querySelector("[data-bg]");
   const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
   if (bg) bg.setAttribute("fill", bgColor);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-text-selection]").forEach(h => h.remove());
+  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-align-guide-x], [data-align-guide-y], [data-text-selection]").forEach(h => h.remove());
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
@@ -5280,6 +5431,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
 /* ------------------------ Context menu ---------------------------- */
 const ctxMenu = document.createElement("div");
 ctxMenu.id = "ctxMenu";
+ctxMenu.setAttribute("role", "menu");
 document.body.appendChild(ctxMenu);
 let ctxAnchor = {x:0, y:0};
 const ctxDisclosureState = new Map();
@@ -5323,6 +5475,7 @@ function contextIcon(kind){
   return svg;
 }
 function ctxHeader(parent, kind, title){
+  parent.setAttribute("aria-label", `${kind === "edge" ? "Edge" : kind === "canvas" ? "Canvas" : "Node"} actions: ${title}`);
   const header = document.createElement("div");
   header.className = "ctxhead";
   header.appendChild(contextIcon(kind));
@@ -5359,6 +5512,9 @@ function ctxGroup(parent, key, label, build, opts = {}){
 function ctxItem(parent, label, fn, opts = {}){
   const b = document.createElement("button");
   b.className = "ctxitem" + (opts.danger ? " danger" : "");
+  b.setAttribute("role", "menuitem");
+  if (opts.action) b.setAttribute("data-ctx-action", opts.action);
+  if (opts.pressed != null) b.setAttribute("aria-pressed", String(!!opts.pressed));
   const s = document.createElement("span");
   s.textContent = label;
   b.appendChild(s);
@@ -5389,6 +5545,16 @@ function ctxSwatches(parent, colors, current, apply){
   hexWrap.className = "swrow";
   hexWrap.appendChild(customColorRow(current, apply, { onCommit: hideCtx }));
   parent.appendChild(hexWrap);
+}
+function ctxColorOverride(parent, colors, explicit, fallback, apply, reset, opts = {}){
+  const inherited = !normalizeHex(explicit);
+  const wrap = document.createElement("div");
+  wrap.setAttribute("data-color-override", opts.key || "color");
+  parent.appendChild(wrap);
+  ctxItem(wrap, inherited ? `✓ Use ${opts.inheritLabel}` : `Reset to ${opts.inheritLabel}`, () => {
+    if (!inherited) reset();
+  }, {action:opts.action});
+  ctxSwatches(wrap, colors, inherited ? fallback : explicit, apply);
 }
 /* compact font-size stepper for the context menu */
 function ctxSizeRow(parent, n, targets = [n]){
@@ -5564,6 +5730,28 @@ function edgeMenu(e, x, y){
         onCustom:() => startInlineEditor("edge", e.id)
       }));
       panel.appendChild(relationshipRow);
+      ctxLabel(panel, "Label text color");
+      ctxColorOverride(panel, fontColors(), e.labelTextColor, edgeLineColor(e),
+        (c, commit) => {
+          pushHistory("edge-label-text:"+e.id);
+          e.labelTextColor = c;
+          commit ? render() : drawOnly();
+        }, () => {
+          pushHistory();
+          delete e.labelTextColor;
+          render();
+        }, {inheritLabel:"link color", action:"inherit-label-text", key:"label-text"});
+      ctxLabel(panel, "Label background");
+      ctxColorOverride(panel, conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
+        (c, commit) => {
+          pushHistory("edge-label-background:"+e.id);
+          e.labelBackgroundColor = c;
+          commit ? render() : drawOnly();
+        }, () => {
+          pushHistory();
+          delete e.labelBackgroundColor;
+          render();
+        }, {inheritLabel:"canvas background", action:"inherit-label-background", key:"label-background"});
     });
     ctxGroup(m, "edge:appearance", "Appearance", panel => {
       ctxLabel(panel, "Arrows");
@@ -5643,18 +5831,30 @@ function edgeMenu(e, x, y){
 }
 function canvasMenu(w, x, y){
   showCtx(x, y, m => {
-    ctxHeader(m, "canvas", "Create or navigate");
-    ctxLabel(m, "Create");
-    ctxItem(m, "Add concept here", () => addNode("concept", w.x - 65, w.y - 24), {kbd:"C"});
-    ctxItem(m, "Add plain text here", () => addNode("text", w.x - TEXT_W_DEFAULT/2, w.y - 20), {kbd:"X"});
-    ctxItem(m, "Add rich note here", () => addNode("note", w.x - NOTE_W_DEFAULT/2, w.y - 60), {kbd:"N"});
-    ctxItem(m, "Add table here",   () => addNode("table",   w.x - 95, w.y - 40), {kbd:"T"});
-    ctxItem(m, "Add to-do list here", () => addNode("todo", w.x - 90, w.y - 30), {kbd:"D"});
-    ctxItem(m, "Add frame here",   () => addNode("frame",   w.x - FRAME_DEFAULT.w/2, w.y - FRAME_DEFAULT.h/2));
-    ctxItem(m, "Add horizontal lane here", () => addSwimlane("horizontal", w.x - SWIMLANE_DEFAULT.horizontal.w/2, w.y - SWIMLANE_DEFAULT.horizontal.h/2));
-    ctxItem(m, "Add vertical lane here", () => addSwimlane("vertical", w.x - SWIMLANE_DEFAULT.vertical.w/2, w.y - SWIMLANE_DEFAULT.vertical.h/2));
-    ctxSep(m);
-    ctxItem(m, "Fit diagram", fitView, {kbd:"F"});
+    ctxHeader(m, "canvas", "Create, arrange, or view");
+    ctxGroup(m, "canvas:create", "Create", panel => {
+      ctxItem(panel, "Concept", () => addNodeCentered("concept", w), {kbd:"C", action:"add-concept"});
+      ctxItem(panel, "Plain text", () => addNodeCentered("text", w), {kbd:"X", action:"add-text"});
+      ctxItem(panel, "Rich note", () => addNodeCentered("note", w), {kbd:"N", action:"add-note"});
+      ctxItem(panel, "Table", () => addNodeCentered("table", w), {kbd:"T", action:"add-table"});
+      ctxItem(panel, "To-do list", () => addNodeCentered("todo", w), {kbd:"D", action:"add-todo"});
+      ctxItem(panel, "Frame", () => addNodeCentered("frame", w), {action:"add-frame"});
+      ctxItem(panel, "Horizontal swimlane", () => addNodeCentered("swimlane", w, {orientation:"horizontal"}), {action:"add-horizontal-lane"});
+      ctxItem(panel, "Vertical swimlane", () => addNodeCentered("swimlane", w, {orientation:"vertical"}), {action:"add-vertical-lane"});
+    }, {open:true});
+    ctxGroup(m, "canvas:layout", "Layout", panel => {
+      ctxItem(panel, "Tree layout", layoutMindMapTree, {action:"layout-tree"});
+      ctxItem(panel, "Schema layout", layoutSchemaTables, {action:"layout-schema"});
+      ctxItem(panel, "Clean up to grid", cleanUpToGrid, {action:"cleanup-grid"});
+      ctxItem(panel, "Snap to grid", toggleSnapToGrid, {action:"toggle-snap", pressed:snapToGrid});
+    });
+    ctxGroup(m, "canvas:view", "View", panel => {
+      ctxItem(panel, "Fit diagram", fitView, {kbd:"F", action:"fit"});
+      ctxItem(panel, "Actual size (100%)", () => zoomAtClient(1, x, y), {action:"zoom-actual"});
+      ctxSep(panel);
+      ctxItem(panel, "Zoom in", () => zoomAtClient(view.k * 1.2, x, y), {action:"zoom-in"});
+      ctxItem(panel, "Zoom out", () => zoomAtClient(view.k / 1.2, x, y), {action:"zoom-out"});
+    });
   });
 }
 
@@ -5685,11 +5885,13 @@ board.addEventListener("wheel", hideCtx, { passive:true });
 /* --------------------------- Seed data ---------------------------- */
 function seed(){
   const N = (o) => { o.id = uid(); state.nodes.push(o); return o.id; };
-  const E = (from, to, kind, label, fromField, toField) => {
+  const E = (from, to, kind, label, fromField, toField, options = {}) => {
     const e = {id: uid(), from, to, kind, label: label||""};
     if (fromField) e.fromField = fromField;
     if (toField)   e.toField   = toField;
+    Object.assign(e, options);
     state.edges.push(e);
+    return e.id;
   };
 
   const strategy = N({type:"concept", x:60,  y:220, title:"Loyalty program launch", notes:"Q3 initiative — north star: repeat purchase rate.", color:"#FFE9A8"});
@@ -5697,17 +5899,17 @@ function seed(){
   const referral = N({type:"concept", x:320, y:180, title:"Referral engine", notes:"", color:"#CFE8FF"});
   const measure  = N({type:"concept", x:320, y:350, title:"Measurement plan", notes:"Holdout design + CUPED on pre-period spend.", color:"#D8F3DC"});
 
-  const customers = N({type:"table", x:640, y:60, title:"customers", color:"#16232F", notes:"", fields:[
+  const customers = N({type:"table", x:720, y:60, title:"customers", color:"#16232F", notes:"", fields:[
     {id:"f_cust_pk",   name:"customer_id", type:"SERIAL", pk:true,  fk:false, nullable:false},
     {id:"f_cust_email",name:"email",       type:"VARCHAR(255)", pk:false, fk:false, nullable:false},
     {id:"f_cust_tier", name:"tier",        type:"VARCHAR(20)",  pk:false, fk:false, nullable:true},
     {id:"f_cust_join", name:"joined_at",   type:"TIMESTAMP",    pk:false, fk:false, nullable:false}]});
-  const orders = N({type:"table", x:980, y:80, title:"orders", color:"#2456E6", notes:"", fields:[
+  const orders = N({type:"table", x:990, y:80, title:"orders", color:"#2456E6", notes:"", fields:[
     {id:"f_ord_pk",   name:"order_id",    type:"SERIAL", pk:true,  fk:false, nullable:false},
     {id:"f_ord_cust", name:"customer_id", type:"INT",    pk:false, fk:true,  nullable:false},
     {id:"f_ord_total",name:"total",       type:"DECIMAL(12,2)", pk:false, fk:false, nullable:false},
     {id:"f_ord_ts",   name:"placed_at",   type:"TIMESTAMP",     pk:false, fk:false, nullable:false}]});
-  const rewards = N({type:"table", x:660, y:330, title:"reward_events", color:"#1E7A4F", notes:"", fields:[
+  const rewards = N({type:"table", x:720, y:330, title:"reward_events", color:"#1E7A4F", notes:"", fields:[
     {id:"f_rw_pk",   name:"event_id",    type:"SERIAL", pk:true,  fk:false, nullable:false},
     {id:"f_rw_cust", name:"customer_id", type:"INT",    pk:false, fk:true,  nullable:false},
     {id:"f_rw_pts",  name:"points",      type:"INT",    pk:false, fk:false, nullable:false},
@@ -5720,6 +5922,35 @@ function seed(){
   E(measure,  rewards,  "link", "sources");
   E(customers, orders,  "1:N", "", "f_cust_pk", "f_ord_cust");
   E(customers, rewards, "1:N", "", "f_cust_pk", "f_rw_cust");
+
+  /* The fresh document doubles as a compact feature tour. Structural nodes are
+     intentionally added after the original example so its established ids and
+     edge order remain stable; render() still paints containers behind content. */
+  N({type:"text", x:38, y:12, title:"Loyalty program system map", fontSize:30,
+     fontColor:"#16232F", color:"#CFE8FF", w:520});
+  N({type:"frame", x:30, y:75, title:"Strategy & experiments", color:"#007873", w:500, h:425});
+  N({type:"swimlane", orientation:"horizontal", x:560, y:30, title:"Data model",
+     color:"#E7F4F3", titleColor:"#007873", w:690, h:490});
+  N({type:"swimlane", orientation:"vertical", x:1280, y:30, title:"Delivery & evidence",
+     color:"#FBE8EC", titleColor:"#C20029", w:300, h:490});
+  const evidence = N({type:"note", x:1310, y:105, title:"Launch decision",
+     content:"## Why this matters\n- **Hypothesis:** tiers increase repeat orders\n- [x] Define the holdout\n- [ ] Review guardrails\n`owner: Growth + Data`",
+     color:"#FFE9A8", fontSize:13, w:240});
+  const checklist = N({type:"todo", x:1320, y:350, title:"Launch readiness", notes:"",
+     color:"#E9E2F8", items:[
+       {id:"i_release_design", text:"Approve experiment design", done:true},
+       {id:"i_release_events", text:"Validate tracking events"},
+       {id:"i_release_readout", text:"Schedule results readout"}
+     ]});
+
+  E(orders, evidence, "link", "Produces", null, null, {
+    fromAnchor:"mr", toAnchor:"ml", endArrow:true, lineColor:"#007873", lineStyle:"solid"
+  });
+  E(evidence, checklist, "link", "Triggers", null, null, {
+    fromAnchor:"bc", toAnchor:"tc", routing:"ortho", endArrow:true,
+    lineColor:"#007873", lineWidth:2.5, lineStyle:"dot",
+    labelTextColor:"#FFFFFF", labelBackgroundColor:"#C20029"
+  });
 }
 function perfSeed(n = 500){
   state.nodes = [];
@@ -5777,6 +6008,8 @@ window.__T = {
   generateSQL,
   render,
   nodeRect,
+  smartAlignmentSnap,
+  alignmentGuideGeometry,
   conceptShape,
   setConceptShape,
   textBoxShape,
@@ -5816,6 +6049,9 @@ window.__T = {
   edgePath,
   edgeRenderPath,
   edgeLabelPoint,
+  edgeLineColor,
+  edgeLabelTextColor,
+  edgeLabelBackgroundColor,
   polylineMidpoint,
   notationVertex,
   orthoEdgeRoute,

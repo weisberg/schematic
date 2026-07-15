@@ -152,6 +152,43 @@ function closeEnough(a, b, msg){
     assert.strictEqual(window.__T.doc.dirty, false, "fallback save clears dirty state");
   }
 
+  /* SCH-083 — the starter document is a feature tour, not a shape gallery */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const nodeTypes = new Set(T.state.nodes.map(n => n.type));
+    for (const type of ["concept", "text", "note", "todo", "table", "frame", "swimlane"])
+      assert(nodeTypes.has(type), `starter document includes the ${type} node type`);
+
+    const lanes = T.state.nodes.filter(n => n.type === "swimlane");
+    sameList(lanes.map(T.swimlaneOrientation).sort(), ["horizontal", "vertical"],
+      "starter document demonstrates both swimlane orientations");
+    assert(T.state.nodes.filter(n => n.type === "concept").every(n => !Object.hasOwn(n, "shape") && T.conceptShape(n) === "process"),
+      "starter concepts keep the normal default shape instead of becoming a shape gallery");
+    const plainText = T.state.nodes.find(n => n.type === "text");
+    assert(plainText && !Object.hasOwn(plainText, "shape") && T.textBoxShape(plainText) === "none",
+      "starter plain text remains an unboxed text primitive");
+
+    const frame = T.state.nodes.find(n => n.type === "frame");
+    const horizontal = lanes.find(n => T.swimlaneOrientation(n) === "horizontal");
+    const vertical = lanes.find(n => T.swimlaneOrientation(n) === "vertical");
+    assert(T.containerContainedNodes(frame).filter(n => n.type === "concept").length >= 4,
+      "strategy frame demonstrates concept containment");
+    assert(T.containerContainedNodes(horizontal).filter(n => n.type === "table").length >= 3,
+      "horizontal swimlane demonstrates table containment");
+    sameList(T.containerContainedNodes(vertical).map(n => n.type).sort(), ["note", "todo"],
+      "vertical swimlane demonstrates rich-note and to-do containment");
+
+    const checklist = T.state.nodes.find(n => n.title === "Launch readiness");
+    assert(checklist.items.some(item => item.done) && checklist.items.some(item => !item.done),
+      "starter to-do shows both completed and open items");
+    const styled = T.state.edges.find(e => e.label === "Triggers");
+    assert(styled && styled.routing === "ortho" && styled.endArrow && styled.lineStyle === "dot",
+      "starter links demonstrate orthogonal routing, arrows, and line styling");
+    assert(styled.labelTextColor && styled.labelBackgroundColor,
+      "starter link demonstrates independent label text and background colors");
+  }
+
   {
     const { window } = makeDom({ fsa: true });
     assert.strictEqual(window.__T.FSA, true, "FSA feature-detects present API");
@@ -317,7 +354,14 @@ function closeEnough(a, b, msg){
     T.selectNode(first.id);
     let g = window.document.querySelector(`[data-node="${second.id}"]`);
     firePointer(window, g, "pointerdown", { clientX:second.x + 5, clientY:second.y + 5, shiftKey:true });
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      { clientX:second.x + 5, clientY:second.y + 5, shiftKey:true });
     sameList(T.selection.ids.sort(), [first.id, second.id].sort(), "shift-click toggles a node into the selection");
+    g = window.document.querySelector(`[data-node="${second.id}"]`);
+    firePointer(window, g, "pointerdown", { clientX:second.x + 5, clientY:second.y + 5, shiftKey:true });
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      { clientX:second.x + 5, clientY:second.y + 5, shiftKey:true });
+    sameList(T.selection.ids, [first.id], "stationary Shift-click still toggles a selected node out");
 
     T.clearSelection();
     T.render();
@@ -347,6 +391,188 @@ function closeEnough(a, b, msg){
     T.duplicateSelection();
     assert.strictEqual(T.state.nodes.length, beforeCount + 2, "duplicate operates on all selected nodes");
     assert.strictEqual(T.selection.ids.length, 2, "duplicate selects the duplicated node set");
+  }
+
+  /* SCH-080 — Shift temporarily snaps item drags to the visible grid */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    T.importDocText(JSON.stringify({version:1, nextId:2, edges:[], nodes:[
+      {id:"n1", type:"concept", x:61, y:70, title:"Shift me", notes:"", color:"#FFE9A8"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    let node = T.state.nodes[0];
+    let group = doc.querySelector('[data-node="n1"]');
+    const beforeDepth = T.undoDepth;
+    firePointer(window, group, "pointerdown", {clientX:66, clientY:75, shiftKey:true});
+    firePointer(window, board, "pointermove", {clientX:103, clientY:106, shiftKey:true});
+    assert.strictEqual(node.x, 96, "Shift held from pointerdown snaps drag x to the 24px grid");
+    assert.strictEqual(node.y, 96, "Shift held from pointerdown snaps drag y to the 24px grid");
+    assert.strictEqual(node.x % 24, 0, "Shift-dragged node x is grid aligned");
+    assert.strictEqual(node.y % 24, 0, "Shift-dragged node y is grid aligned");
+    assert(T.selection.ids.includes("n1"), "Shift-drag selects an initially unselected node");
+    assert.strictEqual(doc.getElementById("btnSnap").getAttribute("aria-pressed"), "false",
+      "temporary Shift snapping does not enable persistent snap");
+    assert.strictEqual(T.undoDepth, beforeDepth + 1, "Shift drag creates one undo entry");
+
+    firePointer(window, board, "pointermove", {clientX:89, clientY:94, shiftKey:false});
+    assert.strictEqual(node.x, 84, "releasing Shift mid-drag restores fine-grid x positioning");
+    assert.strictEqual(node.y, 88, "releasing Shift mid-drag restores fine-grid y positioning");
+    assert(node.x % 24 !== 0 && node.y % 24 !== 0,
+      "released modifier no longer forces the visible grid");
+    firePointer(window, board, "pointerup", {clientX:89, clientY:94});
+    assert.strictEqual(T.undoDepth, beforeDepth + 1, "modifier changes remain one drag undo step");
+
+    T.undo();
+    node = T.state.nodes[0];
+    assert.deepStrictEqual({x:node.x, y:node.y}, {x:61, y:70}, "undo restores the pre-drag position");
+    doc.getElementById("btnSnap").click();
+    group = doc.querySelector('[data-node="n1"]');
+    firePointer(window, group, "pointerdown", {clientX:66, clientY:75});
+    firePointer(window, board, "pointermove", {clientX:89, clientY:94});
+    firePointer(window, board, "pointerup", {clientX:89, clientY:94});
+    assert.strictEqual(node.x % 24, 0, "persistent snap still aligns x without Shift");
+    assert.strictEqual(node.y % 24, 0, "persistent snap still aligns y without Shift");
+  }
+
+  /* SCH-081 — nearby objects expose edge/center guides and capture matching axes */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const moving = {x:96, y:194, w:100, h:50, cx:146, cy:219};
+    const target = {x:100, y:200, w:120, h:60, cx:160, cy:230};
+    const snap = T.smartAlignmentSnap(moving, [target], 6);
+    assert.strictEqual(snap.dx, 4, "left edge captures the nearest target x coordinate");
+    assert.strictEqual(snap.dy, 6, "top edge captures the nearest target y coordinate");
+    assert.strictEqual(snap.xMatch.movingKey, "left", "x guide records the matching moving edge");
+    assert.strictEqual(snap.yMatch.movingKey, "top", "y guide records the matching moving edge");
+    const geometry = T.alignmentGuideGeometry(snap,
+      {x:100, y:200, w:100, h:50, cx:150, cy:225}, 24);
+    assert.strictEqual(geometry.x.coordinate, 100, "vertical guide uses the captured x coordinate");
+    assert.strictEqual(geometry.y.coordinate, 200, "horizontal guide uses the captured y coordinate");
+    assert(geometry.x.from < 200 && geometry.x.to > 260,
+      "vertical guide spans both objects with overshoot");
+    assert(geometry.y.from < 100 && geometry.y.to > 220,
+      "horizontal guide spans both objects with overshoot");
+
+    const centerSnap = T.smartAlignmentSnap(
+      {x:107, y:320, w:100, h:40, cx:157, cy:340},
+      [{x:100, y:100, w:120, h:80, cx:160, cy:140}], 4);
+    assert.strictEqual(centerSnap.xMatch.movingKey, "center", "horizontal centers can align");
+    assert.strictEqual(centerSnap.xMatch.targetKey, "center", "center guide targets the other center");
+    assert.strictEqual(centerSnap.yMatch, null, "axes outside the threshold remain independent");
+    const free = T.smartAlignmentSnap(
+      {x:107, y:320, w:100, h:40, cx:157, cy:340},
+      [{x:100, y:100, w:120, h:80, cx:160, cy:140}], 2);
+    assert.strictEqual(free.xMatch, null, "coordinates outside the threshold stay unsnapped");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+      {id:"target", type:"concept", x:250, y:130, title:"Target", notes:"", color:"#CFE4FA"},
+      {id:"moving", type:"concept", x:40, y:300, title:"Moving", notes:"", color:"#FFE9A8"},
+      {id:"partner", type:"concept", x:500, y:400, title:"Partner", notes:"", color:"#D7F0D8"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    T.setSelection("node", ["moving", "partner"]);
+    T.render();
+    const movingNode = T.state.nodes.find(n => n.id === "moving");
+    const partnerNode = T.state.nodes.find(n => n.id === "partner");
+    const movingStart = {x:movingNode.x, y:movingNode.y};
+    const partnerStart = {x:partnerNode.x, y:partnerNode.y};
+    let group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:45, clientY:305});
+    firePointer(window, board, "pointermove", {clientX:251, clientY:139});
+    assert.strictEqual(movingNode.x, 250, "nearby left edges snap exactly during drag");
+    assert.strictEqual(movingNode.y, 130, "nearby top edges snap exactly during drag");
+    assert(doc.querySelector("[data-align-guide-x]"), "x alignment guide appears during drag");
+    assert(doc.querySelector("[data-align-guide-y]"), "y alignment guide appears during drag");
+    assert.strictEqual(partnerNode.x - partnerStart.x, movingNode.x - movingStart.x,
+      "multi-selection uses one shared snapped x delta");
+    assert.strictEqual(partnerNode.y - partnerStart.y, movingNode.y - movingStart.y,
+      "multi-selection uses one shared snapped y delta");
+    assert(!T.serializedSvg(true).includes("data-align-guide"),
+      "SVG export excludes temporary object-alignment guides");
+    firePointer(window, board, "pointerup", {clientX:251, clientY:139});
+    assert.strictEqual(movingNode.x, 250, "drop preserves the captured x coordinate");
+    assert.strictEqual(movingNode.y, 130, "drop preserves the captured y coordinate");
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "alignment guides clear after drop");
+
+    T.undo();
+    const restoredMoving = T.state.nodes.find(n => n.id === "moving");
+    T.setSelection("node", "moving");
+    T.render();
+    group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:55, clientY:315});
+    firePointer(window, board, "pointermove", {clientX:261, clientY:249});
+    assert.strictEqual(restoredMoving.x, 250, "x captures without a nearby y coordinate");
+    assert.strictEqual(restoredMoving.y, 236, "unmatched y retains fine-grid movement");
+    assert(doc.querySelector("[data-align-guide-x]"), "independent x guide is visible");
+    assert(!doc.querySelector("[data-align-guide-y]"), "independent drag does not invent a y guide");
+    firePointer(window, board, "pointermove", {clientX:340, clientY:280});
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "guides clear as soon as the drag moves away");
+    firePointer(window, board, "pointercancel", {clientX:340, clientY:280});
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "cancelled drag leaves no alignment guides");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    T.importDocText(JSON.stringify({version:1, nextId:3, edges:[], nodes:[
+      {id:"target", type:"concept", x:250, y:130, title:"Target", notes:"", color:"#CFE4FA"},
+      {id:"moving", type:"concept", x:40, y:300, title:"Moving", notes:"", color:"#FFE9A8"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    let movingNode = T.state.nodes.find(n => n.id === "moving");
+    let group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:45, clientY:305, shiftKey:true});
+    firePointer(window, board, "pointermove", {clientX:251, clientY:139, shiftKey:true});
+    assert.strictEqual(movingNode.x, 240, "Shift grid snapping takes precedence over object guides");
+    assert.strictEqual(movingNode.y, 144, "Shift grid snapping controls both axes");
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "Shift grid snapping suppresses object guides");
+    firePointer(window, board, "pointerup", {clientX:251, clientY:139, shiftKey:true});
+
+    T.undo();
+    movingNode = T.state.nodes.find(n => n.id === "moving");
+    doc.getElementById("btnSnap").click();
+    group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:45, clientY:305});
+    firePointer(window, board, "pointermove", {clientX:251, clientY:139});
+    assert.strictEqual(movingNode.x, 240, "persistent grid snapping takes precedence over object guides");
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "persistent grid mode suppresses object guides");
+    firePointer(window, board, "pointerup", {clientX:251, clientY:139});
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    const nodes = [
+      {id:"target", type:"concept", x:250, y:130, title:"Target", notes:"", color:"#CFE4FA"},
+      {id:"moving", type:"concept", x:40, y:300, title:"Moving", notes:"", color:"#FFE9A8"}
+    ];
+    for (let i = 0; i < 149; i++) nodes.push({id:`f${i}`, type:"concept",
+      x:2000 + i*180, y:1200 + i*90, title:`Filler ${i}`, notes:"", color:"#D7F0D8"});
+    T.importDocText(JSON.stringify({version:1, nextId:200, edges:[], nodes}));
+    T.setView({x:0, y:0, k:1});
+    const group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:45, clientY:305});
+    firePointer(window, board, "pointermove", {clientX:251, clientY:139});
+    firePointer(window, board, "pointermove", {clientX:250, clientY:138});
+    assert.strictEqual(doc.querySelectorAll("[data-align-guide-x]").length, 1,
+      "large-canvas fast rendering replaces the previous x guide");
+    assert.strictEqual(doc.querySelectorAll("[data-align-guide-y]").length, 1,
+      "large-canvas fast rendering replaces the previous y guide");
+    assert(T.renderStats.fast > 0, "large-canvas guide path uses fast drag rendering");
+    firePointer(window, board, "pointerup", {clientX:250, clientY:138});
+    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
+      "large-canvas guides clear after drop");
   }
 
   {
@@ -664,7 +890,8 @@ function closeEnough(a, b, msg){
     assert(ctx.querySelector('[data-edge-arrow-toggle="start"]'), "edge context menu exposes start/end arrows");
     assert(ctx.querySelector('[aria-label="Line style"]') && ctx.querySelector('[aria-label="Line width"]'),
       "edge context menu exposes line style and width");
-    assert(ctx.querySelector('.swatch[title="#007873"]'), "edge context menu exposes line colors");
+    assert(ctx.querySelector('[data-ctx-group="edge:appearance"] .swatch[title="#007873"]'),
+      "edge context menu exposes line colors");
     ctx.querySelector('[data-edge-arrow-toggle="start"]').click();
     assert.strictEqual(edge.startArrow, undefined, "context menu toggles a start arrow off");
 
@@ -683,7 +910,7 @@ function closeEnough(a, b, msg){
 
     T.edgeMenu(edge, 10, 10);
     ctx = doc.getElementById("ctxMenu");
-    ctx.querySelector('.swatch[title="#007873"]').click();
+    ctx.querySelector('[data-ctx-group="edge:appearance"] .swatch[title="#007873"]').click();
     assert.strictEqual(edge.lineColor, "#007873", "context menu changes line color");
 
     const relation = T.state.edges.find(e => e.kind === "1:N");
@@ -691,6 +918,163 @@ function closeEnough(a, b, msg){
     T.render();
     line = doc.querySelector(`[data-edge="${relation.id}"] [data-edge-line]`);
     assert.strictEqual(line.getAttribute("stroke-dasharray"), "none", "legacy relation edges remain solid by default");
+  }
+
+  /* SCH-082 — edge-label text and background colors override independently */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    let edge = T.state.edges.find(e => e.label === "drives");
+    const edgeId = edge.id;
+    const rendered = () => ({
+      line:doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`),
+      text:doc.querySelector(`[data-edge="${edgeId}"] [data-edge-label]`),
+      background:doc.querySelector(`[data-edge="${edgeId}"] [data-edge-label-bg]`)
+    });
+    const commitColor = (selector, color) => {
+      const well = doc.querySelector(`${selector} .colorwell`);
+      assert(well, `${selector} exposes a custom color well`);
+      well.value = color;
+      well.dispatchEvent(new window.Event("input", {bubbles:true}));
+      well.dispatchEvent(new window.Event("change", {bubbles:true}));
+    };
+
+    T.setSelection("edge", edgeId);
+    T.render();
+    let parts = rendered();
+    assert.strictEqual(parts.text.getAttribute("fill"), T.edgeLineColor(edge),
+      "legacy label text inherits the link color");
+    assert.strictEqual(parts.background.getAttribute("fill"), T.themeColors().labelBg,
+      "legacy label background keeps the theme-aware canvas color");
+    assert.strictEqual(T.edgeLabelTextColor(edge), T.edgeLineColor(edge),
+      "label text accessor reports the inherited link color");
+    assert.strictEqual(T.edgeLabelBackgroundColor(edge), T.themeColors().labelBg,
+      "label background accessor reports the inherited theme color");
+    assert(doc.getElementById("edgeLabelTextColor") && doc.getElementById("edgeLabelBackgroundColor"),
+      "edge inspector exposes independent label text and background controls");
+    assert.strictEqual(doc.querySelector('[data-color-inherit="label-text"]').getAttribute("aria-pressed"), "true",
+      "text control communicates that it currently inherits the link color");
+    assert.strictEqual(doc.querySelector('[data-color-inherit="label-background"]').getAttribute("aria-pressed"), "true",
+      "background control communicates that it currently inherits the canvas background");
+
+    commitColor("#edgeLineColor", "#007873");
+    parts = rendered();
+    assert.strictEqual(parts.line.getAttribute("stroke"), "#007873", "line color changes independently");
+    assert.strictEqual(parts.text.getAttribute("fill"), "#007873",
+      "unoverridden label text follows a changed link color");
+
+    const beforeOverrides = T.undoDepth;
+    commitColor("#edgeLabelTextColor", "#c63a3a");
+    commitColor("#edgeLabelBackgroundColor", "#ffe9a8");
+    assert(T.undoDepth >= beforeOverrides + 2, "each label color is independently undoable");
+    assert.strictEqual(edge.labelTextColor, "#c63a3a", "inspector stores an explicit label text color");
+    assert.strictEqual(edge.labelBackgroundColor, "#ffe9a8", "inspector stores an explicit label background color");
+
+    commitColor("#edgeLineColor", "#2456e6");
+    parts = rendered();
+    assert.strictEqual(parts.line.getAttribute("stroke"), "#2456e6", "link keeps its newly selected color");
+    assert.strictEqual(parts.text.getAttribute("fill"), "#c63a3a",
+      "explicit label text remains independent when the link color changes");
+    assert.strictEqual(parts.background.getAttribute("fill"), "#ffe9a8",
+      "explicit label background remains independent when the link color changes");
+    assert.strictEqual(parts.background.getAttribute("stroke"), "#2456e6",
+      "label outline continues to identify the associated link");
+
+    const serializedWithOverrides = T.serializeDocument();
+    const saved = JSON.parse(serializedWithOverrides).edges.find(e => e.id === edgeId);
+    assert.deepStrictEqual(
+      {labelTextColor:saved.labelTextColor, labelBackgroundColor:saved.labelBackgroundColor},
+      {labelTextColor:"#c63a3a", labelBackgroundColor:"#ffe9a8"},
+      "explicit label colors serialize without changing the line color field");
+    const svg = T.serializedSvg(true);
+    assert(svg.includes('data-edge-label="1"') && svg.includes('fill="#c63a3a"'),
+      "SVG export preserves the explicit label text color");
+    assert(svg.includes('data-edge-label-bg="1"') && svg.includes('fill="#ffe9a8"'),
+      "SVG export preserves the explicit label background color");
+    const pngClone = T.cloneBoardForPng(true).clone;
+    const pngEdge = pngClone.querySelector(`[data-edge="${edgeId}"]`);
+    assert.strictEqual(pngEdge.querySelector("[data-edge-label]").getAttribute("fill"), "#c63a3a",
+      "PNG source clone preserves the explicit label text color");
+    assert.strictEqual(pngEdge.querySelector("[data-edge-label-bg]").getAttribute("fill"), "#ffe9a8",
+      "PNG source clone preserves the explicit label background color");
+    const { window:importWindow } = makeDom();
+    importWindow.__T.importDocText(serializedWithOverrides);
+    const importedEdge = importWindow.__T.state.edges.find(e => e.id === edgeId);
+    assert.deepStrictEqual(
+      {labelTextColor:importedEdge.labelTextColor, labelBackgroundColor:importedEdge.labelBackgroundColor},
+      {labelTextColor:"#c63a3a", labelBackgroundColor:"#ffe9a8"},
+      "valid label color overrides restore on import");
+    const copied = T.remapPayload(T.cloneSelectionPayload([edge.from, edge.to]), 36);
+    assert.deepStrictEqual(
+      {labelTextColor:copied.edges[0].labelTextColor, labelBackgroundColor:copied.edges[0].labelBackgroundColor},
+      {labelTextColor:"#c63a3a", labelBackgroundColor:"#ffe9a8"},
+      "copy/paste preserves both label color overrides");
+
+    let resetText = doc.querySelector('#edgeLabelTextColor [data-color-inherit="label-text"]');
+    assert(resetText.textContent.includes("Reset"), "explicit text color offers an inheritance reset");
+    resetText.click();
+    assert.strictEqual(edge.labelTextColor, undefined, "text reset removes the explicit override");
+    assert.strictEqual(rendered().text.getAttribute("fill"), "#2456e6",
+      "reset label text resumes live link-color inheritance");
+
+    const beforeBackgroundReset = T.undoDepth;
+    const resetBackground = doc.querySelector('#edgeLabelBackgroundColor [data-color-inherit="label-background"]');
+    resetBackground.click();
+    assert.strictEqual(edge.labelBackgroundColor, undefined, "background reset removes only its override");
+    assert.strictEqual(rendered().background.getAttribute("fill"), T.themeColors().labelBg,
+      "reset background resumes theme inheritance");
+    assert.strictEqual(T.undoDepth, beforeBackgroundReset + 1, "background reset creates one undo step");
+    T.undo();
+    edge = T.state.edges.find(e => e.id === edgeId);
+    assert.strictEqual(edge.labelBackgroundColor, "#ffe9a8", "undo restores the background override");
+    T.redo();
+    edge = T.state.edges.find(e => e.id === edgeId);
+    assert.strictEqual(edge.labelBackgroundColor, undefined, "redo reapplies the background reset");
+
+    T.edgeMenu(edge, 10, 10);
+    let ctx = doc.getElementById("ctxMenu");
+    let textColors = ctx.querySelector('[data-color-override="label-text"]');
+    let backgroundColors = ctx.querySelector('[data-color-override="label-background"]');
+    assert(textColors && backgroundColors, "edge context menu exposes both label color controls");
+    textColors.querySelector('.swatch[title="#C63A3A"]').click();
+    assert.strictEqual(edge.labelTextColor, "#C63A3A", "context menu changes label text color");
+
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    backgroundColors = ctx.querySelector('[data-color-override="label-background"]');
+    backgroundColors.querySelector('.swatch[title="#007873"]').click();
+    assert.strictEqual(edge.labelBackgroundColor, "#007873", "context menu changes label background color");
+
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    ctx.querySelector('[data-ctx-action="inherit-label-text"]').click();
+    assert.strictEqual(edge.labelTextColor, undefined, "context menu resets label text to the link color");
+    assert.strictEqual(edge.labelBackgroundColor, "#007873", "text reset does not change the label background");
+    T.edgeMenu(edge, 10, 10);
+    ctx = doc.getElementById("ctxMenu");
+    ctx.querySelector('[data-ctx-action="inherit-label-background"]').click();
+    assert.strictEqual(edge.labelBackgroundColor, undefined,
+      "context menu resets the background without changing the link");
+
+    T.applyTheme("dark", {render:true});
+    assert.strictEqual(rendered().background.getAttribute("fill"), T.themeColors("dark").labelBg,
+      "inherited label background follows theme changes");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const parsed = JSON.parse(T.serializeDocument());
+    const edge = parsed.edges.find(e => e.label === "drives");
+    edge.labelTextColor = "not-a-color";
+    edge.labelBackgroundColor = "#12";
+    T.importDocText(JSON.stringify(parsed));
+    const imported = T.state.edges.find(e => e.id === edge.id);
+    assert.strictEqual(imported.labelTextColor, undefined, "invalid imported label text color is discarded");
+    assert.strictEqual(imported.labelBackgroundColor, undefined,
+      "invalid imported label background color is discarded");
+    assert.strictEqual(T.edgeLabelTextColor(imported), T.edgeLineColor(imported),
+      "invalid text override safely falls back to the link color");
   }
 
   /* SCH-014 — quick-jump / command palette */
@@ -943,14 +1327,17 @@ function closeEnough(a, b, msg){
     T.setSelection("node", [edge.from, edge.to]);
     T.render();
     const fromNode = T.state.nodes.find(n => n.id === edge.from);
+    const beforeFromMove = {x:fromNode.x, y:fromNode.y};
     const fromGroup = window.document.querySelector(`[data-node="${edge.from}"]`);
     firePointer(window, fromGroup, "pointerdown", {clientX:fromNode.x + 4, clientY:fromNode.y + 4});
     firePointer(window, window.document.getElementById("board"), "pointermove",
       {clientX:fromNode.x + 28, clientY:fromNode.y + 28});
     firePointer(window, window.document.getElementById("board"), "pointerup",
       {clientX:fromNode.x + 28, clientY:fromNode.y + 28});
-    assert.strictEqual(edge.orthoX, beforeGroupMove.x + 24, "moving both endpoints translates waypoint x");
-    assert.strictEqual(edge.orthoY, beforeGroupMove.y + 24, "moving both endpoints translates waypoint y");
+    assert.strictEqual(edge.orthoX, beforeGroupMove.x + (fromNode.x - beforeFromMove.x),
+      "moving both endpoints translates waypoint by the snapped x delta");
+    assert.strictEqual(edge.orthoY, beforeGroupMove.y + (fromNode.y - beforeFromMove.y),
+      "moving both endpoints translates waypoint by the snapped y delta");
 
     T.setSelection("edge", edge.id);
     T.render();
@@ -1147,9 +1534,10 @@ function closeEnough(a, b, msg){
     const T = window.__T, doc = window.document;
     for (const id of ["btnAddSwimlane","btnAddHorizontalLane","btnAddVerticalLane"])
       assert(doc.getElementById(id), `swimlane toolbar control #${id} exists`);
+    const before = T.state.nodes.filter(n => n.type === "swimlane").length;
     doc.getElementById("btnAddHorizontalLane").click();
     doc.getElementById("btnAddVerticalLane").click();
-    sameList(T.state.nodes.filter(n => n.type === "swimlane").map(T.swimlaneOrientation), ["horizontal","vertical"],
+    sameList(T.state.nodes.filter(n => n.type === "swimlane").slice(before).map(T.swimlaneOrientation), ["horizontal","vertical"],
       "toolbar creates both swimlane orientations");
     const commands = T.paletteItems().filter(item => item.type === "command").map(item => item.command);
     assert(commands.includes("addHorizontalLane") && commands.includes("addVerticalLane"),
@@ -1261,8 +1649,116 @@ function closeEnough(a, b, msg){
     assert(T.state.nodes.some(n => n.type === "text"), "toolbar creates plain text");
     assert(T.paletteItems().some(item => item.command === "addText"), "command palette exposes plain text creation");
     firePointer(window, doc.getElementById("board"), "contextmenu", {clientX:1100, clientY:700});
-    assert(doc.getElementById("ctxMenu").textContent.includes("Add plain text here"),
+    assert(doc.querySelector('#ctxMenu [data-ctx-action="add-text"]'),
       "canvas right-click menu exposes plain text creation");
+  }
+
+  /* SCH-079 — blank-canvas context menu */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    T.setView({x:40, y:20, k:2});
+    firePointer(window, board, "contextmenu", {clientX:1000, clientY:700, button:2});
+    let menu = doc.getElementById("ctxMenu");
+    assert.strictEqual(menu.style.display, "block", "blank-canvas right-click opens the canvas menu");
+    assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
+    assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
+    sameList([...menu.querySelectorAll(".ctxgroup>summary span")].map(s => s.textContent),
+      ["Create", "Layout", "View"], "canvas menu groups creation, layout, and view actions");
+    assert(menu.querySelector('[data-ctx-group="canvas:create"]').open,
+      "creation actions are visible immediately");
+    const createActions = [...menu.querySelectorAll('[data-ctx-group="canvas:create"] [data-ctx-action]')]
+      .map(button => button.getAttribute("data-ctx-action"));
+    sameList(createActions, ["add-concept", "add-text", "add-note", "add-table", "add-todo", "add-frame",
+      "add-horizontal-lane", "add-vertical-lane"], "canvas menu exposes every primitive");
+    sameList([...menu.querySelectorAll('[data-ctx-group="canvas:layout"] [data-ctx-action]')]
+      .map(button => button.getAttribute("data-ctx-action")),
+      ["layout-tree", "layout-schema", "cleanup-grid", "toggle-snap"],
+      "canvas menu reuses every layout action");
+    sameList([...menu.querySelectorAll('[data-ctx-group="canvas:view"] [data-ctx-action]')]
+      .map(button => button.getAttribute("data-ctx-action")),
+      ["fit", "zoom-actual", "zoom-in", "zoom-out"],
+      "canvas menu exposes fit and direct zoom controls");
+
+    const beforeCreate = T.state.nodes.length;
+    menu.querySelector('[data-ctx-action="add-text"]').click();
+    const text = T.state.nodes[T.state.nodes.length - 1];
+    assert.strictEqual(T.state.nodes.length, beforeCreate + 1, "canvas menu creates a primitive");
+    assert.strictEqual(text.type, "text", "plain-text action creates the requested primitive");
+    const textRect = T.nodeRect(text);
+    closeEnough(textRect.cx, 480, "created text is horizontally centered on the clicked world coordinate");
+    closeEnough(textRect.cy, 340, "created text is vertically centered on the clicked world coordinate");
+    assert.strictEqual(menu.style.display, "none", "creation closes the context menu");
+
+    const textElement = doc.querySelector(`[data-node="${text.id}"]`);
+    firePointer(window, textElement, "contextmenu", {clientX:500, clientY:400, button:2});
+    assert.strictEqual(menu.querySelector(".ctxhead small").textContent, "Node",
+      "node right-click keeps precedence over the canvas menu");
+    assert(!menu.querySelector('[data-ctx-group="canvas:create"]'),
+      "node menu does not leak canvas creation actions");
+    const edgeElement = doc.querySelector("[data-edge]");
+    firePointer(window, edgeElement, "contextmenu", {clientX:600, clientY:400, button:2});
+    assert.strictEqual(menu.querySelector(".ctxhead small").textContent, "Edge",
+      "edge right-click keeps precedence over the canvas menu");
+
+    firePointer(window, board, "contextmenu", {clientX:900, clientY:650, button:2});
+    T.state.nodes[0].x = 61;
+    T.state.nodes[0].y = 221;
+    menu.querySelector('[data-ctx-action="cleanup-grid"]').click();
+    assert(T.state.nodes.every(n => n.x % 24 === 0 && n.y % 24 === 0),
+      "clean-up action snaps all nodes to the visible grid");
+
+    firePointer(window, board, "contextmenu", {clientX:900, clientY:650, button:2});
+    const snapAction = menu.querySelector('[data-ctx-action="toggle-snap"]');
+    assert.strictEqual(snapAction.getAttribute("aria-pressed"), "false", "snap action reports its current state");
+    snapAction.click();
+    assert.strictEqual(doc.getElementById("btnSnap").getAttribute("aria-pressed"), "true",
+      "canvas menu toggles the shared snap-to-grid setting");
+    firePointer(window, board, "contextmenu", {clientX:900, clientY:650, button:2});
+    assert.strictEqual(menu.querySelector('[data-ctx-action="toggle-snap"]').getAttribute("aria-pressed"), "true",
+      "reopened canvas menu reflects the shared snap setting");
+
+    T.setView({x:-100, y:50, k:.5});
+    firePointer(window, board, "contextmenu", {clientX:600, clientY:400, button:2});
+    menu.querySelector('[data-ctx-action="zoom-actual"]').click();
+    closeEnough(T.view.k, 1, "actual-size action resets zoom to 100%");
+    firePointer(window, board, "contextmenu", {clientX:600, clientY:400, button:2});
+    menu.querySelector('[data-ctx-action="zoom-in"]').click();
+    closeEnough(T.view.k, 1.2, "zoom-in action increases canvas scale");
+    firePointer(window, board, "contextmenu", {clientX:600, clientY:400, button:2});
+    menu.querySelector('[data-ctx-action="zoom-out"]').click();
+    closeEnough(T.view.k, 1, "zoom-out action decreases canvas scale");
+    T.setView({x:0, y:0, k:.2});
+    firePointer(window, board, "contextmenu", {clientX:600, clientY:400, button:2});
+    menu.querySelector('[data-ctx-action="fit"]').click();
+    assert(T.view.k > .2, "fit action changes the view to contain the diagram");
+
+    firePointer(window, board, "contextmenu", {clientX:700, clientY:500, button:2});
+    firePointer(window, doc.body, "pointerdown", {clientX:20, clientY:20});
+    assert.strictEqual(menu.style.display, "none", "outside pointerdown dismisses the canvas menu");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    T.setView({x:0, y:0, k:1});
+    const cases = [
+      ["add-concept", "concept"], ["add-text", "text"], ["add-note", "note"],
+      ["add-table", "table"], ["add-todo", "todo"], ["add-frame", "frame"],
+      ["add-horizontal-lane", "swimlane", "horizontal"],
+      ["add-vertical-lane", "swimlane", "vertical"]
+    ];
+    cases.forEach(([action, type, orientation], index) => {
+      const point = {x:180 + index*70, y:140 + index*45};
+      firePointer(window, board, "contextmenu", {clientX:point.x, clientY:point.y, button:2});
+      doc.querySelector(`#ctxMenu [data-ctx-action="${action}"]`).click();
+      const node = T.state.nodes[T.state.nodes.length - 1];
+      const rect = T.nodeRect(node);
+      assert.strictEqual(node.type, type, `${action} creates the correct primitive type`);
+      if (orientation) assert.strictEqual(node.orientation, orientation, `${action} keeps its lane orientation`);
+      closeEnough(rect.cx, point.x, `${action} centers the rendered primitive horizontally`);
+      closeEnough(rect.cy, point.y, `${action} centers the rendered primitive vertically`);
+    });
   }
 
   /* SCH-020 — extended field metadata */
@@ -2513,9 +3009,9 @@ function closeEnough(a, b, msg){
     const board = doc.getElementById("board");
     firePointer(window, board, "contextmenu", {clientX:800, clientY:700});
     menu = doc.getElementById("ctxMenu");
-    assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Create or navigate",
+    assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Create, arrange, or view",
       "canvas menu explains its scope");
-    assert([...menu.querySelectorAll(".ctxitem span")].some(s => s.textContent === "Add rich note here"),
+    assert(menu.querySelector('[data-ctx-action="add-note"]'),
       "canvas menu retains all creation actions");
 
     T.importDocText(JSON.stringify({version:1,nextId:9,edges:[],nodes:[
