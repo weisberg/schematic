@@ -459,4 +459,3 @@ function clientToWorld(cx, cy){
   const b = board.getBoundingClientRect();
   return { x: (cx - b.left - view.x)/view.k, y: (cy - b.top - view.y)/view.k };
 }
-

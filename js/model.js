@@ -458,4 +458,3 @@ function addChildConcept(){
   render();
   focusTitleInput();
 }
-

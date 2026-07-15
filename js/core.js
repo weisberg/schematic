@@ -883,4 +883,3 @@ window.addEventListener("beforeunload", ev => {
   ev.preventDefault();
   ev.returnValue = "";
 });
-

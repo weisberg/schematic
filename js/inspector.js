@@ -1035,4 +1035,3 @@ function drawOnly(){
   renderMinimap();
 }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-

@@ -1053,4 +1053,3 @@ function closeShortcutModal(){
   if (shortcutModal && shortcutModal.parentNode) shortcutModal.parentNode.removeChild(shortcutModal);
   shortcutModal = null;
 }
-

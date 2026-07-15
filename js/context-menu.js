@@ -453,4 +453,3 @@ window.addEventListener("pointerdown", ev => {
 }, true);
 window.addEventListener("blur", hideCtx);
 board.addEventListener("wheel", hideCtx, { passive:true });
-

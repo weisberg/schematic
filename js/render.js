@@ -787,4 +787,3 @@ function truncate(str, maxW, font){
   while (s.length > 1 && textW(s + "…", font) > maxW) s = s.slice(0, -1);
   return s + "…";
 }
-
