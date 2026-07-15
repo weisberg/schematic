@@ -5,7 +5,8 @@ const { JSDOM } = require("jsdom");
 
 const ROOT = __dirname;
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-const script = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+const scriptSources = [...html.matchAll(/<script\s+src="([^"]+\.js)"/g)].map(match => match[1]);
+const script = scriptSources.map(src => fs.readFileSync(path.join(ROOT, src), "utf8")).join("\n;\n");
 const styles = fs.readFileSync(path.join(ROOT, "styles.css"), "utf8");
 
 function makeStorage(throwing = false){
@@ -131,6 +132,12 @@ function assertNoOverlaps(rects, msg){
 
 function closeEnough(a, b, msg){
   assert(Math.abs(a - b) < 1e-6, `${msg}: expected ${b}, got ${a}`);
+}
+
+if (process.argv.includes("--api-surface")){
+  const { window } = makeDom();
+  process.stdout.write(Object.keys(window.__T).sort().join("\n") + "\n");
+  process.exit(0);
 }
 
 (async () => {
