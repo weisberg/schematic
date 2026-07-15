@@ -87,6 +87,7 @@ Add new code inside the matching section.
   ],
   "edges": [
     { "id": "n9", "from": "n5", "to": "n6", "kind": "1:N", "label": "",
+      "labelTextColor": "#C20029", "labelBackgroundColor": "#FFFFFF",
       "fromField": "f_cust_pk", "toField": "f_ord_cust",
       "pairs": [{ "fromField": "f_cust_pk", "toField": "f_ord_cust" }] }
   ]
@@ -112,6 +113,9 @@ Add new code inside the matching section.
   the other end. Ignored when that end is row-bound.
 - `pairs` is optional and supersedes `fromField`/`toField` for composite relations; for
   one-pair relations, both shapes may be written for backward compatibility.
+- `labelTextColor` and `labelBackgroundColor` are optional edge-label overrides. Absent
+  text color inherits the live edge color; absent background color inherits the active
+  theme label background, preserving the appearance of existing documents.
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
 - Table nodes may include `collapsed`; collapsed tables render header + field count.
 - `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
@@ -265,7 +269,8 @@ Harness quirks you must respect:
 
 **Canvas & workflow (v1.2.0, issues #40/#41/#43/#46/#47)**
 - Snap to grid: a "Snap" toolbar toggle makes drags snap to the 24px dot grid (off =
-  fine 4px grid as before); "Clean Up" snaps every node to the dot grid in one undo step.
+  fine 4px grid as before); holding Shift during a drag temporarily uses the same 24px
+  grid without changing the toggle; "Clean Up" snaps every node to the dot grid in one undo step.
 - Space+drag pans the canvas regardless of what is under the cursor (space is ignored
   while typing; listed in the shortcut cheat sheet).
 - Auto-save: a status-bar toggle debounce-saves every change (including undo/redo, via
@@ -1252,6 +1257,80 @@ AC: toolbar, keyboard, canvas menu, and command palette create plain text; inspe
 menu edit text, shape, maximum width, background, size, and text color; no-box mode exports without an
 editing outline; shaped text uses silhouette-aware hit testing and link anchors; JSON round-trip and
 invalid-value normalization work; automated and browser interaction QA pass.
+
+---
+
+**SCH-079 · Blank-canvas creation and layout menu · P1 · S · Done 2026-07-14**
+
+Turn the existing blank-canvas right-click surface into a complete, scannable canvas menu. Group every
+primitive under Create, expose the existing Tree, Schema, grid-cleanup, and grid-snapping actions under
+Layout, and provide Fit, actual-size, zoom-in, and zoom-out actions under View. Creation uses the clicked
+world coordinate, while node and edge right-click targets retain precedence over the canvas menu.
+
+AC: right-clicking blank canvas opens accessible Create, Layout, and View groups; every primitive can be
+created at the clicked position; layout and shared snap controls call the same actions as the header;
+fit and zoom preserve normal view behavior; actions close the menu; outside pointerdown dismisses it;
+node and edge context menus remain unchanged; automated and browser interaction QA pass.
+
+---
+
+**SCH-080 · Shift-drag temporary grid snapping · P1 · S · Done 2026-07-14**
+
+Make Shift a temporary modifier for the existing item-drag grid behavior. Holding Shift before or
+during a drag snaps each moved canvas item to the visible 24px dot grid without changing the persistent
+Snap to grid setting. Defer Shift-click selection toggling until pointer-up so stationary Shift-clicks
+still add or remove nodes while Shift-drag can begin naturally.
+
+AC: Shift held from pointer-down snaps node movement; pressing or releasing Shift during the drag changes
+the active grid immediately; stationary Shift-click retains additive/removal selection semantics; persistent
+Snap to grid still works without Shift; Shift snapping creates one undo entry and applies to every primitive
+using the shared node-drag path; automated and browser interaction QA pass.
+
+---
+
+**SCH-081 · Smart object alignment guides · P1 · M · Done 2026-07-15**
+
+Show temporary alignment guides while an object is dragged near the standard bounds of surrounding
+objects. Compare left, horizontal center, and right coordinates independently from top, vertical middle,
+and bottom coordinates; snap matching axes on drop while leaving unmatched axes free. Apply one shared
+movement delta to multi-selections and contained items, and let explicit grid snapping take precedence.
+
+AC: guides appear within a zoom-stable screen threshold and clear when the drag ends, is cancelled, or
+moves away; the dropped object remains exactly aligned; x and y capture independently; selected groups,
+frames, swimlanes, connected custom orthogonal bends, undo/redo, and large-canvas fast rendering preserve
+their existing behavior; editing guides do not appear in SVG or PNG exports; automated and browser
+interaction QA pass.
+
+---
+
+**SCH-082 · Independent edge label colors · P1 · M · Done 2026-07-15**
+
+Allow edge-label text and pill backgrounds to be styled independently from the edge line.
+Store only explicit `labelTextColor` and `labelBackgroundColor` overrides: legacy and reset
+text inherits the live line color, while legacy and reset backgrounds retain the theme-aware
+canvas label background. Expose equivalent palettes and inheritance resets in the inspector
+and edge right-click menu.
+
+AC: changing the line color still updates label text until a text override is chosen; text
+and background overrides can be changed and reset independently; invalid imported colors are
+discarded; JSON, copy/paste, undo/redo, SVG, and PNG preserve explicit overrides; existing
+documents remain visually unchanged; automated and browser interaction QA pass.
+
+---
+
+**SCH-083 · All-node-type starter showcase · P1 · S · Done 2026-07-15**
+
+Turn the fresh-document seed into a coherent feature tour of the complete canvas model without
+turning it into a flowchart-shape gallery. Preserve the established loyalty example while organizing
+its concepts and tables into labeled structural regions, then add unboxed text, a rich note, a to-do
+list, a frame, and horizontal and vertical swimlanes. Use a small number of representative styled,
+labeled, and field-bound links so new users can see major link capabilities without visual overload.
+
+AC: every node type appears on a fresh load; both swimlane orientations appear; concepts retain the
+default process shape and plain text remains unboxed; structural containment is real; rich-note markup,
+to-do state, field connections, orthogonal routing, arrows, line styling, and independent label colors
+are represented; the first view remains legible with Fit to View; existing documents are unaffected;
+automated and browser visual QA pass.
 
 ---
 
