@@ -141,6 +141,10 @@ if (process.argv.includes("--api-surface")){
 }
 
 (async () => {
+  sameList(scriptSources, [
+    "js/core.js", "js/geometry.js", "js/render.js", "js/model.js", "js/interactions.js",
+    "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
+  ], "HTML declares the complete runtime dependency order");
   assert(html.includes("<!-- deployment"), "deployment comment is present");
   assert(html.includes("<noscript>"), "noscript warning is present");
   assert(html.includes(".schematic"), "fallback file input accepts .schematic files");
