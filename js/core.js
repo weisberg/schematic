@@ -82,7 +82,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.15.3";
+const APP_VERSION = "v1.16.2";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -114,6 +114,53 @@ function fontColors(){ return (colorScheme && colorScheme.font) || FONT_COLORS; 
 function frameColorDefault(){ return (colorScheme && colorScheme.frame) || FRAME_DEFAULT.color; }
 function todoColorDefault(){ return (colorScheme && colorScheme.todo) || TODO_COLOR_DEFAULT; }
 function isStructuralNode(n){ return !!n && (n.type === "frame" || n.type === "swimlane"); }
+function manualNodeWidth(n){
+  const width = n ? parseFloat(n.w) : NaN;
+  if (!n || n.manualWidth !== true || !Number.isFinite(width)) return null;
+  return clampSize(width, 80, 4000);
+}
+function configuredNodeWidth(n){
+  const width = n ? parseFloat(n.w) : NaN;
+  if (!n || !Number.isFinite(width)) return null;
+  if (n.type === "text") return clampSize(width, 80, 720);
+  if (n.type === "note") return clampSize(width, 220, 720);
+  if (n.type === "frame") return clampSize(width, 120, 4000);
+  if (n.type === "swimlane"){
+    return clampSize(width, swimlaneOrientation(n) === "vertical" ? 120 : 260, 4000);
+  }
+  return null;
+}
+function setNodeWidth(n, width){
+  if (!n) return false;
+  if (manualNodeWidth(n) == null){
+    const configured = configuredNodeWidth(n);
+    if (configured == null) delete n.widthBeforeMatch;
+    else n.widthBeforeMatch = configured;
+  }
+  n.w = clampSize(width, 80, 4000);
+  n.manualWidth = true;
+  return true;
+}
+function resetNodeWidth(n){
+  if (manualNodeWidth(n) == null) return false;
+  const previous = parseFloat(n.widthBeforeMatch);
+  delete n.manualWidth;
+  delete n.widthBeforeMatch;
+  if (Number.isFinite(previous) && configuredNodeWidth({...n, w:previous}) != null){
+    n.w = configuredNodeWidth({...n, w:previous});
+  } else if (n.type === "text"){
+    n.w = TEXT_W_DEFAULT;
+  } else if (n.type === "note"){
+    n.w = NOTE_W_DEFAULT;
+  } else if (n.type === "frame"){
+    n.w = FRAME_DEFAULT.w;
+  } else if (n.type === "swimlane"){
+    n.w = swimlaneDefaults(n).w;
+  } else {
+    delete n.w;
+  }
+  return true;
+}
 function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text"); }
 function insertTextLineBreak(control){
   const start = Number.isInteger(control.selectionStart) ? control.selectionStart : control.value.length;
@@ -596,6 +643,17 @@ function cleanEdgeForDocument(e){
 function cleanNodeForDocument(n){
   const out = {...n};
   if (Array.isArray(out.fields)) out.fields = out.fields.map(cleanFieldForDocument);
+  if (manualNodeWidth(out) != null){
+    out.w = manualNodeWidth(out);
+    const previous = configuredNodeWidth({...out, w:out.widthBeforeMatch});
+    if (previous == null) delete out.widthBeforeMatch;
+    else out.widthBeforeMatch = previous;
+  }
+  else {
+    delete out.manualWidth;
+    delete out.widthBeforeMatch;
+    if (out.type === "concept" || out.type === "table" || out.type === "todo") delete out.w;
+  }
   if (out.type === "swimlane"){
     out.orientation = swimlaneOrientation(out);
     out.color = normalizeHex(out.color) || SWIMLANE_DEFAULT.bodyColor;
@@ -608,7 +666,9 @@ function cleanNodeForDocument(n){
     const fontColor = normalizeHex(out.fontColor);
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
     out.fontSize = textBoxFont(out);
-    out.w = clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
+    out.w = out.manualWidth === true
+      ? clampSize(out.w, 80, 4000)
+      : clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
   }
   if (!out.notes) out.notes = out.notes || "";
   return out;
@@ -655,13 +715,27 @@ function applyDocument(d, opts = {}){
   state.edges = migrated.edges;
   for (const n of state.nodes){
     if (!n) continue;
+    const fixedWidth = manualNodeWidth(n);
+    if (fixedWidth != null){
+      n.w = fixedWidth;
+      const previous = configuredNodeWidth({...n, w:n.widthBeforeMatch});
+      if (previous == null) delete n.widthBeforeMatch;
+      else n.widthBeforeMatch = previous;
+    }
+    else {
+      delete n.manualWidth;
+      delete n.widthBeforeMatch;
+      if (n.type === "concept" || n.type === "table" || n.type === "todo") delete n.w;
+    }
     if (n.type === "swimlane"){
       n.orientation = swimlaneOrientation(n);
       const defaults = swimlaneDefaults(n);
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Lane";
       n.color = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
       n.titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
-      n.w = clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
+      n.w = n.manualWidth === true
+        ? clampSize(n.w, 80, 4000)
+        : clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
       n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
     } else if (n.type === "text"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Text";
@@ -670,7 +744,9 @@ function applyDocument(d, opts = {}){
       const fontColor = normalizeHex(n.fontColor);
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
       n.fontSize = textBoxFont(n);
-      n.w = clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
+      n.w = n.manualWidth === true
+        ? clampSize(n.w, 80, 4000)
+        : clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
     }
   }
   for (const e of state.edges){
