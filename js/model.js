@@ -232,6 +232,28 @@ function alignSelection(mode){
   render();
   return true;
 }
+function matchSelectionWidths(mode){
+  const nodes = selectedNodes();
+  if (nodes.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
+  const widths = nodes.map(n => nodeRect(n).w);
+  const rawTarget = mode === "smallest" ? Math.min(...widths)
+                  : mode === "largest" ? Math.max(...widths)
+                  : widths.reduce((sum, width) => sum + width, 0) / widths.length;
+  const target = clampSize(Math.round(rawTarget), 80, 4000);
+  pushHistory();
+  for (const node of nodes) setNodeWidth(node, target);
+  render();
+  return target;
+}
+function resetSelectionSizes(){
+  const nodes = selectedNodes();
+  const forced = nodes.filter(node => manualNodeWidth(node) != null);
+  if (!forced.length) return false;
+  pushHistory();
+  for (const node of forced) resetNodeWidth(node);
+  render();
+  return forced.length;
+}
 function distribute(entries, axis){
   const isX = axis === "x";
   entries.sort((a, b) => (isX ? a.r.x - b.r.x : a.r.y - b.r.y));

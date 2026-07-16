@@ -161,6 +161,8 @@ window.__T = {
   addNode,
   addSwimlane,
   addEdge,
+  matchSelectionWidths,
+  resetSelectionSizes,
   edgeFieldPairs,
   setEdgePairs,
   edgeEndpoints,

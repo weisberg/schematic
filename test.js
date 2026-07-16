@@ -676,6 +676,236 @@ if (process.argv.includes("--api-surface")){
     assert(Math.abs(gap1 - gap2) < 1e-9, "distribute horizontally creates equal edge gaps");
   }
 
+  /* SCH-088 — a multi-selection can match its smallest, largest, or average width. */
+  {
+    const fixture = () => JSON.stringify({ version:1, nextId:5, edges:[
+      { id:"e1", from:"n2", to:"n3", kind:"link", label:"Supports" }
+    ], nodes:[
+      { id:"n1", type:"concept", x:10, y:10, title:"Alpha", notes:"", color:"#FFE9A8" },
+      { id:"n2", type:"concept", x:180, y:90,
+        title:"A deliberately long concept title that must wrap when the selection becomes narrow",
+        notes:"", color:"#CFE8FF" },
+      { id:"n3", type:"note", x:620, y:170, title:"Gamma",
+        content:"Long supporting context that also reflows within the matched width.", color:"#D8F3DC", w:240 }
+    ] });
+    const ids = ["n1", "n2", "n3"];
+    const expectedWidth = (mode, widths) => {
+      const raw = mode === "smallest" ? Math.min(...widths)
+        : mode === "largest" ? Math.max(...widths)
+        : widths.reduce((sum, width) => sum + width, 0) / widths.length;
+      return Math.max(80, Math.min(4000, Math.round(raw)));
+    };
+
+    {
+      const { window } = makeDom();
+      const T = window.__T, doc = window.document;
+      T.importDocText(fixture());
+      const first = T.state.nodes.find(n => n.id === "n1");
+      T.setSelection("node", first.id);
+      T.nodeMenu(first, 20, 20);
+      const singleReset = doc.querySelector('[data-ctx-action="reset-size"]');
+      assert(singleReset, "Reset size is present for a single selected node");
+      assert.strictEqual(singleReset.disabled, true,
+        "Reset size is disabled when the single selected node has no forced width");
+      assert.strictEqual(doc.querySelectorAll('[data-ctx-action^="width-"]').length, 0,
+        "width matching is hidden for a single selected node");
+
+      T.setSelection("node", ids);
+      T.nodeMenu(first, 20, 20);
+      const actions = [...doc.querySelectorAll('[data-ctx-action^="width-"]')];
+      sameList(actions.map(button => button.textContent.trim()),
+        ["Scale to smallest", "Scale to largest", "Scale to average"],
+        "the multi-node Arrange menu exposes all three width-matching actions");
+    }
+
+    for (const mode of ["smallest", "largest", "average"]){
+      const { window } = makeDom();
+      const T = window.__T, doc = window.document;
+      T.importDocText(fixture());
+      T.setSelection("node", ids);
+      const nodesBefore = ids.map(id => T.state.nodes.find(n => n.id === id));
+      const rectsBefore = nodesBefore.map(T.nodeRect);
+      const widthsBefore = rectsBefore.map(r => r.w);
+      const xBefore = nodesBefore.map(n => n.x);
+      const target = expectedWidth(mode, widthsBefore);
+      const edgeBefore = mode === "smallest"
+        ? T.edgeEndpoints(T.state.edges.find(edge => edge.id === "e1"))
+        : null;
+      const undoBefore = T.undoDepth;
+
+      T.nodeMenu(nodesBefore[0], 20, 20);
+      doc.querySelector(`[data-ctx-action="width-${mode}"]`).click();
+      const nodesAfter = ids.map(id => T.state.nodes.find(n => n.id === id));
+      sameList(nodesAfter.map(n => T.nodeRect(n).w), [target, target, target],
+        `${mode} makes every selected node rectangle the computed width`);
+      sameList(nodesAfter.map(n => n.x), xBefore, `${mode} preserves each node's x coordinate`);
+      assert(nodesAfter.every(n => n.manualWidth === true && n.w === target),
+        `${mode} stores the matched width as an explicit manual width`);
+      assert.strictEqual(T.undoDepth, undoBefore + 1, `${mode} creates one undo entry`);
+
+      const saved = T.serializeDocument();
+      const savedNodes = JSON.parse(saved).nodes.filter(n => ids.includes(n.id));
+      assert(savedNodes.every(n => n.manualWidth === true && n.w === target),
+        `${mode} persists the matched width`);
+      assert.strictEqual(savedNodes.find(n => n.id === "n3").widthBeforeMatch, 240,
+        `${mode} preserves the rich note's pre-match width for Reset size`);
+      assert(savedNodes.filter(n => n.type === "concept")
+        .every(n => !Object.hasOwn(n, "widthBeforeMatch")),
+      `${mode} leaves content-sized concepts without a synthetic prior width`);
+
+      if (mode === "smallest"){
+        assert(doc.querySelectorAll('[data-node="n2"] [data-concept-line]').length > 1,
+          "long concept text wraps after scaling to the smallest width");
+        const edgeAfter = T.edgeEndpoints(T.state.edges.find(edge => edge.id === "e1"));
+        assert(edgeAfter.pa.x < edgeBefore.pa.x, "connected links re-anchor after a node becomes narrower");
+      }
+
+      T.undo();
+      const nodesUndone = ids.map(id => T.state.nodes.find(n => n.id === id));
+      sameList(nodesUndone.map(n => T.nodeRect(n).w), widthsBefore,
+        `${mode} undo restores the original auto-sized rectangles`);
+      assert(nodesUndone.every(n => n.manualWidth !== true),
+        `${mode} undo restores legacy auto-sizing`);
+
+      T.importDocText(saved);
+      sameList(ids.map(id => T.nodeRect(T.state.nodes.find(n => n.id === id)).w),
+        [target, target, target], `${mode} matched widths survive document reload`);
+
+      if (mode === "smallest"){
+        const selectedNote = T.state.nodes.find(n => n.id === "n3");
+        T.setSelection("node", selectedNote.id);
+        T.nodeMenu(selectedNote, 20, 20);
+        const reset = doc.querySelector('[data-ctx-action="reset-size"]');
+        assert.strictEqual(reset.disabled, false,
+          "Reset size enables for a single node with forced sizing");
+        const resetUndoBefore = T.undoDepth;
+        reset.click();
+        assert.strictEqual(T.nodeRect(selectedNote).w, 240,
+          "single-node Reset size restores the note's configured width");
+        assert.strictEqual(selectedNote.manualWidth, undefined,
+          "single-node Reset size removes the forced-width flag");
+        assert.strictEqual(selectedNote.widthBeforeMatch, undefined,
+          "single-node Reset size consumes the stored prior width");
+        assert.strictEqual(T.undoDepth, resetUndoBefore + 1,
+          "single-node Reset size creates one undo entry");
+        assert(ids.filter(id => id !== "n3").every(id =>
+          T.state.nodes.find(n => n.id === id).manualWidth === true),
+        "single-node Reset size leaves unselected forced nodes unchanged");
+        T.undo();
+        const restoredNote = T.state.nodes.find(n => n.id === "n3");
+        assert.strictEqual(T.nodeRect(restoredNote).w, target,
+          "undo restores the single node's forced width");
+        assert.strictEqual(restoredNote.widthBeforeMatch, 240,
+          "undo restores the prior-width metadata");
+      }
+    }
+
+    {
+      const { window } = makeDom();
+      const T = window.__T;
+      T.importDocText(JSON.stringify({version:1,nextId:4,edges:[],nodes:[
+        {id:"n1",type:"concept",x:0,y:0,title:"Legacy",notes:"",color:"#FFE9A8",w:400},
+        {id:"n2",type:"concept",x:200,y:0,title:"Invalid manual width",notes:"",
+         color:"#CFE8FF",manualWidth:true,w:"not-a-number"},
+        {id:"n3",type:"concept",x:400,y:0,title:"Missing manual width",notes:"",
+         color:"#D8F3DC",manualWidth:true}
+      ]}));
+      assert(T.state.nodes.every(n => n.manualWidth !== true),
+        "legacy or invalid width fields do not opt nodes out of automatic sizing");
+      const saved = JSON.parse(T.serializeDocument());
+      assert(saved.nodes.every(n => !Object.hasOwn(n, "w") && !Object.hasOwn(n, "manualWidth")),
+        "legacy auto-sized nodes do not acquire persisted width metadata");
+    }
+
+    {
+      const { window } = makeDom();
+      const T = window.__T, doc = window.document;
+      const mixedIds = ["concept","text","note","table","todo","frame","lane"];
+      T.importDocText(JSON.stringify({version:1,nextId:20,edges:[],nodes:[
+        {id:"concept",type:"concept",x:0,y:0,title:"Concept",notes:"",color:"#FFE9A8"},
+        {id:"text",type:"text",x:200,y:0,title:"Plain text with enough words to reflow",notes:"",
+         color:"#CFE8FF",w:280},
+        {id:"note",type:"note",x:500,y:0,title:"Note",content:"Rich note body",notes:"",
+         color:"#D8F3DC",w:260},
+        {id:"table",type:"table",x:0,y:240,title:"records",notes:"",color:"#16232F",
+         fields:[{id:"f1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]},
+        {id:"todo",type:"todo",x:240,y:240,title:"Tasks",notes:"",color:"#E9E2F8",
+         items:[{id:"i1",text:"Ship it",done:false}]},
+        {id:"frame",type:"frame",x:480,y:240,title:"Area",notes:"",color:"#2456E6",w:340,h:220},
+        {id:"lane",type:"swimlane",x:860,y:240,title:"Lane",notes:"",color:"#E5F1F1",
+         titleColor:"#007873",orientation:"horizontal",w:520,h:260}
+      ]}));
+      T.setSelection("node", mixedIds);
+      const originalWidths = Object.fromEntries(mixedIds.map(id => {
+        const node = T.state.nodes.find(n => n.id === id);
+        return [id, T.nodeRect(node).w];
+      }));
+      const target = T.matchSelectionWidths("average");
+      assert(target > 0, "mixed node types can be width-matched together");
+      assert(mixedIds.every(id => T.nodeRect(T.state.nodes.find(n => n.id === id)).w === target),
+        "every selectable node type honors the shared manual-width contract");
+      const saved = T.serializeDocument();
+      const savedNodes = JSON.parse(saved).nodes;
+      const configuredIds = ["text","note","frame","lane"];
+      assert(configuredIds.every(id => Number.isFinite(
+        savedNodes.find(node => node.id === id).widthBeforeMatch)),
+      "configured-width node types persist their pre-match widths");
+      assert(["concept","table","todo"].every(id =>
+        !Object.hasOwn(savedNodes.find(node => node.id === id), "widthBeforeMatch")),
+      "content-sized node types rely on automatic sizing after reset");
+      T.importDocText(saved);
+      assert(mixedIds.every(id => T.nodeRect(T.state.nodes.find(n => n.id === id)).w === target),
+        "mixed-type matched widths survive document reload");
+
+      T.setSelection("node", mixedIds);
+      const undoBefore = T.undoDepth;
+      T.nodeMenu(T.state.nodes.find(n => n.id === mixedIds[0]), 20, 20);
+      const reset = doc.querySelector('[data-ctx-submenu="node:arrange:size"] [data-ctx-action="reset-size"]');
+      assert(reset && !reset.disabled,
+        "the multi-selection Size submenu enables Reset size for forced nodes");
+      reset.click();
+      assert.strictEqual(T.undoDepth, undoBefore + 1,
+        "multi-selection Reset size creates one undo entry");
+      assert(mixedIds.every(id => {
+        const node = T.state.nodes.find(n => n.id === id);
+        return node.manualWidth !== true && !Object.hasOwn(node, "widthBeforeMatch");
+      }), "multi-selection Reset size clears forced-sizing metadata");
+      for (const id of mixedIds){
+        const node = T.state.nodes.find(n => n.id === id);
+        assert.strictEqual(T.nodeRect(node).w, originalWidths[id],
+          `Reset size restores ${id}'s original width behavior`);
+      }
+      T.undo();
+      assert(mixedIds.every(id => T.nodeRect(T.state.nodes.find(n => n.id === id)).w === target),
+        "undo restores all matched widths after a multi-selection reset");
+      T.redo();
+      assert(mixedIds.every(id => T.nodeRect(T.state.nodes.find(n => n.id === id)).w === originalWidths[id]),
+        "redo reapplies the multi-selection size reset");
+    }
+
+    {
+      const { window } = makeDom();
+      const T = window.__T;
+      T.importDocText(JSON.stringify({version:1,nextId:4,edges:[],nodes:[
+        {id:"forced",type:"concept",x:0,y:0,title:"Forced concept",notes:"",
+         color:"#FFE9A8",manualWidth:true,w:300},
+        {id:"natural",type:"concept",x:360,y:0,title:"Natural concept",notes:"",color:"#CFE8FF"},
+        {id:"legacy-note",type:"note",x:600,y:0,title:"Legacy forced note",content:"Body",
+         color:"#D8F3DC",manualWidth:true,w:480}
+      ]}));
+      T.setSelection("node", ["forced","natural"]);
+      assert.strictEqual(T.resetSelectionSizes(), 1,
+        "a mixed selection resets only nodes that currently have forced sizing");
+      assert.strictEqual(T.state.nodes.find(n => n.id === "natural").manualWidth, undefined,
+        "an unforced selected node remains unforced");
+      T.setSelection("node", "legacy-note");
+      assert.strictEqual(T.resetSelectionSizes(), 1,
+        "Reset size accepts older forced-width documents without prior-width metadata");
+      assert.strictEqual(T.nodeRect(T.state.nodes.find(n => n.id === "legacy-note")).w, 300,
+        "older forced notes fall back to their default width on reset");
+    }
+  }
+
   /* SCH-013 and SCH-016 — inline title and edge-label editing */
   {
     const { window } = makeDom();
@@ -934,7 +1164,7 @@ if (process.argv.includes("--api-surface")){
     assert(ctx.querySelector('[data-edge-arrow-toggle="start"]'), "edge context menu exposes start/end arrows");
     assert(ctx.querySelector('[aria-label="Line style"]') && ctx.querySelector('[aria-label="Line width"]'),
       "edge context menu exposes line style and width");
-    assert(ctx.querySelector('[data-ctx-group="edge:appearance"] .swatch[title="#007873"]'),
+    assert(ctx.querySelector('[data-ctx-submenu="edge:line:color"] .swatch[title="#007873"]'),
       "edge context menu exposes line colors");
     ctx.querySelector('[data-edge-arrow-toggle="start"]').click();
     assert.strictEqual(edge.startArrow, undefined, "context menu toggles a start arrow off");
@@ -954,7 +1184,7 @@ if (process.argv.includes("--api-surface")){
 
     T.edgeMenu(edge, 10, 10);
     ctx = doc.getElementById("ctxMenu");
-    ctx.querySelector('[data-ctx-group="edge:appearance"] .swatch[title="#007873"]').click();
+    ctx.querySelector('[data-ctx-submenu="edge:line:color"] .swatch[title="#007873"]').click();
     assert.strictEqual(edge.lineColor, "#007873", "context menu changes line color");
 
     const relation = T.state.edges.find(e => e.kind === "1:N");
@@ -1751,13 +1981,36 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.style.display, "block", "blank-canvas right-click opens the canvas menu");
     assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
-    sameList([...menu.querySelectorAll(".ctxgroup>summary span")].map(s => s.textContent),
+    sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Create", "Layout", "View"], "canvas menu groups creation, layout, and view actions");
-    assert(menu.querySelector('[data-ctx-group="canvas:create"]').open,
-      "creation actions are visible immediately");
+    assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
+      "canvas submenus start compact");
+    assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
+      "canvas menus have no monolithic root-level action list");
+    assert([...menu.querySelectorAll(":scope > .ctxgroup > summary")].every(summary =>
+      summary.getAttribute("role") === "menuitem" &&
+      summary.getAttribute("aria-haspopup") === "true" &&
+      summary.getAttribute("aria-expanded") === "false"),
+    "context submenu summaries expose accessible collapsed-menu state");
+    sameList([...menu.querySelectorAll('[data-ctx-group="canvas:create"] > .ctxgroupbody > .ctxsubmenu > summary span')]
+      .map(s => s.textContent), ["Nodes and data", "Text and notes", "Containers"],
+      "creation primitives are split into focused submenus");
+    const createGroup = menu.querySelector('[data-ctx-group="canvas:create"]');
+    createGroup.open = true;
+    createGroup.dispatchEvent(new window.Event("toggle"));
+    const nodeCreateSubmenu = menu.querySelector('[data-ctx-submenu="canvas:create:nodes"]');
+    const textCreateSubmenu = menu.querySelector('[data-ctx-submenu="canvas:create:text"]');
+    nodeCreateSubmenu.open = true;
+    nodeCreateSubmenu.dispatchEvent(new window.Event("toggle"));
+    textCreateSubmenu.open = true;
+    textCreateSubmenu.dispatchEvent(new window.Event("toggle"));
+    assert.strictEqual(nodeCreateSubmenu.open, false,
+      "opening a nested canvas submenu closes its sibling");
+    assert.strictEqual(textCreateSubmenu.querySelector("summary").getAttribute("aria-expanded"), "true",
+      "nested submenu accessibility state follows disclosure state");
     const createActions = [...menu.querySelectorAll('[data-ctx-group="canvas:create"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action"));
-    sameList(createActions, ["add-concept", "add-text", "add-note", "add-table", "add-todo", "add-frame",
+    sameList(createActions, ["add-concept", "add-table", "add-todo", "add-text", "add-note", "add-frame",
       "add-horizontal-lane", "add-vertical-lane"], "canvas menu exposes every primitive");
     sameList([...menu.querySelectorAll('[data-ctx-group="canvas:layout"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action")),
@@ -3055,26 +3308,44 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Appearance","Arrange"], "node menu groups secondary controls into disclosures");
+      ["Content","Appearance","Arrange","Actions"], "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
     assert(menu.querySelector('[data-ctx-group="node:appearance"] [data-shape-option="decision"]'),
       "collapsed appearance group retains shape capability");
+    assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
+      "node menus have no monolithic root-level action list");
+    sameList([...menu.querySelectorAll('[data-ctx-group="node:appearance"] > .ctxgroupbody > .ctxsubmenu > summary span')]
+      .map(s => s.textContent), ["Fill color","Shape","Text"],
+      "dense node appearance controls are divided into nested submenus");
+    const nodeContentGroup = menu.querySelector('[data-ctx-group="node:content"]');
+    nodeContentGroup.open = true;
+    nodeContentGroup.dispatchEvent(new window.Event("toggle"));
+    const nodeAppearanceGroup = menu.querySelector('[data-ctx-group="node:appearance"]');
+    nodeAppearanceGroup.open = true;
+    nodeAppearanceGroup.dispatchEvent(new window.Event("toggle"));
+    assert.strictEqual(nodeContentGroup.open, false,
+      "opening a node submenu closes its sibling instead of growing a monolithic menu");
 
     const edge = T.state.edges.find(e => e.label === "drives");
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Appearance","Routing"], "edge menu groups controls by task");
-    assert(menu.querySelector('[data-ctx-group="edge:appearance"] [aria-label="Line width"]'),
-      "edge appearance disclosure retains line controls");
+      ["Relationship","Label","Line","Routing","Actions"], "edge menu groups controls by task");
+    assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
+      "edge line disclosure retains line controls");
     assert(menu.querySelector('[data-ctx-group="edge:relationship"] [data-edge-relationship]'),
       "edge relationship disclosure retains presets");
-    const edgeAppearanceGroup = menu.querySelector('[data-ctx-group="edge:appearance"]');
-    edgeAppearanceGroup.open = true;
-    edgeAppearanceGroup.dispatchEvent(new window.Event("toggle"));
+    assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
+      "edge menus have no monolithic root-level action list");
+    sameList([...menu.querySelectorAll('[data-ctx-group="edge:line"] > .ctxgroupbody > .ctxsubmenu > summary span')]
+      .map(s => s.textContent), ["Arrowheads","Style and width","Color"],
+      "dense line controls are divided into nested submenus");
+    const edgeLineGroup = menu.querySelector('[data-ctx-group="edge:line"]');
+    edgeLineGroup.open = true;
+    edgeLineGroup.dispatchEvent(new window.Event("toggle"));
     T.edgeMenu(edge, 20, 20);
-    assert(doc.querySelector('[data-ctx-group="edge:appearance"]').open,
+    assert(doc.querySelector('[data-ctx-group="edge:line"]').open,
       "context disclosure state survives reopening the menu");
 
     T.setSelection("edge", edge.id);

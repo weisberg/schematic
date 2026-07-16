@@ -60,26 +60,53 @@ function ctxHeader(parent, kind, title){
   header.appendChild(copy);
   parent.appendChild(header);
 }
-function ctxGroup(parent, key, label, build, opts = {}){
+function ctxDisclosure(parent, key, label, build, opts = {}, className = "ctxgroup"){
   const details = document.createElement("details");
-  details.className = "ctxgroup";
-  details.setAttribute("data-ctx-group", key);
+  details.className = className;
+  details.setAttribute(className === "ctxsubmenu" ? "data-ctx-submenu" : "data-ctx-group", key);
   const stored = ctxDisclosureState.get(key);
   details.open = stored == null ? !!opts.open : stored;
   const summary = document.createElement("summary");
+  summary.setAttribute("role", "menuitem");
+  summary.setAttribute("aria-haspopup", "true");
+  summary.setAttribute("aria-expanded", String(details.open));
   const text = document.createElement("span");
   text.textContent = label;
   summary.append(text, disclosureChevron());
   const body = document.createElement("div");
-  body.className = "ctxgroupbody";
+  body.className = className === "ctxsubmenu" ? "ctxsubmenubody" : "ctxgroupbody";
+  body.setAttribute("role", "group");
   build(body);
   details.append(summary, body);
   details.addEventListener("toggle", () => {
+    summary.setAttribute("aria-expanded", String(details.open));
+    if (details.open){
+      for (const sibling of parent.children){
+        if (sibling === details || !sibling.classList || !sibling.classList.contains(className) || !sibling.open) continue;
+        sibling.open = false;
+        const siblingKey = sibling.getAttribute(className === "ctxsubmenu" ? "data-ctx-submenu" : "data-ctx-group");
+        if (siblingKey) ctxDisclosureState.set(siblingKey, false);
+      }
+    }
     ctxDisclosureState.set(key, details.open);
     fitCtxMenu();
   });
   parent.appendChild(details);
+  if (details.open){
+    for (const sibling of parent.children){
+      if (sibling === details || !sibling.classList || !sibling.classList.contains(className) || !sibling.open) continue;
+      sibling.open = false;
+      const siblingKey = sibling.getAttribute(className === "ctxsubmenu" ? "data-ctx-submenu" : "data-ctx-group");
+      if (siblingKey) ctxDisclosureState.set(siblingKey, false);
+    }
+  }
   return details;
+}
+function ctxGroup(parent, key, label, build, opts = {}){
+  return ctxDisclosure(parent, key, label, build, opts, "ctxgroup");
+}
+function ctxSubmenu(parent, key, label, build, opts = {}){
+  return ctxDisclosure(parent, key, label, build, opts, "ctxsubmenu");
 }
 function ctxItem(parent, label, fn, opts = {}){
   const b = document.createElement("button");
@@ -87,6 +114,10 @@ function ctxItem(parent, label, fn, opts = {}){
   b.setAttribute("role", "menuitem");
   if (opts.action) b.setAttribute("data-ctx-action", opts.action);
   if (opts.pressed != null) b.setAttribute("aria-pressed", String(!!opts.pressed));
+  if (opts.disabled){
+    b.disabled = true;
+    b.setAttribute("aria-disabled", "true");
+  }
   const s = document.createElement("span");
   s.textContent = label;
   b.appendChild(s);
@@ -179,100 +210,140 @@ function nodeMenu(n, x, y){
   };
   showCtx(x, y, m => {
     ctxHeader(m, "node", targets.length > 1 ? `${targets.length} nodes selected` : n.title || "Untitled");
-    ctxGroup(m, "node:appearance", "Appearance", panel => {
-      const palette = [...new Set([...conceptColors(), ...tableColors()])];
-      ctxLabel(panel, n.type === "swimlane" ? "Body background" : n.type === "text" ? "Shape background" : n.type === "concept" ? "Color" : n.type === "frame" ? "Frame color"
-                : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color");
-      ctxSwatches(panel, n.type === "swimlane" ? palette : (n.type === "concept" || n.type === "text" || n.type === "todo" || n.type === "note") ? conceptColors() : tableColors(), n.color,
-        (c, commit) => { pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id); applyToTargets(t => { t.color = c; }); commit ? render() : drawOnly(); });
-      if (n.type === "swimlane"){
-        ctxLabel(panel, "Title background");
-        ctxSwatches(panel, palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
-          (c, commit) => { pushHistory(targets.length > 1 ? "lane-title:multi" : "lane-title:"+n.id);
-            applyToTargets(t => { if (t.type === "swimlane") t.titleColor = c; }); commit ? render() : drawOnly(); });
-      }
-      if (n.type === "concept" || n.type === "text"){
-        ctxLabel(panel, "Shape");
-        ctxShapeRow(panel, n, targets);
-      }
-      if (!isStructuralNode(n)){
-        if (n.type === "text"){
-          ctxLabel(panel, "Maximum width");
-          const widthRow = document.createElement("div");
-          widthRow.className = "swrow";
-          widthRow.appendChild(sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
-            (v, commit) => {
-              pushHistory(targets.length > 1 ? "size:multi" : "size:"+n.id);
-              applyToTargets(t => { if (t.type === "text") t.w = v; });
-              commit ? render() : drawOnly();
-            }, {ariaLabel:"Maximum width"}));
-          panel.appendChild(widthRow);
-        }
-        ctxLabel(panel, "Text size");
-        ctxSizeRow(panel, n, targets);
-        ctxLabel(panel, "Text color");
-        ctxSwatches(panel, fontColors(), n.fontColor || "#16232F",
-          (c, commit) => { pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id); applyToTargets(t => { t.fontColor = c; }); commit ? render() : drawOnly(); });
-      }
-    });
-    if (n.type === "swimlane") ctxGroup(m, "node:orientation", "Orientation", panel => {
-      for (const [orientation, label] of [["horizontal","Horizontal lane"],["vertical","Vertical lane"]]){
-        ctxItem(panel, (swimlaneOrientation(n) === orientation ? "✓ " : "") + label, () => {
-          const lanes = targets.filter(t => t.type === "swimlane" && swimlaneOrientation(t) !== orientation);
-          if (!lanes.length) return;
-          pushHistory(targets.length > 1 ? "lane-orientation:multi" : "lane-orientation:"+n.id);
-          for (const lane of lanes) setSwimlaneOrientation(lane, orientation);
+    ctxGroup(m, "node:content", "Content", panel => {
+      ctxItem(panel, n.type === "text" ? "Edit text" : "Edit title",
+        () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
+      if (n.type === "note")
+        ctxItem(panel, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
+      if (!isStructuralNode(n))
+        ctxItem(panel, "Add linked concept", addChildConcept, {kbd:"Tab"});
+      if (n.type === "table") ctxSubmenu(panel, "node:content:table", "Table tools", sub => {
+        ctxItem(sub, "Add related table (1:N)", () => addRelatedTable(n.id));
+        ctxItem(sub, n.collapsed ? "Expand fields" : "Collapse fields", () => {
+          pushHistory();
+          n.collapsed = !n.collapsed;
           render();
         });
+        ctxItem(sub, "Add field", () => {
+          pushHistory();
+          n.fields.push({id: uid(), name:"field_" + (n.fields.length+1),
+                         type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
+          render();
+        });
+      });
+      if (n.type === "todo") ctxSubmenu(panel, "node:content:todo", "List tools", sub => {
+        ctxItem(sub, n.collapsed ? "Expand items" : "Collapse items", () => {
+          pushHistory();
+          n.collapsed = !n.collapsed;
+          render();
+        });
+        ctxItem(sub, "Add item", () => addTodoItem(n));
+      });
+    });
+    ctxGroup(m, "node:appearance", "Appearance", panel => {
+      const palette = [...new Set([...conceptColors(), ...tableColors()])];
+      const fillLabel = n.type === "swimlane" ? "Body background" : n.type === "text" ? "Shape background"
+        : n.type === "concept" ? "Fill color" : n.type === "frame" ? "Frame color"
+        : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color";
+      ctxSubmenu(panel, "node:appearance:fill", fillLabel, sub => {
+        ctxSwatches(sub, n.type === "swimlane" ? palette
+          : (n.type === "concept" || n.type === "text" || n.type === "todo" || n.type === "note")
+            ? conceptColors() : tableColors(), n.color,
+          (c, commit) => {
+            pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id);
+            applyToTargets(t => { t.color = c; });
+            commit ? render() : drawOnly();
+          });
+      });
+      if (n.type === "swimlane"){
+        ctxSubmenu(panel, "node:appearance:lane-title", "Title background", sub => {
+          ctxSwatches(sub, palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
+            (c, commit) => {
+              pushHistory(targets.length > 1 ? "lane-title:multi" : "lane-title:"+n.id);
+              applyToTargets(t => { if (t.type === "swimlane") t.titleColor = c; });
+              commit ? render() : drawOnly();
+            });
+        });
       }
-    }, {open:true});
-    ctxItem(m, n.type === "text" ? "Edit text" : "Edit title", () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
-    if (n.type === "note") ctxItem(m, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
-    if (!isStructuralNode(n)) ctxItem(m, "Add linked concept", addChildConcept, {kbd:"Tab"});
-    if (n.type === "table" || n.type === "todo"){
-      ctxGroup(m, "node:content", n.type === "table" ? "Table content" : "List content", panel => {
-        if (n.type === "table"){
-          ctxItem(panel, "Add related table (1:N)", () => addRelatedTable(n.id));
-          ctxItem(panel, n.collapsed ? "Expand fields" : "Collapse fields", () => {
-            pushHistory();
-            n.collapsed = !n.collapsed;
+      if (n.type === "concept" || n.type === "text"){
+        ctxSubmenu(panel, "node:appearance:shape", "Shape", sub => ctxShapeRow(sub, n, targets));
+      }
+      if (!isStructuralNode(n)){
+        ctxSubmenu(panel, "node:appearance:text", "Text", sub => {
+          if (n.type === "text"){
+            ctxLabel(sub, "Maximum width");
+            const widthRow = document.createElement("div");
+            widthRow.className = "swrow";
+            widthRow.appendChild(sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
+              (v, commit) => {
+                pushHistory(targets.length > 1 ? "size:multi" : "size:"+n.id);
+                applyToTargets(t => { if (t.type === "text") t.w = v; });
+                commit ? render() : drawOnly();
+              }, {ariaLabel:"Maximum width"}));
+            sub.appendChild(widthRow);
+          }
+          ctxLabel(sub, "Text size");
+          ctxSizeRow(sub, n, targets);
+          ctxLabel(sub, "Text color");
+          ctxSwatches(sub, fontColors(), n.fontColor || "#16232F",
+            (c, commit) => {
+              pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id);
+              applyToTargets(t => { t.fontColor = c; });
+              commit ? render() : drawOnly();
+            });
+        });
+      }
+      if (n.type === "swimlane") ctxSubmenu(panel, "node:appearance:orientation", "Orientation", sub => {
+        for (const [orientation, label] of [["horizontal","Horizontal lane"],["vertical","Vertical lane"]]){
+          ctxItem(sub, (swimlaneOrientation(n) === orientation ? "✓ " : "") + label, () => {
+            const lanes = targets.filter(t => t.type === "swimlane" && swimlaneOrientation(t) !== orientation);
+            if (!lanes.length) return;
+            pushHistory(targets.length > 1 ? "lane-orientation:multi" : "lane-orientation:"+n.id);
+            for (const lane of lanes) setSwimlaneOrientation(lane, orientation);
             render();
           });
-          ctxItem(panel, "Add field", () => {
-            pushHistory();
-            n.fields.push({id: uid(), name:"field_" + (n.fields.length+1),
-                           type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
-            render();
-          });
-        } else {
-          ctxItem(panel, n.collapsed ? "Expand items" : "Collapse items", () => {
-            pushHistory();
-            n.collapsed = !n.collapsed;
-            render();
-          });
-          ctxItem(panel, "Add item", () => addTodoItem(n));
         }
       });
-    }
-    ctxItem(m, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
-    ctxGroup(m, "node:arrange", "Arrange", panel => {
-      if (targets.length >= 2){
-        ctxLabel(panel, "Align selection");
-        ctxItem(panel, "Align left", () => alignSelection("left"));
-        ctxItem(panel, "Align right", () => alignSelection("right"));
-        ctxItem(panel, "Align top", () => alignSelection("top"));
-        ctxItem(panel, "Align bottom", () => alignSelection("bottom"));
-        ctxItem(panel, "Center horizontally", () => alignSelection("centerX"));
-        ctxItem(panel, "Center vertically", () => alignSelection("centerY"));
-        ctxItem(panel, "Distribute horizontally", () => alignSelection("distributeX"));
-        ctxItem(panel, "Distribute vertically", () => alignSelection("distributeY"));
-        ctxSep(panel);
-      }
-      ctxItem(panel, "Bring to front", () => reorderNode(n.id, true));
-      ctxItem(panel, "Send to back",   () => reorderNode(n.id, false));
     });
-    ctxSep(m);
-    ctxItem(m, "Delete node", deleteSelection, {kbd:"Del", danger:true});
+    ctxGroup(m, "node:arrange", "Arrange", panel => {
+      ctxSubmenu(panel, "node:arrange:size", "Size", sub => {
+        ctxItem(sub, "Reset size", resetSelectionSizes,
+          {action:"reset-size", disabled:!targets.some(target => manualNodeWidth(target) != null)});
+        if (targets.length >= 2){
+          ctxSep(sub);
+          ctxLabel(sub, "Match selected widths");
+          ctxItem(sub, "Scale to smallest", () => matchSelectionWidths("smallest"),
+            {action:"width-smallest"});
+          ctxItem(sub, "Scale to largest", () => matchSelectionWidths("largest"),
+            {action:"width-largest"});
+          ctxItem(sub, "Scale to average", () => matchSelectionWidths("average"),
+            {action:"width-average"});
+        }
+      });
+      if (targets.length >= 2){
+        ctxSubmenu(panel, "node:arrange:align", "Align", sub => {
+          ctxItem(sub, "Align left", () => alignSelection("left"));
+          ctxItem(sub, "Align right", () => alignSelection("right"));
+          ctxItem(sub, "Align top", () => alignSelection("top"));
+          ctxItem(sub, "Align bottom", () => alignSelection("bottom"));
+          ctxItem(sub, "Center horizontally", () => alignSelection("centerX"));
+          ctxItem(sub, "Center vertically", () => alignSelection("centerY"));
+        });
+        ctxSubmenu(panel, "node:arrange:distribute", "Distribute", sub => {
+          ctxItem(sub, "Distribute horizontally", () => alignSelection("distributeX"));
+          ctxItem(sub, "Distribute vertically", () => alignSelection("distributeY"));
+        });
+      }
+      ctxSubmenu(panel, "node:arrange:layer", "Layer order", sub => {
+        ctxItem(sub, "Bring to front", () => reorderNode(n.id, true));
+        ctxItem(sub, "Send to back",   () => reorderNode(n.id, false));
+      });
+    });
+    ctxGroup(m, "node:actions", "Actions", panel => {
+      ctxItem(panel, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
+      ctxItem(panel, targets.length > 1 ? "Delete selected nodes" : "Delete node",
+        deleteSelection, {kbd:"Del", danger:true});
+    });
   });
 }
 function edgeMenu(e, x, y){
@@ -302,69 +373,78 @@ function edgeMenu(e, x, y){
         onCustom:() => startInlineEditor("edge", e.id)
       }));
       panel.appendChild(relationshipRow);
-      ctxLabel(panel, "Label text color");
-      ctxColorOverride(panel, fontColors(), e.labelTextColor, edgeLineColor(e),
-        (c, commit) => {
-          pushHistory("edge-label-text:"+e.id);
-          e.labelTextColor = c;
-          commit ? render() : drawOnly();
-        }, () => {
-          pushHistory();
-          delete e.labelTextColor;
-          render();
-        }, {inheritLabel:"link color", action:"inherit-label-text", key:"label-text"});
-      ctxLabel(panel, "Label background");
-      ctxColorOverride(panel, conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
-        (c, commit) => {
-          pushHistory("edge-label-background:"+e.id);
-          e.labelBackgroundColor = c;
-          commit ? render() : drawOnly();
-        }, () => {
-          pushHistory();
-          delete e.labelBackgroundColor;
-          render();
-        }, {inheritLabel:"canvas background", action:"inherit-label-background", key:"label-background"});
     });
-    ctxGroup(m, "edge:appearance", "Appearance", panel => {
-      ctxLabel(panel, "Arrows");
-      const arrowRow = document.createElement("div");
-      arrowRow.className = "kindrow";
-      for (const [key, label] of [["startArrow","Start"],["endArrow","End"]]){
-        const btn = document.createElement("button");
-        btn.textContent = label;
-        btn.setAttribute("data-edge-arrow-toggle", key === "startArrow" ? "start" : "end");
-        if (e[key]) btn.className = "on";
-        btn.addEventListener("click", () => {
-          hideCtx();
-          pushHistory();
-          setEdgeArrow(e, key, !e[key]);
-          render();
-        });
-        arrowRow.appendChild(btn);
-      }
-      panel.appendChild(arrowRow);
-      ctxLabel(panel, "Line style");
-      const styleRow = document.createElement("div");
-      styleRow.className = "swrow";
-      styleRow.appendChild(edgeStyleSelect(e, null, {close:hideCtx}));
-      panel.appendChild(styleRow);
-      ctxLabel(panel, "Line width");
-      const widthRow = document.createElement("div");
-      widthRow.className = "swrow";
-      widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
-        (v, commit) => {
-          pushHistory("edge-width:"+e.id);
-          e.lineWidth = v;
-          if (commit){ hideCtx(); render(); } else drawOnly();
-        }, {ariaLabel:"Line width"}));
-      panel.appendChild(widthRow);
-      ctxLabel(panel, "Line color");
-      ctxSwatches(panel, tableColors(), edgeLineColor(e),
-        (c, commit) => {
-          pushHistory("edge-color:"+e.id);
-          e.lineColor = c;
-          commit ? render() : drawOnly();
-        });
+    ctxGroup(m, "edge:label", "Label", panel => {
+      ctxItem(panel, "Edit label text", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
+      ctxSubmenu(panel, "edge:label:text-color", "Text color", sub => {
+        ctxColorOverride(sub, fontColors(), e.labelTextColor, edgeLineColor(e),
+          (c, commit) => {
+            pushHistory("edge-label-text:"+e.id);
+            e.labelTextColor = c;
+            commit ? render() : drawOnly();
+          }, () => {
+            pushHistory();
+            delete e.labelTextColor;
+            render();
+          }, {inheritLabel:"link color", action:"inherit-label-text", key:"label-text"});
+      });
+      ctxSubmenu(panel, "edge:label:background", "Background color", sub => {
+        ctxColorOverride(sub, conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
+          (c, commit) => {
+            pushHistory("edge-label-background:"+e.id);
+            e.labelBackgroundColor = c;
+            commit ? render() : drawOnly();
+          }, () => {
+            pushHistory();
+            delete e.labelBackgroundColor;
+            render();
+          }, {inheritLabel:"canvas background", action:"inherit-label-background", key:"label-background"});
+      });
+    });
+    ctxGroup(m, "edge:line", "Line", panel => {
+      ctxSubmenu(panel, "edge:line:arrows", "Arrowheads", sub => {
+        const arrowRow = document.createElement("div");
+        arrowRow.className = "kindrow";
+        for (const [key, label] of [["startArrow","Start"],["endArrow","End"]]){
+          const btn = document.createElement("button");
+          btn.textContent = label;
+          btn.setAttribute("data-edge-arrow-toggle", key === "startArrow" ? "start" : "end");
+          if (e[key]) btn.className = "on";
+          btn.addEventListener("click", () => {
+            hideCtx();
+            pushHistory();
+            setEdgeArrow(e, key, !e[key]);
+            render();
+          });
+          arrowRow.appendChild(btn);
+        }
+        sub.appendChild(arrowRow);
+      });
+      ctxSubmenu(panel, "edge:line:style", "Style and width", sub => {
+        ctxLabel(sub, "Style");
+        const styleRow = document.createElement("div");
+        styleRow.className = "swrow";
+        styleRow.appendChild(edgeStyleSelect(e, null, {close:hideCtx}));
+        sub.appendChild(styleRow);
+        ctxLabel(sub, "Width");
+        const widthRow = document.createElement("div");
+        widthRow.className = "swrow";
+        widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
+          (v, commit) => {
+            pushHistory("edge-width:"+e.id);
+            e.lineWidth = v;
+            if (commit){ hideCtx(); render(); } else drawOnly();
+          }, {ariaLabel:"Line width"}));
+        sub.appendChild(widthRow);
+      });
+      ctxSubmenu(panel, "edge:line:color", "Color", sub => {
+        ctxSwatches(sub, tableColors(), edgeLineColor(e),
+          (c, commit) => {
+            pushHistory("edge-color:"+e.id);
+            e.lineColor = c;
+            commit ? render() : drawOnly();
+          });
+      });
     });
     ctxGroup(m, "edge:routing", "Routing", panel => {
       const routeRow = document.createElement("div");
@@ -391,29 +471,35 @@ function edgeMenu(e, x, y){
         if (hasCustomOrthoBend(e)) ctxItem(panel, "Reset to automatic", () => resetOrthoBend(e));
       }
     });
-    ctxItem(m, "Swap direction", () => {
-      pushHistory();
-      swapEdgeDirection(e);
-      render();
+    ctxGroup(m, "edge:actions", "Actions", panel => {
+      ctxItem(panel, "Swap direction", () => {
+        pushHistory();
+        swapEdgeDirection(e);
+        render();
+      });
+      ctxItem(panel, "Delete edge", deleteSelection, {kbd:"Del", danger:true});
     });
-    ctxItem(m, "Edit label text", () => startInlineEditor("edge", e.id), {kbd:"dbl-click"});
-    ctxSep(m);
-    ctxItem(m, "Delete edge", deleteSelection, {kbd:"Del", danger:true});
   });
 }
 function canvasMenu(w, x, y){
   showCtx(x, y, m => {
     ctxHeader(m, "canvas", "Create, arrange, or view");
     ctxGroup(m, "canvas:create", "Create", panel => {
-      ctxItem(panel, "Concept", () => addNodeCentered("concept", w), {kbd:"C", action:"add-concept"});
-      ctxItem(panel, "Plain text", () => addNodeCentered("text", w), {kbd:"X", action:"add-text"});
-      ctxItem(panel, "Rich note", () => addNodeCentered("note", w), {kbd:"N", action:"add-note"});
-      ctxItem(panel, "Table", () => addNodeCentered("table", w), {kbd:"T", action:"add-table"});
-      ctxItem(panel, "To-do list", () => addNodeCentered("todo", w), {kbd:"D", action:"add-todo"});
-      ctxItem(panel, "Frame", () => addNodeCentered("frame", w), {action:"add-frame"});
-      ctxItem(panel, "Horizontal swimlane", () => addNodeCentered("swimlane", w, {orientation:"horizontal"}), {action:"add-horizontal-lane"});
-      ctxItem(panel, "Vertical swimlane", () => addNodeCentered("swimlane", w, {orientation:"vertical"}), {action:"add-vertical-lane"});
-    }, {open:true});
+      ctxSubmenu(panel, "canvas:create:nodes", "Nodes and data", sub => {
+        ctxItem(sub, "Concept", () => addNodeCentered("concept", w), {kbd:"C", action:"add-concept"});
+        ctxItem(sub, "Table", () => addNodeCentered("table", w), {kbd:"T", action:"add-table"});
+        ctxItem(sub, "To-do list", () => addNodeCentered("todo", w), {kbd:"D", action:"add-todo"});
+      });
+      ctxSubmenu(panel, "canvas:create:text", "Text and notes", sub => {
+        ctxItem(sub, "Plain text", () => addNodeCentered("text", w), {kbd:"X", action:"add-text"});
+        ctxItem(sub, "Rich note", () => addNodeCentered("note", w), {kbd:"N", action:"add-note"});
+      });
+      ctxSubmenu(panel, "canvas:create:containers", "Containers", sub => {
+        ctxItem(sub, "Frame", () => addNodeCentered("frame", w), {action:"add-frame"});
+        ctxItem(sub, "Horizontal swimlane", () => addNodeCentered("swimlane", w, {orientation:"horizontal"}), {action:"add-horizontal-lane"});
+        ctxItem(sub, "Vertical swimlane", () => addNodeCentered("swimlane", w, {orientation:"vertical"}), {action:"add-vertical-lane"});
+      });
+    });
     ctxGroup(m, "canvas:layout", "Layout", panel => {
       ctxItem(panel, "Tree layout", layoutMindMapTree, {action:"layout-tree"});
       ctxItem(panel, "Schema layout", layoutSchemaTables, {action:"layout-schema"});

@@ -83,7 +83,10 @@ function wrapRichNoteBlock(block, maxWidth){
   return lines;
 }
 function richNoteLayout(n){
-  const base = noteFont(n), w = clampSize(n.w || NOTE_W_DEFAULT, 220, 720);
+  const fixedWidth = manualNodeWidth(n);
+  const base = noteFont(n), w = fixedWidth == null
+    ? clampSize(n.w || NOTE_W_DEFAULT, 220, 720)
+    : fixedWidth;
   const titleH = Math.ceil(base * 2.9), bodyW = w - 28;
   const source = String(n.content || "").replace(/\r\n?/g, "\n");
   const lines = [];
@@ -160,6 +163,7 @@ function conceptWrappedLayout(n){
   const shape = conceptShape(n), fs = conceptFont(n);
   const font = `600 ${fs}px Archivo, sans-serif`;
   const lineH = Math.ceil(fs * 1.28);
+  const fixedWidth = manualNodeWidth(n);
   if (WRAPPED_CONCEPT_SHAPES.has(shape)){
     const spec = shape === "triangle"
       ? { min:180, widthRatio:.46, heightRatio:.38, centerY:.64, heightFor:size => Math.round(size * .866) }
@@ -167,7 +171,10 @@ function conceptWrappedLayout(n){
         ? { min:140, widthRatio:.64, heightRatio:.58, centerY:.5, heightFor:size => size }
         : { min:120, widthRatio:.74, heightRatio:.72, centerY:.5, heightFor:size => size };
     let layout = null;
-    for (let size = spec.min; size <= 1200; size += 10){
+    const firstSize = fixedWidth == null ? spec.min : fixedWidth;
+    const lastSize = fixedWidth == null ? 1200 : fixedWidth;
+    const step = fixedWidth == null ? 10 : 1;
+    for (let size = firstSize; size <= lastSize; size += step){
       const h = spec.heightFor(size);
       const maxWidth = Math.max(44, Math.round(size * spec.widthRatio));
       const lines = wrapConceptTitle(n.title || "Untitled", font, maxWidth);
@@ -186,11 +193,13 @@ function conceptWrappedLayout(n){
   const longestExplicitLine = Math.max(...source.split("\n")
     .map(line => textW(line.trim() || " ", font)));
   if (shape === "decision"){
-    let w = Math.min(360, Math.max(160, Math.ceil(longestExplicitLine + 72)));
+    let w = fixedWidth == null
+      ? Math.min(360, Math.max(160, Math.ceil(longestExplicitLine + 72)))
+      : fixedWidth;
     let maxWidth = Math.max(70, Math.round(w * .62));
     let lines = wrapConceptTitle(source, font, maxWidth);
     let h = Math.max(80, lines.length * lineH + 38);
-    w = Math.min(360, Math.max(w, Math.ceil(h * 1.6)));
+    if (fixedWidth == null) w = Math.min(360, Math.max(w, Math.ceil(h * 1.6)));
     maxWidth = Math.max(70, Math.round(w * .62));
     lines = wrapConceptTitle(source, font, maxWidth);
     h = Math.max(80, lines.length * lineH + 38);
@@ -198,7 +207,9 @@ function conceptWrappedLayout(n){
   }
 
   const extraWidth = shape === "data" || shape === "manualInput" ? 56 : 44;
-  const w = Math.min(320, Math.max(130, Math.ceil(longestExplicitLine + extraWidth)));
+  const w = fixedWidth == null
+    ? Math.min(320, Math.max(130, Math.ceil(longestExplicitLine + extraWidth)))
+    : fixedWidth;
   const maxWidth = conceptTextWidth(shape, w);
   const lines = wrapConceptTitle(source, font, maxWidth);
   const documentExtra = shape === "document" ? 18 : 0;
@@ -224,12 +235,17 @@ function textBoxLayout(n){
   const fs = textBoxFont(n);
   const font = `600 ${fs}px Archivo, sans-serif`;
   const lineH = Math.ceil(fs * 1.28);
-  const maxW = clampSize(n.w || TEXT_W_DEFAULT, 80, 720);
+  const fixedWidth = manualNodeWidth(n);
+  const maxW = fixedWidth == null
+    ? clampSize(n.w || TEXT_W_DEFAULT, 80, 720)
+    : fixedWidth;
   const title = n.title || "Text";
   if (shape === "none"){
     const lines = wrapConceptTitle(title, font, maxW);
     const contentW = Math.max(...lines.map(line => textW(line, font)), fs);
-    const w = Math.max(32, Math.min(maxW, Math.ceil(contentW + 12)));
+    const w = fixedWidth == null
+      ? Math.max(32, Math.min(maxW, Math.ceil(contentW + 12)))
+      : maxW;
     const h = Math.max(lineH + 8, lines.length * lineH + 8);
     return {shape, fs, font, lineH, lines, w, h, centerY:h/2, maxWidth:maxW};
   }
@@ -268,16 +284,20 @@ function tableMetrics(n){
 }
 function nodeSize(n){
   if (n.type === "frame"){
+    const fixedWidth = manualNodeWidth(n);
     return {
-      w: clampSize(n.w || FRAME_DEFAULT.w, 120, 4000),
+      w: fixedWidth == null ? clampSize(n.w || FRAME_DEFAULT.w, 120, 4000) : fixedWidth,
       h: clampSize(n.h || FRAME_DEFAULT.h, 90, 4000)
     };
   }
   if (n.type === "swimlane"){
     const orientation = swimlaneOrientation(n);
     const defaults = swimlaneDefaults(n);
+    const fixedWidth = manualNodeWidth(n);
     return {
-      w: clampSize(n.w || defaults.w, orientation === "vertical" ? 120 : 260, 4000),
+      w: fixedWidth == null
+        ? clampSize(n.w || defaults.w, orientation === "vertical" ? 120 : 260, 4000)
+        : fixedWidth,
       h: clampSize(n.h || defaults.h, orientation === "vertical" ? 260 : 100, 4000)
     };
   }
@@ -295,28 +315,36 @@ function nodeSize(n){
   }
   if (n.type === "todo"){
     const m = tableMetrics(n);
+    const fixedWidth = manualNodeWidth(n);
     const headW = textW(n.title || "To-do list", `700 ${m.headerSize}px Archivo, sans-serif`) + 96;
-    if (n.collapsed) return { w: Math.min(Math.max(190, headW), 460), h: m.headerH + 10 };
+    if (n.collapsed) return {
+      w:fixedWidth == null ? Math.min(Math.max(190, headW), 460) : fixedWidth,
+      h:m.headerH + 10
+    };
     let maxRow = 150;
     for (const it of n.items){
       const rw = m.nameX + textW(it.text || "", `500 ${m.nameSize}px Archivo, sans-serif`) + 24;
       if (rw > maxRow) maxRow = rw;
     }
-    const w = Math.min(Math.max(190, headW, maxRow), 460);
+    const w = fixedWidth == null ? Math.min(Math.max(190, headW, maxRow), 460) : fixedWidth;
     const h = m.headerH + (Math.max(1, n.items.length) + 1) * m.rowH + 8;
     return { w, h };
   }
   // table node
   const m = tableMetrics(n);
+  const fixedWidth = manualNodeWidth(n);
   const headW = textW(n.title || "table", `700 ${m.headerSize}px Archivo, sans-serif`) + 56;
-  if (n.collapsed) return { w: Math.min(Math.max(190, headW), 460), h: m.headerH + 10 };
+  if (n.collapsed) return {
+    w:fixedWidth == null ? Math.min(Math.max(190, headW), 460) : fixedWidth,
+    h:m.headerH + 10
+  };
   let maxRow = 150;
   for (const f of n.fields){
     const rw = m.nameX + textW(f.name + (f.nullable ? "?" : ""), `500 ${m.nameSize}px 'IBM Plex Mono', monospace`)
              + 16 + textW(f.type, `400 ${m.typeSize}px 'IBM Plex Mono', monospace`) + 20;
     if (rw > maxRow) maxRow = rw;
   }
-  const w = Math.min(Math.max(190, headW, maxRow), 460);
+  const w = fixedWidth == null ? Math.min(Math.max(190, headW, maxRow), 460) : fixedWidth;
   const h = m.headerH + Math.max(1, n.fields.length) * m.rowH + 8;
   return { w, h };
 }

@@ -104,6 +104,11 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - Rich-note nodes (v1.7): `{ "id":"n14", "type":"note", "x":0, "y":0,
   "title":"Decision context", "content":"## Evidence\n- **Strong** signal", "color":"#FFE9A8",
   "fontSize":13, "w":300 }` — `content` stores Markdown-style source; `w` is optional.
+- Any node may include `manualWidth:true` with `w` (v1.16, additive) after a multi-selection
+  width-matching action. Without the flag, each node type keeps its legacy auto/default sizing;
+  with the flag, `w` is the exact rendered width (clamped to 80–4000). Text, note, frame, and
+  swimlane nodes may also carry `widthBeforeMatch` so Reset size can restore their prior configured
+  width; it is absent for content-sized concepts, tables, and to-dos.
 - Concept nodes may include optional `shape` ∈ `process|decision|terminator|data|document|manualInput`.
   It is presentation-only, applies only to concept nodes, and is absent for the default
   `process` rectangle so all older documents render unchanged.
@@ -1386,6 +1391,45 @@ retain safe silhouette padding; explicit newlines persist in JSON and export; ba
 the same newline-aware wrapping; table names, row text, to-do titles, and edge labels retain single-line
 editing; undo/redo and connected-edge anchors follow resized nodes; automated and browser keyboard/visual
 QA pass.
+
+---
+
+**SCH-088 · Match selected node widths · P1 · M · Done 2026-07-16**
+
+Add multi-selection right-click actions to set every selected node to the smallest, largest, or
+average width in the selection. Persist the resulting manual width across save/load and use one width
+contract across concepts, plain text, rich notes, tables, to-dos, frames, and swimlanes.
+
+AC: the three commands appear only for two or more selected nodes; each command creates one undo step;
+all selected node rectangles end at the same computed width; concept, plain-text, and rich-note content
+reflows; connected links re-anchor; legacy documents without manual widths remain visually unchanged;
+automated and browser right-click/visual QA pass.
+
+---
+
+**SCH-089 · Nested context-menu hierarchy · P1 · M · Done 2026-07-16**
+
+Replace the remaining long, mixed-purpose right-click menus with compact task-based submenus. Node
+menus use Content, Appearance, Arrange, and Actions; edge menus use Relationship, Label, Line,
+Routing, and Actions; canvas creation is divided into nodes/data, text/notes, and containers.
+
+AC: node, edge, and canvas menus have no loose root-level actions; dense palettes and control
+clusters live in nested submenus; only one sibling submenu opens at each level; disclosure state
+survives reopening; existing commands, selection behavior, undo boundaries, and keyboard access are
+preserved; automated and browser interaction/visual QA pass.
+
+---
+
+**SCH-090 · Reset forced node sizing · P1 · S · Done 2026-07-16**
+
+Add Reset size to the node context menu for single and multi-selections. It removes width matching
+from every selected node that currently has a forced width and restores the width configuration that
+existed before matching.
+
+AC: Reset size is always visible under Arrange → Size and disabled when no selected node is forced;
+mixed selections reset only forced nodes; concepts, tables, and to-dos resume content sizing while
+text, notes, frames, and swimlanes restore their pre-match width; the reset is one undo step and
+round-trips through save/load; automated and browser right-click QA pass.
 
 ---
 

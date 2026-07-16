@@ -253,17 +253,29 @@
   #ctxMenu .ctxhead small{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   #ctxMenu .ctxhead strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--ink)}
   #ctxMenu .ctxgroup{margin:0 -1px;border-bottom:1px solid var(--line)}
-  #ctxMenu .ctxgroup>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;
-                            padding:8px 9px;border-radius:6px;color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer}
-  #ctxMenu .ctxgroup>summary::-webkit-details-marker{display:none}
+  #ctxMenu .ctxgroup:last-child{border-bottom:none}
+  #ctxMenu .ctxgroup>summary,#ctxMenu .ctxsubmenu>summary{list-style:none;display:flex;align-items:center;
+    justify-content:space-between;gap:12px;color:var(--ink);cursor:pointer}
+  #ctxMenu .ctxgroup>summary{padding:8px 9px;border-radius:6px;font-size:12.5px;font-weight:650}
+  #ctxMenu .ctxgroup>summary::-webkit-details-marker,#ctxMenu .ctxsubmenu>summary::-webkit-details-marker{display:none}
   #ctxMenu .ctxgroup>summary:hover,#ctxMenu .ctxgroup[open]>summary{background:var(--hover)}
-  #ctxMenu .ctxgroup>summary:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-  #ctxMenu .ctxgroup[open]>summary .disclosure-chevron{transform:rotate(180deg)}
-  #ctxMenu .ctxgroupbody{padding:2px 0 5px}
+  #ctxMenu .ctxgroup>summary:focus-visible,#ctxMenu .ctxsubmenu>summary:focus-visible{
+    outline:2px solid var(--accent);outline-offset:-2px}
+  #ctxMenu .ctxgroup>summary .disclosure-chevron,#ctxMenu .ctxsubmenu>summary .disclosure-chevron{
+    transform:rotate(-90deg)}
+  #ctxMenu .ctxgroup[open]>summary .disclosure-chevron,#ctxMenu .ctxsubmenu[open]>summary .disclosure-chevron{
+    transform:rotate(0)}
+  #ctxMenu .ctxgroupbody{padding:3px 0 6px}
+  #ctxMenu .ctxsubmenu{margin:2px 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel)}
+  #ctxMenu .ctxsubmenu>summary{padding:7px 8px;border-radius:6px;font-size:12px;font-weight:550}
+  #ctxMenu .ctxsubmenu>summary:hover,#ctxMenu .ctxsubmenu[open]>summary{background:var(--accent-soft)}
+  #ctxMenu .ctxsubmenubody{padding:2px 0 5px;border-top:1px solid var(--line)}
   #ctxMenu .ctxitem{display:flex;justify-content:space-between;align-items:center;gap:18px;width:100%;
     border:none;background:none;border-radius:6px;padding:7px 10px;font-size:12.5px;font-weight:500;
     color:var(--ink);cursor:pointer;text-align:left}
   #ctxMenu .ctxitem:hover{background:var(--accent-soft)}
+  #ctxMenu .ctxitem:disabled{cursor:not-allowed;color:var(--muted);opacity:.55}
+  #ctxMenu .ctxitem:disabled:hover{background:none}
   #ctxMenu .ctxitem.danger{color:var(--danger)}
   #ctxMenu .ctxitem.danger:hover{background:#FBEFEF}
   #ctxMenu .ctxitem kbd{font-family:var(--mono);font-size:9.5px;color:var(--muted);
