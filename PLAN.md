@@ -20,7 +20,7 @@ server-side processing, no build step, no database, no auth, no telemetry**. Eve
 
 The deployment story is:
 
-1. `index.html`, `styles.css`, and `app.js` are placed on **any static web server**
+1. `index.html`, `styles.css`, and the `js/` directory are placed on **any static web server**
    (nginx, Apache, IIS, S3, GitHub Pages, SharePoint, `python -m http.server`) — or opened
    directly from disk via `file://`.
 2. The browser loads the static HTML/CSS/JS. That is the entire application.
@@ -49,19 +49,22 @@ The deployment story is:
 
 ---
 
-## 2. Architecture snapshot (as of 2026-07-08)
+## 2. Architecture snapshot (as of 2026-07-15)
 
-Files: `index.html`, `styles.css`, `app.js`, plus development-only `test.js`.
+Files: `index.html`, `styles.css`, nine ordered classic scripts in `js/`, plus
+development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
 
-### 2.1 Source sections (comment anchors inside `app.js`)
+### 2.1 Runtime scripts (load order is a contract)
 
-`State` → `History` → `Geometry` → `Render` (`---- edges ----`, `---- nodes ----`) →
-`Mutations` → `Pointer` → `Keyboard` → `Inspector` → `File I/O` → `SQL export` →
-`PNG export` → `Context menu` → `Seed data` → `Init`.
+`core` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
+`context-menu` → `bootstrap`.
 
-Add new code inside the matching section.
+The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
+loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
+mode. Each script has its own `"use strict"` directive and shares the existing global lexical scope.
+Add new code to the script matching its responsibility; only `bootstrap.js` may start the app.
 
 ### 2.2 Data model (exact shapes — additive changes only, never rename keys)
 
@@ -159,14 +162,14 @@ Add new code inside the matching section.
 
 ### 2.5 Test harness (development only)
 
-`test.js` runs under Node + jsdom (`npm install`; `npm test`). It is focused on the current
+`test.js` runs under Node + jsdom (`npm install`; `npm test`). It reads the runtime script order
+directly from `index.html`, concatenates those sources into one strict eval, and covers the current
 Phase A lifecycle and regression surface.
 Harness quirks you must respect:
 
 - Canvas 2D is stubbed (`measureText` ≈ `7px * length`); layout rects are stubbed.
-- The app script is executed with `window.eval(script)`. Top-level `let/const` do
-  **not** persist across separate evals — access internals only through the
-  `window.__T` hook (extend the hook when a new internal is needed).
+- The ordered runtime scripts are executed together with `window.eval(script)`. Access internals
+  only through the `window.__T` hook (extend the hook when a new internal is needed).
 - `render()` rebuilds SVG layers; DOM references captured before a render are **stale**.
   Re-query elements after any render.
 - Every feature PR adds assertions. The suite must end `ALL TESTS PASSED`.
@@ -175,8 +178,8 @@ Harness quirks you must respect:
 
 1. Read §1 and §2 of this document fully.
 2. Run `npm test` — confirm baseline green before touching behavior.
-3. Implement in `index.html`, `styles.css`, and/or `app.js` inside the correct section anchor.
-4. Run `node --check app.js`.
+3. Implement in `index.html`, `styles.css`, and/or the responsibility-matched file in `js/`.
+4. Run `for f in js/*.js; do node --check "$f" || exit 1; done`.
 5. Extend `test.js` with assertions for the new behavior; run until `ALL TESTS PASSED`.
 6. Manually sanity-check in a browser if available (drag, connect, undo, Open/Save, export JSON/SQL/PNG).
 7. Update §3 (Existing features) and mark the backlog item done with date.
@@ -1334,11 +1337,64 @@ automated and browser visual QA pass.
 
 ---
 
+**SCH-084 · Responsibility-oriented JavaScript architecture · P1 · M · Done 2026-07-15**
+
+Replace the 6,000-line `app.js` monolith with ordered scripts for core state, geometry, rendering,
+model mutations, interactions, inspector UI, file/export interoperability, context menus, and
+bootstrap. Preserve the zero-build static deployment and direct-`file://` fallback by using classic
+scripts with explicit load order instead of native ES modules.
+
+AC: all production logic is moved without behavioral rewrites; every script parses independently;
+the jsdom suite derives the same order from `index.html`; the `window.__T` surface is unchanged;
+serialization, rendering, interactions, and exports match the pre-refactor golden master; browser
+load and a primary interaction pass without console warnings or errors; architecture placement and
+dependency rules are documented.
+
+---
+
+**SCH-085 · Curved-link label follows visible path · P1 · S · Done 2026-07-15**
+
+Place labels on the half-length point of the rendered cubic Bézier instead of the straight midpoint
+between its endpoints. Apply the same curve-body rule to relationship labels while preserving the
+existing cumulative-path midpoint for orthogonal links.
+
+AC: labels remain centered on monotonic curves without inflection points; relationship labels use the
+glyph-to-glyph curve body; orthogonal waypoint labels are unchanged; automated geometry assertions and
+browser visual QA pass.
+
+---
+
+**SCH-086 · Compact swimlane title bands · P1 · S · Done 2026-07-15**
+
+Reduce the horizontal swimlane's oversized 140-unit title rail to the same compact 48-unit thickness
+used by the vertical orientation. Keep the title readable and preserve lane bounds, containment,
+resizing, independent title/body colors, editing, serialization, and export behavior.
+
+AC: both orientations use a 48-unit title band; existing documents gain content space without moving
+their nodes or changing lane dimensions; automated geometry assertions and browser visual QA pass.
+
+---
+
+**SCH-087 · Wrapped multiline concept-node titles · P1 · M · Done 2026-07-15**
+
+Render long concept-node titles as complete, centered SVG line stacks across every flowchart shape.
+Preserve explicit newline boundaries, grow node geometry to contain the text, and let Shift+Enter insert
+a newline in canvas and inspector editors while unmodified Enter commits the edit.
+
+AC: process and standard flowchart shapes no longer truncate long titles; triangle, circle, and square
+retain safe silhouette padding; explicit newlines persist in JSON and export; basic text primitives gain
+the same newline-aware wrapping; table names, row text, to-do titles, and edge labels retain single-line
+editing; undo/redo and connected-edge anchors follow resized nodes; automated and browser keyboard/visual
+QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.
 - Server-side persistence, accounts, sync, sharing links.
-- A build system, TypeScript migration, framework adoption, or splitting into modules.
+- A build system, TypeScript migration, framework adoption, or native-module conversion that breaks
+  direct `file://` loading.
 - Telemetry/analytics of any kind.
 - Full SQL parser (SCH-030 is an explicit subset; resist scope creep).
 - Browser extensions or Electron wrappers.
@@ -1347,8 +1403,8 @@ automated and browser visual QA pass.
 
 - [x] All §1 platform rules and §2.4 invariants hold.
 - [x] Works in the no-FSA fallback path (Firefox/`file://`) if the feature touches I/O.
-- [x] `node --check` passes on the extracted script; `node test.js` prints `ALL TESTS PASSED`.
+- [x] `node --check` passes for every file in `js/`; `node test.js` prints `ALL TESTS PASSED`.
 - [x] New behavior has assertions; count noted in the PR/summary.
 - [x] JSON documents from before the change still import (backward compatibility test).
 - [x] §3 of this PLAN.md updated; backlog item marked done 2026-07-08.
-- [x] Deliverable remains static `index.html`, `styles.css`, and `app.js` files.
+- [x] Deliverable remains static `index.html`, `styles.css`, and ordered files in `js/`.

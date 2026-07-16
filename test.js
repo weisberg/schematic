@@ -5,7 +5,8 @@ const { JSDOM } = require("jsdom");
 
 const ROOT = __dirname;
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-const script = fs.readFileSync(path.join(ROOT, "app.js"), "utf8");
+const scriptSources = [...html.matchAll(/<script\s+src="([^"]+\.js)"/g)].map(match => match[1]);
+const script = scriptSources.map(src => fs.readFileSync(path.join(ROOT, src), "utf8")).join("\n;\n");
 const styles = fs.readFileSync(path.join(ROOT, "styles.css"), "utf8");
 
 function makeStorage(throwing = false){
@@ -133,7 +134,17 @@ function closeEnough(a, b, msg){
   assert(Math.abs(a - b) < 1e-6, `${msg}: expected ${b}, got ${a}`);
 }
 
+if (process.argv.includes("--api-surface")){
+  const { window } = makeDom();
+  process.stdout.write(Object.keys(window.__T).sort().join("\n") + "\n");
+  process.exit(0);
+}
+
 (async () => {
+  sameList(scriptSources, [
+    "js/core.js", "js/geometry.js", "js/render.js", "js/model.js", "js/interactions.js",
+    "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
+  ], "HTML declares the complete runtime dependency order");
   assert(html.includes("<!-- deployment"), "deployment comment is present");
   assert(html.includes("<noscript>"), "noscript warning is present");
   assert(html.includes(".schematic"), "fallback file input accepts .schematic files");
@@ -670,18 +681,51 @@ function closeEnough(a, b, msg){
     const { window } = makeDom();
     const T = window.__T;
     const node = T.state.nodes.find(n => n.title === "Tiered rewards");
+    const connectedEdge = T.state.edges.find(edge => edge.from === node.id);
+    const endpointsBeforeWrap = T.edgeEndpoints(connectedEdge);
     T.startInlineEditor("node", node.id);
     let input = window.document.querySelector(".inline-editor");
     assert(input, "node inline editor appears");
-    input.value = "Tier strategy";
+    assert.strictEqual(input.tagName, "TEXTAREA", "concept inline editing supports multiple lines");
+    input.value = "Tier strategy with a deliberately long title that wraps across the process nodeSecond explicit line";
+    input.setSelectionRange(input.value.indexOf("Second"), input.value.indexOf("Second"));
+    input.dispatchEvent(new window.KeyboardEvent("keydown",
+      { key:"Enter", shiftKey:true, bubbles:true, cancelable:true }));
+    assert(input.value.includes("\nSecond explicit line"), "Shift+Enter inserts a line break at the caret");
+    assert(window.document.querySelector(".inline-editor"), "Shift+Enter keeps the inline editor open");
     input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Enter", bubbles:true }));
-    assert.strictEqual(node.title, "Tier strategy", "Enter commits node inline edit");
+    assert(node.title.includes("\nSecond explicit line"), "Enter commits the multiline node title");
+    const processLayout = T.conceptWrappedLayout(node);
+    assert(processLayout.lines.length >= 3, "a long process-node title wraps onto multiple lines");
+    assert(processLayout.w <= 320, "a long process node grows downward instead of becoming excessively wide");
+    assert(T.nodeRect(node).h > 48, "a process node grows vertically to contain its wrapped title");
+    const endpointsAfterWrap = T.edgeEndpoints(connectedEdge);
+    assert(endpointsAfterWrap.pa.x > endpointsBeforeWrap.pa.x,
+      "connected links re-anchor after wrapped text widens the node");
+    const processLines = [...window.document.querySelectorAll(
+      `[data-node="${node.id}"] [data-concept-line]`)].map(line => line.textContent);
+    sameList(processLines, processLayout.lines, "the process node renders every wrapped line");
+    sameList(T.wrapConceptTitle("First explicit line\nSecond explicit line",
+      processLayout.font, 1000), ["First explicit line", "Second explicit line"],
+      "explicit newlines remain hard wrapping boundaries");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).nodes.find(n => n.id === node.id).title, node.title,
+      "multiline node titles persist in the document");
+
+    T.selectNode(node.id);
+    const inspectorTitle = window.document.getElementById("titleInput");
+    assert(inspectorTitle && inspectorTitle.tagName === "TEXTAREA",
+      "the concept inspector also exposes multiline title editing");
+    inspectorTitle.setSelectionRange(inspectorTitle.value.length, inspectorTitle.value.length);
+    inspectorTitle.dispatchEvent(new window.KeyboardEvent("keydown",
+      {key:"Enter", shiftKey:true, bubbles:true, cancelable:true}));
+    assert(node.title.endsWith("\n"), "inspector Shift+Enter updates the node with a new line");
+    const committedMultilineTitle = node.title;
 
     T.startInlineEditor("node", node.id);
     input = window.document.querySelector(".inline-editor");
     input.value = "Cancelled title";
     input.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true }));
-    assert.strictEqual(node.title, "Tier strategy", "Escape cancels node inline edit");
+    assert(node.title.includes("Second explicit line"), "Escape cancels node inline edit");
 
     T.startInlineEditor("node", node.id);
     input = window.document.querySelector(".inline-editor");
@@ -692,7 +736,7 @@ function closeEnough(a, b, msg){
     });
     window.document.getElementById("board").dispatchEvent(wheel);
     assert(!window.document.querySelector(".inline-editor"), "wheel pan closes inline editor");
-    assert.strictEqual(node.title, "Tier strategy", "wheel pan close does not commit an edit");
+    assert.strictEqual(node.title, committedMultilineTitle, "wheel pan close does not commit an edit");
     assert.strictEqual(T.view.x, -14, "ordinary horizontal wheel input pans horizontally");
     assert.strictEqual(T.view.y, 20, "ordinary vertical wheel input pans vertically");
     assert.strictEqual(T.view.k, 1, "ordinary wheel input does not zoom");
@@ -1219,6 +1263,42 @@ function closeEnough(a, b, msg){
       "orthogonal relation geometry remains unchanged");
   }
 
+  /* SCH-085 — curved labels follow the rendered Bezier instead of its endpoint chord */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const pa = {x:100, y:340, side:"n"};
+    const pb = {x:700, y:110, side:"w"};
+    const label = T.edgeLabelPoint({kind:"link", routing:"curve"}, {pa, pb});
+    const straightMidpoint = {x:(pa.x + pb.x) / 2, y:(pa.y + pb.y) / 2};
+    assert(Math.hypot(label.x - straightMidpoint.x, label.y - straightMidpoint.y) > 60,
+      "a one-direction curve no longer places its label at the endpoint chord midpoint");
+
+    const curveSamples = d => {
+      const [prefix, curve] = d.split(" C ");
+      const start = prefix.match(/-?\d+(?:\.\d+)?/g).map(Number).slice(-2);
+      const [c1x, c1y, c2x, c2y, x3, y3] = curve.match(/-?\d+(?:\.\d+)?/g).map(Number);
+      const [x0, y0] = start;
+      return Array.from({length:1001}, (_, i) => {
+        const t = i / 1000, u = 1 - t, uu = u * u, tt = t * t;
+        return {
+          x:uu * u * x0 + 3 * uu * t * c1x + 3 * u * tt * c2x + tt * t * x3,
+          y:uu * u * y0 + 3 * uu * t * c1y + 3 * u * tt * c2y + tt * t * y3
+        };
+      });
+    };
+    const expected = T.polylineMidpoint(curveSamples(T.edgePath({kind:"link"}, pa, pb)));
+    assert(Math.hypot(label.x - expected.x, label.y - expected.y) < 0.5,
+      "a curved label sits at the visible Bezier's half-length point");
+
+    const relation = T.state.edges.find(edge => edge.kind === "1:N");
+    const ep = T.edgeEndpoints(relation);
+    const relationLabel = T.edgeLabelPoint(relation, ep);
+    const relationMidpoint = T.polylineMidpoint(curveSamples(T.edgeRenderPath(relation, ep)));
+    assert(Math.hypot(relationLabel.x - relationMidpoint.x, relationLabel.y - relationMidpoint.y) < 0.5,
+      "relationship labels follow the glyph-to-glyph curve body");
+  }
+
   /* SCH-073 — draggable orthogonal waypoint with coordinate snapping */
   {
     const { window } = makeDom();
@@ -1464,6 +1544,11 @@ function closeEnough(a, b, msg){
     assert(laneGroup && laneGroup.getAttribute("data-orientation") === "horizontal", "horizontal swimlane renders");
     assert(laneGroup.querySelector('[data-swimlane-body]').getAttribute("fill") === "#dceafe", "body uses its own background");
     assert(laneGroup.querySelector('[data-swimlane-title-band]').getAttribute("fill") === "#2456e6", "title uses its own background");
+    const horizontalDivider = laneGroup.querySelector('[data-swimlane-divider]');
+    assert.strictEqual(Number(horizontalDivider.getAttribute("x1")), 48,
+      "horizontal swimlane uses a compact 48-unit title rail");
+    assert.strictEqual(Number(horizontalDivider.getAttribute("x1")) / T.nodeRect(lane).w, 0.08,
+      "the default horizontal title rail occupies only eight percent of the lane");
     assert.strictEqual(laneGroup.closest("#frameLayer").id, "frameLayer", "swimlanes render behind edges and nodes");
     assert.strictEqual(laneGroup.querySelector("[data-handle]"), null, "swimlanes do not expose link handles");
     assert.strictEqual(T.hitTest({x:20, y:120}), null, "hitTest ignores swimlanes for link targeting");
@@ -1499,8 +1584,11 @@ function closeEnough(a, b, msg){
     orientation.value = "vertical";
     orientation.dispatchEvent(new window.Event("change", {bubbles:true}));
     assert.strictEqual(edited.orientation, "vertical", "inspector changes swimlane orientation");
-    assert.strictEqual(doc.querySelector('[data-swimlane="lane1"]').getAttribute("data-orientation"), "vertical",
+    const verticalLaneGroup = doc.querySelector('[data-swimlane="lane1"]');
+    assert.strictEqual(verticalLaneGroup.getAttribute("data-orientation"), "vertical",
       "orientation change updates rendered geometry");
+    assert.strictEqual(Number(verticalLaneGroup.querySelector('[data-swimlane-divider]').getAttribute("y1")), 48,
+      "vertical swimlane keeps the compact 48-unit title header");
 
     T.nodeMenu(edited, 10, 10);
     const menuText = doc.getElementById("ctxMenu").textContent;
