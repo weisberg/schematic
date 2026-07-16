@@ -198,13 +198,48 @@ function edgeEndpoints(e){
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
            pinnedA: ia < 0 && !!e.fromAnchor, pinnedB: ib < 0 && !!e.toAnchor };
 }
-function curveEdgeCommand(pa, pb){
+function curveEdgeControlPoints(pa, pb){
   const dx = Math.max(40, Math.abs(pb.x - pa.x) * 0.45);
   const dy = Math.max(40, Math.abs(pb.y - pa.y) * 0.45);
   const c = p => p.side === "e" ? [p.x + dx, p.y] : p.side === "w" ? [p.x - dx, p.y]
             : p.side === "s" ? [p.x, p.y + dy] : [p.x, p.y - dy];
   const [c1x, c1y] = c(pa), [c2x, c2y] = c(pb);
-  return `C ${c1x} ${c1y}, ${c2x} ${c2y}, ${pb.x} ${pb.y}`;
+  return { c1:{x:c1x, y:c1y}, c2:{x:c2x, y:c2y} };
+}
+function curveEdgePoint(pa, pb, t, controls = curveEdgeControlPoints(pa, pb)){
+  const u = 1 - t, uu = u * u, tt = t * t;
+  return {
+    x:uu * u * pa.x + 3 * uu * t * controls.c1.x + 3 * u * tt * controls.c2.x + tt * t * pb.x,
+    y:uu * u * pa.y + 3 * uu * t * controls.c1.y + 3 * u * tt * controls.c2.y + tt * t * pb.y
+  };
+}
+function curveEdgeMidpoint(pa, pb){
+  const controls = curveEdgeControlPoints(pa, pb);
+  const segments = [];
+  let previous = curveEdgePoint(pa, pb, 0, controls), total = 0;
+  for (let i = 1; i <= 32; i++){
+    const t = i / 32;
+    const point = curveEdgePoint(pa, pb, t, controls);
+    const length = Math.hypot(point.x - previous.x, point.y - previous.y);
+    segments.push({fromT:(i - 1) / 32, toT:t, length});
+    total += length;
+    previous = point;
+  }
+  if (!total) return {x:pa.x, y:pa.y};
+  let remaining = total / 2;
+  for (const segment of segments){
+    if (remaining <= segment.length){
+      const fraction = segment.length ? remaining / segment.length : 0;
+      return curveEdgePoint(pa, pb,
+        segment.fromT + (segment.toT - segment.fromT) * fraction, controls);
+    }
+    remaining -= segment.length;
+  }
+  return {x:pb.x, y:pb.y};
+}
+function curveEdgeCommand(pa, pb){
+  const {c1, c2} = curveEdgeControlPoints(pa, pb);
+  return `C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${pb.x} ${pb.y}`;
 }
 function curveEdgePath(pa, pb){
   return `M ${pa.x} ${pa.y} ${curveEdgeCommand(pa, pb)}`;
@@ -282,7 +317,9 @@ function polylineMidpoint(points){
 }
 function edgeLabelPoint(e, ep){
   if (e && e.routing === "ortho") return polylineMidpoint(orthoEdgeRoute(e, ep.pa, ep.pb).points);
-  return {x:(ep.pa.x + ep.pb.x)/2, y:(ep.pa.y + ep.pb.y)/2};
+  const pa = e && e.kind !== "link" ? notationVertex(ep.pa) : ep.pa;
+  const pb = e && e.kind !== "link" ? notationVertex(ep.pb) : ep.pb;
+  return curveEdgeMidpoint(pa, pb);
 }
 function nearestSnap(value, candidates, threshold){
   let best = null, distance = threshold + Number.EPSILON;
@@ -465,7 +502,8 @@ function drawSwimlane(n){
   if (orientation === "horizontal"){
     el("path", {d:`M 10 0 H ${titleSize} V ${r.h} H 10 Q 0 ${r.h} 0 ${r.h-10} V 10 Q 0 0 10 0 Z`,
                 fill:titleColor, "data-swimlane-title-band":"1"}, g);
-    el("line", {x1:titleSize, y1:0, x2:titleSize, y2:r.h, stroke:t.ink2, "stroke-width":1.2}, g);
+    el("line", {x1:titleSize, y1:0, x2:titleSize, y2:r.h, stroke:t.ink2, "stroke-width":1.2,
+                "data-swimlane-divider":"1"}, g);
     el("text", {x:0, y:0, transform:`translate(${titleSize/2},${r.h/2}) rotate(-90)`,
                 "text-anchor":"middle", "dominant-baseline":"middle", fill:autoInk(titleColor),
                 "font-family":"Archivo, sans-serif", "font-size":14, "font-weight":700,
@@ -474,7 +512,8 @@ function drawSwimlane(n){
   } else {
     el("path", {d:`M 10 0 H ${r.w-10} Q ${r.w} 0 ${r.w} 10 V ${titleSize} H 0 V 10 Q 0 0 10 0 Z`,
                 fill:titleColor, "data-swimlane-title-band":"1"}, g);
-    el("line", {x1:0, y1:titleSize, x2:r.w, y2:titleSize, stroke:t.ink2, "stroke-width":1.2}, g);
+    el("line", {x1:0, y1:titleSize, x2:r.w, y2:titleSize, stroke:t.ink2, "stroke-width":1.2,
+                "data-swimlane-divider":"1"}, g);
     el("text", {x:r.w/2, y:titleSize/2, "text-anchor":"middle", "dominant-baseline":"middle",
                 fill:autoInk(titleColor), "font-family":"Archivo, sans-serif", "font-size":14,
                 "font-weight":700, "data-swimlane-title":"1"}, g)

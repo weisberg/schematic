@@ -1352,6 +1352,43 @@ dependency rules are documented.
 
 ---
 
+**SCH-085 · Curved-link label follows visible path · P1 · S · Done 2026-07-15**
+
+Place labels on the half-length point of the rendered cubic Bézier instead of the straight midpoint
+between its endpoints. Apply the same curve-body rule to relationship labels while preserving the
+existing cumulative-path midpoint for orthogonal links.
+
+AC: labels remain centered on monotonic curves without inflection points; relationship labels use the
+glyph-to-glyph curve body; orthogonal waypoint labels are unchanged; automated geometry assertions and
+browser visual QA pass.
+
+---
+
+**SCH-086 · Compact swimlane title bands · P1 · S · Done 2026-07-15**
+
+Reduce the horizontal swimlane's oversized 140-unit title rail to the same compact 48-unit thickness
+used by the vertical orientation. Keep the title readable and preserve lane bounds, containment,
+resizing, independent title/body colors, editing, serialization, and export behavior.
+
+AC: both orientations use a 48-unit title band; existing documents gain content space without moving
+their nodes or changing lane dimensions; automated geometry assertions and browser visual QA pass.
+
+---
+
+**SCH-087 · Wrapped multiline concept-node titles · P1 · M · Done 2026-07-15**
+
+Render long concept-node titles as complete, centered SVG line stacks across every flowchart shape.
+Preserve explicit newline boundaries, grow node geometry to contain the text, and let Shift+Enter insert
+a newline in canvas and inspector editors while unmodified Enter commits the edit.
+
+AC: process and standard flowchart shapes no longer truncate long titles; triangle, circle, and square
+retain safe silhouette padding; explicit newlines persist in JSON and export; basic text primitives gain
+the same newline-aware wrapping; table names, row text, to-do titles, and edge labels retain single-line
+editing; undo/redo and connected-edge anchors follow resized nodes; automated and browser keyboard/visual
+QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.

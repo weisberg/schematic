@@ -132,49 +132,80 @@ function setTextBoxShape(n, shape){
   else n.shape = next;
 }
 function wrapConceptTitle(text, font, maxWidth){
-  const words = String(text || "Untitled").trim().split(/\s+/).filter(Boolean);
+  const source = String(text || "Untitled").replace(/\r\n?/g, "\n");
+  if (!source.trim()) return ["Untitled"];
   const lines = [];
-  let line = "";
-  const pushWord = word => {
-    const next = line ? line + " " + word : word;
-    if (textW(next, font) <= maxWidth){ line = next; return; }
-    if (line){ lines.push(line); line = ""; }
-    if (textW(word, font) <= maxWidth){ line = word; return; }
-    let part = "";
-    for (const ch of word){
-      if (part && textW(part + ch, font) > maxWidth){ lines.push(part); part = ch; }
-      else part += ch;
-    }
-    line = part;
-  };
-  for (const word of words) pushWord(word);
-  if (line) lines.push(line);
+  for (const explicitLine of source.split("\n")){
+    const words = explicitLine.trim().split(/\s+/).filter(Boolean);
+    if (!words.length){ lines.push(""); continue; }
+    let line = "";
+    const pushWord = word => {
+      const next = line ? line + " " + word : word;
+      if (textW(next, font) <= maxWidth){ line = next; return; }
+      if (line){ lines.push(line); line = ""; }
+      if (textW(word, font) <= maxWidth){ line = word; return; }
+      let part = "";
+      for (const ch of word){
+        if (part && textW(part + ch, font) > maxWidth){ lines.push(part); part = ch; }
+        else part += ch;
+      }
+      line = part;
+    };
+    for (const word of words) pushWord(word);
+    if (line) lines.push(line);
+  }
   return lines.length ? lines : ["Untitled"];
 }
 function conceptWrappedLayout(n){
   const shape = conceptShape(n), fs = conceptFont(n);
-  if (!WRAPPED_CONCEPT_SHAPES.has(shape)) return null;
   const font = `600 ${fs}px Archivo, sans-serif`;
   const lineH = Math.ceil(fs * 1.28);
-  const spec = shape === "triangle"
-    ? { min:180, widthRatio:.46, heightRatio:.38, centerY:.64, heightFor:size => Math.round(size * .866) }
-    : shape === "circle"
-      ? { min:140, widthRatio:.64, heightRatio:.58, centerY:.5, heightFor:size => size }
-      : { min:120, widthRatio:.74, heightRatio:.72, centerY:.5, heightFor:size => size };
-  let layout = null;
-  for (let size = spec.min; size <= 420; size += 10){
-    const h = spec.heightFor(size);
-    const maxWidth = Math.max(44, Math.round(size * spec.widthRatio));
-    const lines = wrapConceptTitle(n.title || "Untitled", font, maxWidth);
-    const maxLines = Math.max(1, Math.floor(h * spec.heightRatio / lineH));
-    layout = { w:size, h, fs, font, lineH, lines, maxLines, maxWidth, centerY:h * spec.centerY };
-    if (lines.length <= maxLines) return layout;
+  if (WRAPPED_CONCEPT_SHAPES.has(shape)){
+    const spec = shape === "triangle"
+      ? { min:180, widthRatio:.46, heightRatio:.38, centerY:.64, heightFor:size => Math.round(size * .866) }
+      : shape === "circle"
+        ? { min:140, widthRatio:.64, heightRatio:.58, centerY:.5, heightFor:size => size }
+        : { min:120, widthRatio:.74, heightRatio:.72, centerY:.5, heightFor:size => size };
+    let layout = null;
+    for (let size = spec.min; size <= 1200; size += 10){
+      const h = spec.heightFor(size);
+      const maxWidth = Math.max(44, Math.round(size * spec.widthRatio));
+      const lines = wrapConceptTitle(n.title || "Untitled", font, maxWidth);
+      const maxLines = Math.max(1, Math.floor(h * spec.heightRatio / lineH));
+      layout = { w:size, h, fs, font, lineH, lines, maxLines, maxWidth, centerY:h * spec.centerY };
+      if (lines.length <= maxLines) return layout;
+    }
+    const visible = layout.lines.slice(0, layout.maxLines);
+    let last = visible[visible.length - 1] || "";
+    while (last && textW(last + "…", font) > layout.maxWidth) last = last.slice(0, -1);
+    visible[visible.length - 1] = (last || "").trimEnd() + "…";
+    return {...layout, lines:visible, truncated:true};
   }
-  const visible = layout.lines.slice(0, layout.maxLines);
-  let last = visible[visible.length - 1] || "";
-  while (last && textW(last + "…", font) > layout.maxWidth) last = last.slice(0, -1);
-  visible[visible.length - 1] = (last || "").trimEnd() + "…";
-  return {...layout, lines:visible, truncated:true};
+
+  const source = String(n.title || "Untitled").replace(/\r\n?/g, "\n");
+  const longestExplicitLine = Math.max(...source.split("\n")
+    .map(line => textW(line.trim() || " ", font)));
+  if (shape === "decision"){
+    let w = Math.min(360, Math.max(160, Math.ceil(longestExplicitLine + 72)));
+    let maxWidth = Math.max(70, Math.round(w * .62));
+    let lines = wrapConceptTitle(source, font, maxWidth);
+    let h = Math.max(80, lines.length * lineH + 38);
+    w = Math.min(360, Math.max(w, Math.ceil(h * 1.6)));
+    maxWidth = Math.max(70, Math.round(w * .62));
+    lines = wrapConceptTitle(source, font, maxWidth);
+    h = Math.max(80, lines.length * lineH + 38);
+    return {w, h, fs, font, lineH, lines, maxLines:lines.length, maxWidth, centerY:h/2};
+  }
+
+  const extraWidth = shape === "data" || shape === "manualInput" ? 56 : 44;
+  const w = Math.min(320, Math.max(130, Math.ceil(longestExplicitLine + extraWidth)));
+  const maxWidth = conceptTextWidth(shape, w);
+  const lines = wrapConceptTitle(source, font, maxWidth);
+  const documentExtra = shape === "document" ? 18 : 0;
+  const baseHeight = Math.max(40, Math.round(fs * 2.2 + 17.2)) + documentExtra;
+  const h = Math.max(baseHeight, lines.length * lineH + 22 + documentExtra);
+  return {w, h, fs, font, lineH, lines, maxLines:lines.length, maxWidth,
+          centerY:shape === "document" ? (h - 12)/2 : h/2};
 }
 function conceptTextWidth(shape, w){
   return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
@@ -251,19 +282,8 @@ function nodeSize(n){
     };
   }
   if (n.type === "concept"){
-    const fs = conceptFont(n);
-    const shape = conceptShape(n);
-    const wrapped = conceptWrappedLayout(n);
-    if (wrapped) return { w:wrapped.w, h:wrapped.h };
-    if (shape === "decision"){
-      const h = Math.max(80, Math.round(fs * 3.15 + 38));
-      const w = Math.max(160, h * 1.6, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) + 72);
-      return { w: Math.min(w, 420), h };
-    }
-    const w = Math.max(130, textW(n.title || "Untitled", `600 ${fs}px Archivo, sans-serif`) +
-      (shape === "data" || shape === "manualInput" ? 56 : 44));
-    const h = Math.max(40, Math.round(fs * 2.2 + 17.2)) + (shape === "document" ? 18 : 0);
-    return { w: Math.min(w, 420), h };
+    const layout = conceptWrappedLayout(n);
+    return {w:layout.w, h:layout.h};
   }
   if (n.type === "text"){
     const layout = textBoxLayout(n);

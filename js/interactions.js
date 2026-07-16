@@ -804,13 +804,14 @@ function inlineEditorBox(kind, id, rowId){
                h:Math.max(28, (Math.min(titleSize, r.h*.45) - 16)*view.k), fontSize:13 };
     }
     if (n.type === "text"){
-      const p = worldToWrap(r.x + 4, r.y + Math.max(0, r.h/2 - 18));
-      return {x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 8), h:36,
+      const p = worldToWrap(r.x + 4, r.y + 4);
+      return {x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 8), h:Math.max(36, r.h*view.k - 8),
               fontSize:Math.max(12, textBoxFont(n)*view.k)};
     }
     if (n.type === "concept"){
-      const p = worldToWrap(r.x + 12, r.y + Math.max(4, r.h/2 - 16));
-      return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24), h:32, fontSize:Math.max(12, conceptFont(n)*view.k) };
+      const p = worldToWrap(r.x + 12, r.y + 8);
+      return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24),
+               h:Math.max(32, r.h*view.k - 16), fontSize:Math.max(12, conceptFont(n)*view.k) };
     }
     if (n.type === "note"){
       const layout = richNoteLayout(n);
@@ -841,17 +842,25 @@ function startInlineEditor(kind, id, rowId){
   if (!target) return;
   const original = kind === "row" ? (target.name ?? target.text ?? "")
                  : kind === "node" ? target.title || "" : target.label || "";
-  const input = document.createElement("input");
-  input.type = "text";
+  const multiline = kind === "node" && nodeTitleSupportsLineBreaks(target);
+  const input = document.createElement(multiline ? "textarea" : "input");
+  if (!multiline) input.type = "text";
   input.className = "inline-editor";
+  if (multiline) input.classList.add("multiline");
   input.value = original;
   input.style.left = box.x + "px";
   input.style.top = box.y + "px";
   input.style.width = box.w + "px";
   input.style.height = box.h + "px";
   input.style.fontSize = box.fontSize + "px";
+  if (multiline) input.setAttribute("aria-label", "Edit node text; Shift+Enter inserts a new line");
   input.addEventListener("pointerdown", ev => ev.stopPropagation());
   input.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" && ev.shiftKey && multiline){
+      ev.preventDefault();
+      insertTextLineBreak(input);
+      return;
+    }
     if (ev.key === "Enter"){ ev.preventDefault(); closeInlineEditor(true); }
     if (ev.key === "Escape"){ ev.preventDefault(); closeInlineEditor(false); }
   });

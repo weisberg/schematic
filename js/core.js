@@ -78,11 +78,11 @@ const TEXT_FS_DEFAULT = 24, TEXT_W_DEFAULT = 260;
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const SWIMLANE_DEFAULT = {
   bodyColor:"#DCEAFE", titleColor:"#2456E6",
-  horizontal:{ w:600, h:180, titleSize:140 },
+  horizontal:{ w:600, h:180, titleSize:48 },
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.15.0";
+const APP_VERSION = "v1.15.3";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -114,6 +114,13 @@ function fontColors(){ return (colorScheme && colorScheme.font) || FONT_COLORS; 
 function frameColorDefault(){ return (colorScheme && colorScheme.frame) || FRAME_DEFAULT.color; }
 function todoColorDefault(){ return (colorScheme && colorScheme.todo) || TODO_COLOR_DEFAULT; }
 function isStructuralNode(n){ return !!n && (n.type === "frame" || n.type === "swimlane"); }
+function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text"); }
+function insertTextLineBreak(control){
+  const start = Number.isInteger(control.selectionStart) ? control.selectionStart : control.value.length;
+  const end = Number.isInteger(control.selectionEnd) ? control.selectionEnd : start;
+  control.setRangeText("\n", start, end, "end");
+  control.dispatchEvent(new Event("input", {bubbles:true}));
+}
 function swimlaneOrientation(n){ return n && n.orientation === "vertical" ? "vertical" : "horizontal"; }
 function swimlaneDefaults(n){ return SWIMLANE_DEFAULT[swimlaneOrientation(n)]; }
 function setSwimlaneOrientation(n, orientation){

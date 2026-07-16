@@ -169,12 +169,30 @@ function inspectorActions(buttons, danger, opts = {}){
 }
 function renderNodeTitleField(n){
   frow(n.type === "table" ? "Table name" : n.type === "text" ? "Text" : "Title", () => {
-    const i = mkInput(n.title, v => {
+    const update = v => {
       n.title = v;
       const headerName = document.querySelector("#inspTitle .inspector-name");
       if (headerName) headerName.textContent = v;
       drawOnly();
-    });
+    };
+    const multiline = nodeTitleSupportsLineBreaks(n);
+    const i = multiline ? document.createElement("textarea") : mkInput(n.title, update);
+    if (multiline){
+      i.value = n.title || "";
+      i.rows = 2;
+      i.setAttribute("aria-label", "Node text; Shift+Enter inserts a new line");
+      i.addEventListener("focus", pushHistoryOnce());
+      i.addEventListener("input", () => update(i.value));
+      i.addEventListener("keydown", ev => {
+        if (ev.key === "Enter" && ev.shiftKey){
+          ev.preventDefault();
+          insertTextLineBreak(i);
+        } else if (ev.key === "Enter"){
+          ev.preventDefault();
+          i.blur();
+        }
+      });
+    }
     i.id = "titleInput";
     if (n.type === "table"){
       let prev = n.title;
