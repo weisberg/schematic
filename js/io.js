@@ -83,6 +83,7 @@ function newDoc(){
   redoStack.length = 0;
   doc = { handle: null, name: "untitled.schematic.json", dirty: false };
   setAutoSave(false);   // the new document has no file handle to save into
+  setCustomStatuses([]);
   applyColorScheme(null);
   applyTheme("light", { render:false });
   applyDialect("ansi", { render:false });
@@ -94,6 +95,21 @@ function newDoc(){
 }
 document.getElementById("btnExportJSON").addEventListener("click", () =>
   download(doc.name || "schematic-diagram.json", serializeDocument(), "application/json"));
+
+function addNodeAtViewCenter(type){
+  const center = viewCenter();
+  if (type === "concept") addNode(type, center.x - 65, center.y - 24);
+  else if (type === "text") addNode(type, center.x - TEXT_W_DEFAULT/2, center.y - 20);
+  else if (type === "status") addNode(type, center.x - STATUS_W_DEFAULT/2, center.y - 30);
+  else if (type === "note") addNode(type, center.x - NOTE_W_DEFAULT/2, center.y - 60);
+  else if (type === "table") addNode(type, center.x - 95, center.y - 40);
+  else if (type === "todo") addNode(type, center.x - 90, center.y - 30);
+  else if (type === "frame") addNode(type, center.x - FRAME_DEFAULT.w/2, center.y - FRAME_DEFAULT.h/2);
+}
+function zoomAtCanvasCenter(scale){
+  const rect = board.getBoundingClientRect();
+  zoomAtClient(scale, rect.left + rect.width/2, rect.top + rect.height/2);
+}
 
 document.getElementById("btnImportJSON").addEventListener("click", () =>
   fallbackOpen());
@@ -125,15 +141,16 @@ document.getElementById("btnUndo").addEventListener("click", undo);
 document.getElementById("btnRedo").addEventListener("click", redo);
 document.getElementById("btnFit").addEventListener("click", fitView);
 document.getElementById("btnInspector").addEventListener("click", toggleInspector);
-document.getElementById("btnAddConcept").addEventListener("click", () => { const c = viewCenter(); addNode("concept", c.x-65, c.y-24); });
-document.getElementById("btnAddText").addEventListener("click", () => { const c = viewCenter(); addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20); });
-document.getElementById("btnAddNote").addEventListener("click", () => { const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); });
-document.getElementById("btnAddTable").addEventListener("click", () => { const c = viewCenter(); addNode("table", c.x-95, c.y-40); });
-document.getElementById("btnAddTodo").addEventListener("click", () => { const c = viewCenter(); addNode("todo", c.x-90, c.y-30); });
+document.getElementById("btnAddConcept").addEventListener("click", () => addNodeAtViewCenter("concept"));
+document.getElementById("btnAddText").addEventListener("click", () => addNodeAtViewCenter("text"));
+document.getElementById("btnAddStatus").addEventListener("click", () => addNodeAtViewCenter("status"));
+document.getElementById("btnAddNote").addEventListener("click", () => addNodeAtViewCenter("note"));
+document.getElementById("btnAddTable").addEventListener("click", () => addNodeAtViewCenter("table"));
+document.getElementById("btnAddTodo").addEventListener("click", () => addNodeAtViewCenter("todo"));
 document.getElementById("btnSnap").addEventListener("click", toggleSnapToGrid);
 document.getElementById("btnCleanup").addEventListener("click", cleanUpToGrid);
 document.getElementById("autoSaveToggle").addEventListener("change", ev => setAutoSave(ev.target.checked));
-document.getElementById("btnAddFrame").addEventListener("click", () => { const c = viewCenter(); addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2); });
+document.getElementById("btnAddFrame").addEventListener("click", () => addNodeAtViewCenter("frame"));
 document.getElementById("btnAddHorizontalLane").addEventListener("click", () => addSwimlane("horizontal"));
 document.getElementById("btnAddVerticalLane").addEventListener("click", () => addSwimlane("vertical"));
 document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
@@ -148,6 +165,43 @@ document.getElementById("btnAlignRight").addEventListener("click", () => alignSe
 document.getElementById("btnTheme").addEventListener("click", toggleTheme);
 document.getElementById("pngAsShown").addEventListener("change", ev => setPngAsShown(ev.target.checked));
 document.getElementById("dialectSelect").addEventListener("change", ev => setDialect(ev.target.value));
+
+/* Full desktop-style dropdown command surface (SCH-093). These handlers call
+   the same mutation functions as the inspector, shortcuts, and context menus. */
+document.getElementById("menuSave").addEventListener("click", saveDoc);
+document.getElementById("menuUndo").addEventListener("click", undo);
+document.getElementById("menuRedo").addEventListener("click", redo);
+document.getElementById("menuCut").addEventListener("click", () => copySelection(true));
+document.getElementById("menuCopy").addEventListener("click", () => { copySelection(false); updateDropdownMenus(); });
+document.getElementById("menuPaste").addEventListener("click", pasteSelection);
+document.getElementById("menuDuplicate").addEventListener("click", duplicateSelection);
+document.getElementById("menuDelete").addEventListener("click", deleteSelection);
+
+for (const [id, type] of [["menuAddConcept","concept"],["menuAddText","text"],["menuAddStatus","status"],
+  ["menuAddNote","note"],["menuAddTable","table"],["menuAddTodo","todo"],["menuAddFrame","frame"]])
+  document.getElementById(id).addEventListener("click", () => addNodeAtViewCenter(type));
+document.getElementById("menuAddHorizontalLane").addEventListener("click", () => addSwimlane("horizontal"));
+document.getElementById("menuAddVerticalLane").addEventListener("click", () => addSwimlane("vertical"));
+
+document.getElementById("menuDistributeHorizontal").addEventListener("click", () => alignSelection("distributeX"));
+document.getElementById("menuDistributeVertical").addEventListener("click", () => alignSelection("distributeY"));
+document.getElementById("menuResetSize").addEventListener("click", resetSelectionSizes);
+document.getElementById("menuWidthSmallest").addEventListener("click", () => matchSelectionWidths("smallest"));
+document.getElementById("menuWidthLargest").addEventListener("click", () => matchSelectionWidths("largest"));
+document.getElementById("menuWidthAverage").addEventListener("click", () => matchSelectionWidths("average"));
+document.getElementById("menuBringFront").addEventListener("click", () => {
+  const node = firstSelectedNode(); if (node) reorderNode(node.id, true);
+});
+document.getElementById("menuSendBack").addEventListener("click", () => {
+  const node = firstSelectedNode(); if (node) reorderNode(node.id, false);
+});
+
+document.getElementById("menuFit").addEventListener("click", fitView);
+document.getElementById("menuActualSize").addEventListener("click", () => zoomAtCanvasCenter(1));
+document.getElementById("menuZoomIn").addEventListener("click", () => zoomAtCanvasCenter(view.k * 1.2));
+document.getElementById("menuZoomOut").addEventListener("click", () => zoomAtCanvasCenter(view.k / 1.2));
+document.getElementById("menuInspector").addEventListener("click", () => { toggleInspector(); updateDropdownMenus(); });
+document.getElementById("menuTheme").addEventListener("click", toggleTheme);
 
 /* --------------------------- SQL export --------------------------- */
 function ident(s){
@@ -320,13 +374,18 @@ function lintDocument(docState = state){
     if (!String(textNode.title || "").trim())
       issues.push({level:"warning", msg:"Plain text item is empty", nodeId:textNode.id});
   }
+  for (const statusNode of nodes.filter(n => n.type === "status")){
+    if (!String(statusNode.title || "").trim())
+      issues.push({level:"warning", msg:"Status node text is empty", nodeId:statusNode.id});
+  }
   for (const e of edges){
     if (e.kind === "link") continue;
     const a = nodes.find(n => n.id === e.from), b = nodes.find(n => n.id === e.to);
     if (linkOnlyNode(a) || linkOnlyNode(b)){
       const linked = linkOnlyNode(a) ? a : b;
       const kind = linked && linked.type === "note" ? "rich note"
-        : linked && linked.type === "text" ? "plain text" : "to-do list";
+        : linked && linked.type === "text" ? "plain text"
+        : linked && linked.type === "status" ? "status node" : "to-do list";
       issues.push({level:"error", msg:`Relation ${e.kind} touches a ${kind} — use a link edge`, edgeId:e.id});
       continue;
     }

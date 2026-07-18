@@ -24,11 +24,12 @@
   <div class="brand"><b>SCHEMATIC</b><span id="docLabel">untitled.schematic.json</span></div>
 
   <nav class="menubar" aria-label="Application menu">
-    <div class="menu">
+    <div class="menu" id="fileMenu">
       <button class="menubtn" title="File menu" aria-haspopup="true" aria-expanded="false">File</button>
       <div class="menupanel">
         <button id="btnNew" title="Start a new diagram">New</button>
         <button id="btnOpen" title="Open a diagram from disk (Ctrl/Cmd+O)">Open…</button>
+        <button id="menuSave" title="Save the current diagram (Ctrl/Cmd+S)">Save</button>
         <button id="btnSaveAs" title="Save this diagram as a new file (Ctrl/Cmd+Shift+S)">Save As…</button>
         <div class="menusep"></div>
         <button id="btnImportJSON" title="Load a diagram from JSON">Import JSON…</button>
@@ -38,9 +39,109 @@
         <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear canvas</button>
       </div>
     </div>
-    <div class="menu">
-      <button class="menubtn" title="Export menu" aria-haspopup="true" aria-expanded="false">Export</button>
+    <div class="menu" id="editMenu">
+      <button class="menubtn" title="Edit menu" aria-haspopup="true" aria-expanded="false">Edit</button>
       <div class="menupanel">
+        <button id="menuUndo" title="Undo (Ctrl/Cmd+Z)">Undo <kbd>⌘Z</kbd></button>
+        <button id="menuRedo" title="Redo (Ctrl/Cmd+Shift+Z)">Redo <kbd>⇧⌘Z</kbd></button>
+        <div class="menusep"></div>
+        <button id="menuCut" title="Cut selected nodes (Ctrl/Cmd+X)">Cut <kbd>⌘X</kbd></button>
+        <button id="menuCopy" title="Copy selected nodes (Ctrl/Cmd+C)">Copy <kbd>⌘C</kbd></button>
+        <button id="menuPaste" title="Paste copied nodes (Ctrl/Cmd+V)">Paste <kbd>⌘V</kbd></button>
+        <div class="menusep"></div>
+        <button id="menuDuplicate" title="Duplicate selected nodes (Ctrl/Cmd+D)">Duplicate <kbd>⌘D</kbd></button>
+        <button id="menuDelete" class="dangerbtn" title="Delete the selection">Delete <kbd>Del</kbd></button>
+      </div>
+    </div>
+    <div class="menu" id="insertMenu">
+      <button class="menubtn" title="Insert menu" aria-haspopup="true" aria-expanded="false">Insert</button>
+      <div class="menupanel">
+        <div class="menulabel">Ideas and content</div>
+        <button id="menuAddConcept" title="Add a concept node (C)">Concept <kbd>C</kbd></button>
+        <button id="menuAddText" title="Add plain text (X)">Plain text <kbd>X</kbd></button>
+        <button id="menuAddStatus" title="Add a status node (S)">Status <kbd>S</kbd></button>
+        <button id="menuAddNote" title="Add a rich note (N)">Rich note <kbd>N</kbd></button>
+        <div class="menulabel">Data and work</div>
+        <button id="menuAddTable" title="Add a table / entity node (T)">Table <kbd>T</kbd></button>
+        <button id="menuAddTodo" title="Add a to-do list (D)">To-do list <kbd>D</kbd></button>
+        <div class="menulabel">Containers</div>
+        <button id="menuAddFrame" title="Add a subject-area frame">Frame</button>
+        <button id="menuAddHorizontalLane" title="Add a wide swimlane with its title on the left">Horizontal swimlane</button>
+        <button id="menuAddVerticalLane" title="Add a tall swimlane with its title at the top">Vertical swimlane</button>
+      </div>
+    </div>
+    <div class="menu" id="arrangeMenu">
+      <button class="menubtn" id="btnArrangeMenu" title="Arrange menu" aria-haspopup="true" aria-expanded="false">Arrange</button>
+      <div class="menupanel wide">
+        <div class="menulabel">Diagram layout</div>
+        <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree layout</button>
+        <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema layout</button>
+        <button id="btnCleanup" title="Snap every node to the dot grid now">Clean up to grid</button>
+        <button id="btnSnap" title="Always snap dragged items to the dot grid; hold Shift for temporary snapping" aria-pressed="false">Snap to grid</button>
+        <div class="menusep"></div>
+        <details class="menusubmenu" data-menu-submenu="align">
+          <summary><span>Align selected items</span></summary>
+          <div class="menusubbody">
+            <div class="menulabel">Vertical position</div>
+            <button id="btnAlignTop" title="Align selected items to the top">Top</button>
+            <button id="btnAlignMiddle" title="Align selected items through the middle">Middle</button>
+            <button id="btnAlignBottom" title="Align selected items to the bottom">Bottom</button>
+            <div class="menulabel">Horizontal position</div>
+            <button id="btnAlignLeft" title="Align selected items to the left">Left</button>
+            <button id="btnAlignCenter" title="Align selected items through the center">Center</button>
+            <button id="btnAlignRight" title="Align selected items to the right">Right</button>
+          </div>
+        </details>
+        <details class="menusubmenu" data-menu-submenu="distribute">
+          <summary><span>Distribute selected items</span></summary>
+          <div class="menusubbody">
+            <button id="menuDistributeHorizontal">Horizontally</button>
+            <button id="menuDistributeVertical">Vertically</button>
+          </div>
+        </details>
+        <details class="menusubmenu" data-menu-submenu="size">
+          <summary><span>Size selected items</span></summary>
+          <div class="menusubbody">
+            <button id="menuResetSize">Reset forced sizing</button>
+            <div class="menusep"></div>
+            <button id="menuWidthSmallest">Match smallest width</button>
+            <button id="menuWidthLargest">Match largest width</button>
+            <button id="menuWidthAverage">Match average width</button>
+          </div>
+        </details>
+        <details class="menusubmenu" data-menu-submenu="layer">
+          <summary><span>Layer order</span></summary>
+          <div class="menusubbody">
+            <button id="menuBringFront">Bring to front</button>
+            <button id="menuSendBack">Send to back</button>
+          </div>
+        </details>
+        <div class="menusep"></div>
+        <button id="btnLint" title="Run schema lint checks">Lint schema…</button>
+      </div>
+    </div>
+    <div class="menu" id="selectionMenu">
+      <button class="menubtn" id="btnSelectionMenu" title="Commands for the current selection"
+              aria-haspopup="true" aria-expanded="false" disabled>Selection</button>
+      <div class="menupanel wide" id="selectionMenuPanel">
+        <div class="menuempty">Select a node or link to see its commands.</div>
+      </div>
+    </div>
+    <div class="menu" id="viewMenu">
+      <button class="menubtn" title="View menu" aria-haspopup="true" aria-expanded="false">View</button>
+      <div class="menupanel">
+        <button id="menuFit" title="Fit diagram in view (F)">Fit diagram <kbd>F</kbd></button>
+        <button id="menuActualSize" title="Show the diagram at 100%">Actual size</button>
+        <button id="menuZoomIn" title="Zoom in">Zoom in</button>
+        <button id="menuZoomOut" title="Zoom out">Zoom out</button>
+        <div class="menusep"></div>
+        <button id="menuInspector" title="Show or hide the inspector">Inspector</button>
+        <button id="menuTheme" title="Toggle light/dark theme">Dark theme</button>
+      </div>
+    </div>
+    <div class="menu" id="exportMenu">
+      <button class="menubtn" title="Export menu" aria-haspopup="true" aria-expanded="false">Export</button>
+      <div class="menupanel align-right">
         <button id="btnExportPNG" title="Download diagram as PNG">PNG image</button>
         <button id="btnExportSVG" title="Download diagram as SVG">SVG vector</button>
         <button id="btnExportJSON" title="Download diagram as JSON">JSON document</button>
@@ -50,37 +151,12 @@
         <button id="btnExportMarkdown" title="Export mind map as Markdown">Markdown outline…</button>
       </div>
     </div>
-    <div class="menu">
-      <button class="menubtn" title="Layout menu" aria-haspopup="true" aria-expanded="false">Layout</button>
-      <div class="menupanel">
-        <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree layout</button>
-        <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema layout</button>
-        <button id="btnCleanup" title="Snap every node to the dot grid now">Clean up to grid</button>
-        <button id="btnSnap" title="Always snap dragged items to the dot grid; hold Shift for temporary snapping" aria-pressed="false">Snap to grid</button>
-        <div class="menusep"></div>
-        <button id="btnLint" title="Run schema lint checks">Lint schema…</button>
-      </div>
-    </div>
-    <div class="menu" id="alignMenu">
-      <button class="menubtn" id="btnAlignMenu" title="Align selected items" aria-haspopup="true"
-              aria-expanded="false" disabled>Align</button>
-      <div class="menupanel">
-        <div class="menulabel">Vertical position</div>
-        <button id="btnAlignTop" title="Align selected items to the top">Top</button>
-        <button id="btnAlignMiddle" title="Align selected items through the middle">Middle</button>
-        <button id="btnAlignBottom" title="Align selected items to the bottom">Bottom</button>
-        <div class="menusep"></div>
-        <div class="menulabel">Horizontal position</div>
-        <button id="btnAlignLeft" title="Align selected items to the left">Left</button>
-        <button id="btnAlignCenter" title="Align selected items through the center">Center</button>
-        <button id="btnAlignRight" title="Align selected items to the right">Right</button>
-      </div>
-    </div>
   </nav>
 
   <div class="tgroup">
     <button id="btnAddConcept" class="primary" title="Add a concept node (C)">+ Concept</button>
     <button id="btnAddText" title="Add plain text (X)">+ Text</button>
+    <button id="btnAddStatus" title="Add a status node (S)">+ Status</button>
     <button id="btnAddNote" title="Add a rich note (N)">+ Note</button>
     <button id="btnAddTable" title="Add a table / entity node (T)">+ Table</button>
     <button id="btnAddTodo" title="Add a to-do list (D)">+ To-do</button>

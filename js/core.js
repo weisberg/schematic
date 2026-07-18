@@ -75,6 +75,16 @@ const EDGE_CUSTOM_RELATIONSHIP = "__custom__";
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
 const TEXT_FS_DEFAULT = 24, TEXT_W_DEFAULT = 260;
+const STATUS_FS_DEFAULT = 18, STATUS_W_DEFAULT = 320;
+const STATUS_BUILTINS = [
+  ["Not started", "#7A8794"],
+  ["In progress", "#2456E6"],
+  ["Blocked", "#C20029"],
+  ["Completed", "#007873"],
+  ["Canceled", "#6B7683"]
+];
+const STATUS_DEFAULT = STATUS_BUILTINS[0][0];
+const STATUS_CUSTOM_COLOR = "#8A3FA8";
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
 const SWIMLANE_DEFAULT = {
   bodyColor:"#DCEAFE", titleColor:"#2456E6",
@@ -82,7 +92,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.16.2";
+const APP_VERSION = "v1.19.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -101,6 +111,56 @@ const THEME = {
   }
 };
 let docTheme = "light";
+
+/* Status labels are diagram-wide document data. Each status node chooses one
+   label independently, while a custom label added from any node becomes an
+   option on every status node in this diagram. */
+let customStatuses = [];
+function cleanStatusLabel(raw){
+  return String(raw == null ? "" : raw).replace(/\s+/g, " ").trim().slice(0, 40);
+}
+function builtInStatus(label){
+  const key = cleanStatusLabel(label).toLowerCase();
+  const match = STATUS_BUILTINS.find(([name]) => name.toLowerCase() === key);
+  return match ? match[0] : null;
+}
+function customStatus(label){
+  const key = cleanStatusLabel(label).toLowerCase();
+  return customStatuses.find(name => name.toLowerCase() === key) || null;
+}
+function setCustomStatuses(raw){
+  const next = [];
+  for (const value of Array.isArray(raw) ? raw : []){
+    const label = cleanStatusLabel(value);
+    if (!label || builtInStatus(label) || next.some(name => name.toLowerCase() === label.toLowerCase())) continue;
+    next.push(label);
+  }
+  customStatuses = next;
+  return customStatuses;
+}
+function addCustomStatus(raw){
+  const label = cleanStatusLabel(raw);
+  if (!label) return null;
+  const existing = builtInStatus(label) || customStatus(label);
+  if (existing) return existing;
+  customStatuses.push(label);
+  return label;
+}
+function statusOptions(){ return [...STATUS_BUILTINS.map(([name]) => name), ...customStatuses]; }
+function normalizeNodeStatus(n, addMissingCustom = true){
+  if (!n || n.type !== "status") return STATUS_DEFAULT;
+  const raw = cleanStatusLabel(n.status);
+  let label = builtInStatus(raw) || customStatus(raw);
+  if (!label && raw && addMissingCustom) label = addCustomStatus(raw);
+  n.status = label || STATUS_DEFAULT;
+  n.statusSide = n.statusSide === "left" ? "left" : "right";
+  return n.status;
+}
+function statusColor(label){
+  const canonical = builtInStatus(label);
+  const match = canonical && STATUS_BUILTINS.find(([name]) => name === canonical);
+  return match ? match[1] : STATUS_CUSTOM_COLOR;
+}
 
 /* custom color schemes (SCH-064): a document may carry meta.colorScheme, which
    replaces the built-in palettes, node-creation defaults, and (optionally) THEME
@@ -123,6 +183,7 @@ function configuredNodeWidth(n){
   const width = n ? parseFloat(n.w) : NaN;
   if (!n || !Number.isFinite(width)) return null;
   if (n.type === "text") return clampSize(width, 80, 720);
+  if (n.type === "status") return clampSize(width, 180, 720);
   if (n.type === "note") return clampSize(width, 220, 720);
   if (n.type === "frame") return clampSize(width, 120, 4000);
   if (n.type === "swimlane"){
@@ -150,6 +211,8 @@ function resetNodeWidth(n){
     n.w = configuredNodeWidth({...n, w:previous});
   } else if (n.type === "text"){
     n.w = TEXT_W_DEFAULT;
+  } else if (n.type === "status"){
+    n.w = STATUS_W_DEFAULT;
   } else if (n.type === "note"){
     n.w = NOTE_W_DEFAULT;
   } else if (n.type === "frame"){
@@ -161,7 +224,7 @@ function resetNodeWidth(n){
   }
   return true;
 }
-function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text"); }
+function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text" || n.type === "status"); }
 function insertTextLineBreak(control){
   const start = Number.isInteger(control.selectionStart) ? control.selectionStart : control.value.length;
   const end = Number.isInteger(control.selectionEnd) ? control.selectionEnd : start;
@@ -277,6 +340,7 @@ const SHORTCUTS = [
   { id:"help", keys:"?", title:"Shortcut cheat sheet" },
   { id:"concept", keys:"C", title:"Add concept" },
   { id:"text", keys:"X", title:"Add plain text" },
+  { id:"status", keys:"S", title:"Add status node" },
   { id:"note", keys:"N", title:"Add rich note" },
   { id:"table", keys:"T", title:"Add table" },
   { id:"todo", keys:"D", title:"Add to-do list" },
@@ -334,6 +398,12 @@ function recordRecentColor(hex){
   if (next === recentColors) return;
   recentColors = next;
   persistRecentColors();
+}
+function clearRecentColors(){
+  if (!recentColors.length) return false;
+  recentColors = [];
+  persistRecentColors();
+  return true;
 }
 let recentColors = loadStoredRecentColors();
 
@@ -487,7 +557,7 @@ function nodeRows(n){
   if (n.type === "todo") return n.items;
   return null;
 }
-function linkOnlyNode(n){ return !!n && (n.type === "todo" || n.type === "note" || n.type === "text"); }
+function linkOnlyNode(n){ return !!n && (n.type === "todo" || n.type === "note" || n.type === "text" || n.type === "status"); }
 /* field-level references: edges may carry fromField / toField (row ids) */
 function ensureFieldIds(){
   for (const n of state.nodes){
@@ -564,7 +634,7 @@ function textW(str, font){
 }
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect, colorScheme}}); }
+function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (coalesceKey != null){
@@ -583,6 +653,8 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
+  setCustomStatuses(s.meta ? s.meta.customStatuses : []);
+  for (const n of state.nodes) if (n && n.type === "status") normalizeNodeStatus(n);
   applyColorScheme(s.meta ? s.meta.colorScheme : null);
   applyTheme(s.meta && s.meta.theme ? s.meta.theme : "light", { render:false });
   applyDialect(s.meta && s.meta.dialect ? s.meta.dialect : "ansi", { render:false });
@@ -594,6 +666,10 @@ function redo(){ if(!redoStack.length) return; undoStack.push(snapshot()); resto
 function syncHistoryButtons(){
   document.getElementById("btnUndo").disabled = !undoStack.length;
   document.getElementById("btnRedo").disabled = !redoStack.length;
+  const menuUndo = document.getElementById("menuUndo");
+  const menuRedo = document.getElementById("menuRedo");
+  if (menuUndo) menuUndo.disabled = !undoStack.length;
+  if (menuRedo) menuRedo.disabled = !redoStack.length;
 }
 
 function cleanFieldForDocument(f){
@@ -670,6 +746,16 @@ function cleanNodeForDocument(n){
       ? clampSize(out.w, 80, 4000)
       : clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
   }
+  if (out.type === "status"){
+    normalizeNodeStatus(out);
+    out.color = normalizeHex(out.color) || CONCEPT_COLORS[1];
+    const fontColor = normalizeHex(out.fontColor);
+    if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
+    out.fontSize = statusNodeFont(out);
+    out.w = out.manualWidth === true
+      ? clampSize(out.w, 80, 4000)
+      : clampSize(out.w || STATUS_W_DEFAULT, 180, 720);
+  }
   if (!out.notes) out.notes = out.notes || "";
   return out;
 }
@@ -683,6 +769,7 @@ function documentObject(){
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
   if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
+  if (customStatuses.length) meta.customStatuses = customStatuses.slice();
   d.meta = meta;
   return d;
 }
@@ -713,6 +800,7 @@ function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
+  setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
   for (const n of state.nodes){
     if (!n) continue;
     const fixedWidth = manualNodeWidth(n);
@@ -747,6 +835,16 @@ function applyDocument(d, opts = {}){
       n.w = n.manualWidth === true
         ? clampSize(n.w, 80, 4000)
         : clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
+    } else if (n.type === "status"){
+      n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Status item";
+      normalizeNodeStatus(n);
+      n.color = normalizeHex(n.color) || CONCEPT_COLORS[1];
+      const fontColor = normalizeHex(n.fontColor);
+      if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
+      n.fontSize = statusNodeFont(n);
+      n.w = n.manualWidth === true
+        ? clampSize(n.w, 80, 4000)
+        : clampSize(Number(n.w) || STATUS_W_DEFAULT, 180, 720);
     }
   }
   for (const e of state.edges){
@@ -884,6 +982,7 @@ function setupMenus(){
       m.classList.remove("open");
       const b = m.querySelector(".menubtn");
       if (b) b.setAttribute("aria-expanded", "false");
+      for (const submenu of m.querySelectorAll(".menusubmenu[open]")) submenu.open = false;
     }
   };
   const open = m => {
@@ -896,6 +995,26 @@ function setupMenus(){
     const btn = m.querySelector(".menubtn");
     const panel = m.querySelector(".menupanel");
     if (!btn || !panel) continue;
+    panel.setAttribute("role", "menu");
+    for (const command of panel.querySelectorAll(":scope > button, .menusubbody > button")){
+      command.classList.add("menucommand");
+      command.setAttribute("role", "menuitem");
+    }
+    for (const submenu of panel.querySelectorAll(".menusubmenu")){
+      const summary = submenu.querySelector(":scope > summary");
+      if (!summary) continue;
+      summary.setAttribute("role", "menuitem");
+      summary.setAttribute("aria-haspopup", "true");
+      summary.setAttribute("aria-expanded", String(submenu.open));
+      if (!summary.querySelector(".disclosure-chevron")) summary.appendChild(disclosureChevron());
+      submenu.addEventListener("toggle", () => {
+        summary.setAttribute("aria-expanded", String(submenu.open));
+        if (!submenu.open) return;
+        for (const sibling of submenu.parentElement.children){
+          if (sibling !== submenu && sibling.classList && sibling.classList.contains("menusubmenu")) sibling.open = false;
+        }
+      });
+    }
     btn.addEventListener("click", ev => {
       ev.stopPropagation();
       m.classList.contains("open") ? closeAll() : open(m);
@@ -904,7 +1023,10 @@ function setupMenus(){
     btn.addEventListener("pointerenter", () => {
       if (anyOpen() && !m.classList.contains("open")) open(m);
     });
-    panel.addEventListener("click", () => closeAll());
+    panel.addEventListener("click", ev => {
+      const command = ev.target.closest && ev.target.closest(".menucommand");
+      if (command && !command.disabled && !command.hasAttribute("data-menu-stay-open")) closeAll();
+    });
   }
   document.addEventListener("pointerdown", ev => {
     if (anyOpen() && !(ev.target.closest && ev.target.closest("header .menu"))) closeAll();
@@ -919,16 +1041,7 @@ function setupMenus(){
   }, true);
 }
 function updateAlignMenu(){
-  const menu = document.getElementById("alignMenu");
-  const btn = document.getElementById("btnAlignMenu");
-  if (!menu || !btn) return;
-  const enabled = selectionIds("node").length >= 2;
-  btn.disabled = !enabled;
-  btn.setAttribute("aria-disabled", String(!enabled));
-  if (!enabled){
-    menu.classList.remove("open");
-    btn.setAttribute("aria-expanded", "false");
-  }
+  if (typeof updateDropdownMenus === "function") updateDropdownMenus();
 }
 function maybeShowRecovery(){
   if (!RECOVERY) return;

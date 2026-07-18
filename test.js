@@ -168,7 +168,7 @@ if (process.argv.includes("--api-surface")){
     const { window } = makeDom();
     const T = window.__T;
     const nodeTypes = new Set(T.state.nodes.map(n => n.type));
-    for (const type of ["concept", "text", "note", "todo", "table", "frame", "swimlane"])
+    for (const type of ["concept", "text", "status", "note", "todo", "table", "frame", "swimlane"])
       assert(nodeTypes.has(type), `starter document includes the ${type} node type`);
 
     const lanes = T.state.nodes.filter(n => n.type === "swimlane");
@@ -187,8 +187,8 @@ if (process.argv.includes("--api-surface")){
       "strategy frame demonstrates concept containment");
     assert(T.containerContainedNodes(horizontal).filter(n => n.type === "table").length >= 3,
       "horizontal swimlane demonstrates table containment");
-    sameList(T.containerContainedNodes(vertical).map(n => n.type).sort(), ["note", "todo"],
-      "vertical swimlane demonstrates rich-note and to-do containment");
+    sameList(T.containerContainedNodes(vertical).map(n => n.type).sort(), ["note", "status", "todo"],
+      "vertical swimlane demonstrates rich-note, status, and to-do containment");
 
     const checklist = T.state.nodes.find(n => n.title === "Launch readiness");
     assert(checklist.items.some(item => item.done) && checklist.items.some(item => !item.done),
@@ -198,6 +198,162 @@ if (process.argv.includes("--api-surface")){
       "starter links demonstrate orthogonal routing, arrows, and line styling");
     assert(styled.labelTextColor && styled.labelBackgroundColor,
       "starter link demonstrates independent label text and background colors");
+  }
+
+  /* SCH-091 — status nodes + one document-wide custom status catalog */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    sameList(T.STATUS_BUILTINS.map(status => status.name),
+      ["Not started", "In progress", "Blocked", "Completed", "Canceled"],
+      "status nodes expose the five requested built-in labels in order");
+    assert(doc.getElementById("btnAddStatus"), "toolbar exposes status-node creation");
+    assert(T.SHORTCUTS.some(s => s.keys === "S" && /status node/i.test(s.title)),
+      "S shortcut is registered for status nodes");
+    assert(T.paletteItems().some(item => item.command === "addStatus"),
+      "command palette exposes status-node creation");
+
+    let status = T.state.nodes.find(n => n.type === "status");
+    assert(status, "starter document contains a status node");
+    assert.strictEqual(status.status, "In progress", "starter status uses a built-in label");
+    const builtInColors = Object.fromEntries(T.STATUS_BUILTINS.map(item => [item.name, item.color]));
+    for (const [label, color] of Object.entries(builtInColors))
+      assert.strictEqual(T.statusColor(label), color, `${label} has a stable indicator color`);
+
+    status.title = "A long approval checkpoint title that must wrap inside the text portion";
+    status.statusSide = "right";
+    T.render();
+    let layout = T.statusNodeLayout(status);
+    assert(layout.titleLines.length >= 2, "long status-node text wraps in the main portion");
+    assert.strictEqual(doc.querySelectorAll(`[data-status-node="${status.id}"] [data-status-title-line]`).length,
+      layout.titleLines.length, "every wrapped status-node text line renders");
+    let labelX = Number(doc.querySelector(`[data-status-node="${status.id}"] [data-status-label-line]`).getAttribute("x"));
+    assert(labelX > layout.w/2, "right-side configuration places the indicator on the right");
+    assert.strictEqual(doc.querySelector(`[data-status-node="${status.id}"] [data-status-band]`).getAttribute("fill"),
+      builtInColors["In progress"], "indicator renders the current built-in status color");
+
+    T.selectNode(status.id);
+    assert(/status node/i.test(doc.getElementById("inspTitle").textContent),
+      "status nodes identify themselves in the inspector");
+    let sideSelect = doc.getElementById("statusSide");
+    sideSelect.value = "left";
+    sideSelect.dispatchEvent(new window.Event("change"));
+    layout = T.statusNodeLayout(status);
+    labelX = Number(doc.querySelector(`[data-status-node="${status.id}"] [data-status-label-line]`).getAttribute("x"));
+    assert.strictEqual(status.statusSide, "left", "inspector changes the indicator side");
+    assert(labelX < layout.w/2, "left-side configuration places the indicator on the left");
+
+    let statusSelect = doc.getElementById("statusValue");
+    sameList([...statusSelect.options].map(option => option.value),
+      ["Not started", "In progress", "Blocked", "Completed", "Canceled"],
+      "a new diagram starts with only the built-in status catalog");
+    statusSelect.value = "Completed";
+    statusSelect.dispatchEvent(new window.Event("change"));
+    const historyBeforeCustom = T.undoDepth;
+    doc.getElementById("customStatusInput").value = "Waiting for review";
+    doc.getElementById("addCustomStatusButton").click();
+    assert.strictEqual(T.undoDepth, historyBeforeCustom + 1,
+      "adding a custom status creates one undo step");
+    assert.strictEqual(status.status, "Waiting for review",
+      "adding a custom status also selects it on the edited node");
+    sameList(T.customStatuses, ["Waiting for review"],
+      "custom status is added to the shared diagram catalog");
+    assert.strictEqual(T.statusColor(status.status), "#8A3FA8",
+      "custom statuses use the custom indicator treatment");
+    T.undo();
+    status = T.state.nodes.find(n => n.id === status.id);
+    assert.strictEqual(status.status, "Completed", "undo restores the node's previous status");
+    sameList(T.customStatuses, [], "undo removes the custom label from the shared catalog");
+    T.redo();
+    status = T.state.nodes.find(n => n.id === status.id);
+    sameList(T.customStatuses, ["Waiting for review"], "redo restores the shared custom label");
+
+    const second = T.addNode("status", 1800, 120);
+    T.selectNode(second.id);
+    statusSelect = doc.getElementById("statusValue");
+    assert([...statusSelect.options].some(option => option.value === "Waiting for review"),
+      "a custom label added on one node is selectable on every other status node");
+    statusSelect.value = "Waiting for review";
+    statusSelect.dispatchEvent(new window.Event("change"));
+    T.selectNode(status.id);
+    statusSelect = doc.getElementById("statusValue");
+    statusSelect.value = "Blocked";
+    statusSelect.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(second.status, "Waiting for review",
+      "the catalog is universal while each node keeps its own selected status");
+    const customCount = T.customStatuses.length;
+    assert.strictEqual(T.addCustomStatus("  waiting FOR review  "), "Waiting for review",
+      "custom status matching is case-insensitive and returns the canonical label");
+    assert.strictEqual(T.customStatuses.length, customCount, "equivalent custom labels do not duplicate");
+
+    const saved = JSON.parse(T.serializeDocument());
+    sameList(saved.meta.customStatuses, ["Waiting for review"],
+      "shared custom catalog persists in document metadata");
+    const savedSecond = saved.nodes.find(n => n.id === second.id);
+    assert.strictEqual(savedSecond.status, "Waiting for review", "node status persists in document JSON");
+    assert.strictEqual(saved.nodes.find(n => n.id === status.id).statusSide, "left",
+      "indicator side persists in document JSON");
+    assert(T.serializedSvg(true).includes("data-status-node"),
+      "SVG export preserves rendered status nodes");
+
+    T.nodeMenu(status, 10, 10);
+    assert(doc.querySelector('#ctxMenu [data-ctx-action="status-waiting-for-review"]'),
+      "status-node context menu includes shared custom labels");
+    doc.querySelector('#ctxMenu [data-ctx-action="status-side-right"]').click();
+    assert.strictEqual(status.statusSide, "right", "context menu changes the indicator side");
+
+    const countBeforeCanvas = T.state.nodes.filter(n => n.type === "status").length;
+    doc.getElementById("board").dispatchEvent(new window.MouseEvent("contextmenu", {
+      bubbles:true, cancelable:true, clientX:400, clientY:300
+    }));
+    doc.querySelector('#ctxMenu [data-ctx-action="add-status"]').click();
+    assert.strictEqual(T.state.nodes.filter(n => n.type === "status").length, countBeforeCanvas + 1,
+      "blank-canvas context menu creates a status node at the requested point");
+    doc.getElementById("btnAddStatus").click();
+    assert.strictEqual(T.state.nodes.filter(n => n.type === "status").length, countBeforeCanvas + 2,
+      "toolbar creates a status node");
+
+    const concept = T.addNode("concept", 2100, 200);
+    T.addEdge({id:second.id}, {id:concept.id});
+    const statusEdge = T.state.edges.at(-1);
+    assert.strictEqual(statusEdge.kind, "link", "status nodes connect using normal link edges");
+    statusEdge.kind = "1:N";
+    assert(T.lintDocument().some(issue => /status node.*use a link edge/i.test(issue.msg)),
+      "lint rejects relational edges that touch a status node");
+
+    T.setSelection("node", second.id);
+    T.copySelection();
+    T.setDocDirty(false);
+    T.newDoc();
+    sameList(T.customStatuses, [], "new document clears the previous diagram's status catalog");
+    T.pasteSelection();
+    sameList(T.customStatuses, ["Waiting for review"],
+      "pasting a custom-status node into another diagram registers its label universally");
+    assert.strictEqual(T.state.nodes[0].status, "Waiting for review",
+      "cross-diagram paste preserves the node's custom selection");
+
+    T.importDocText(JSON.stringify({
+      version:1, nextId:3,
+      nodes:[
+        {id:"n1", type:"status", x:0, y:0, title:"Legacy custom", status:"Ready for launch", statusSide:"left"},
+        {id:"n2", type:"status", x:400, y:0, title:"Invalid", status:"", statusSide:"above"}
+      ], edges:[]
+    }));
+    sameList(T.customStatuses, ["Ready for launch"],
+      "loading a status-node custom label repairs legacy JSON that lacks catalog metadata");
+    assert.strictEqual(T.state.nodes[0].status, "Ready for launch", "legacy custom selection is preserved");
+    assert.strictEqual(T.state.nodes[1].status, "Not started", "blank imported status falls back safely");
+    assert.strictEqual(T.state.nodes[1].statusSide, "right", "invalid imported side falls back safely");
+    T.selectNode("n2");
+    assert([...doc.getElementById("statusValue").options].some(option => option.value === "Ready for launch"),
+      "recovered legacy custom label is universal after import");
+
+    T.setDocDirty(false);
+    T.newDoc();
+    sameList(T.customStatuses, [], "a new diagram starts with a fresh custom status catalog");
+    assert.strictEqual(Object.hasOwn(JSON.parse(T.serializeDocument()).meta, "customStatuses"), false,
+      "documents without custom statuses omit the metadata key");
   }
 
   {
@@ -353,6 +509,84 @@ if (process.argv.includes("--api-surface")){
     T.recordRecentColor("#ab12cd");
     assert.strictEqual(T.doc.dirty, before, "recording a palette color alone does not dirty the document");
     assert.strictEqual(T.state.nodes.length, depth, "palette ops leave canvas state alone");
+  }
+
+  /* SCH-092 — unified, accessible color picker */
+  {
+    const { window, storage } = makeDom();
+    const T = window.__T, doc = window.document;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+
+    let picker = doc.querySelector("#inspector .color-picker");
+    let summary = picker.querySelector(".color-picker-summary");
+    assert.strictEqual(summary.getAttribute("aria-expanded"), "false",
+      "inspector color picker starts as a compact current-color summary");
+    assert(picker.querySelector(".color-current-name").textContent.length > 0,
+      "current color has a human-readable name");
+    assert(/^#[0-9A-F]{6}$/.test(picker.querySelector(".color-current-hex").textContent),
+      "current color keeps an exact, readable hex value");
+    summary.click();
+    assert.strictEqual(summary.getAttribute("aria-expanded"), "true",
+      "current-color summary expands the picker");
+    assert.strictEqual(picker.querySelector(".color-picker-panel").hidden, false,
+      "expanded picker exposes its controls");
+    const selected = picker.querySelector('.swatch[aria-pressed="true"]');
+    assert(selected && selected.querySelector(".swatch-check"),
+      "selected swatch exposes pressed state and a visible check icon");
+    assert([...picker.querySelectorAll(".swatch")].every(s => s.getAttribute("aria-label")),
+      "every palette swatch has a descriptive accessible name");
+
+    const hex = picker.querySelector(".hexinput");
+    hex.value = "nothex";
+    hex.dispatchEvent(new window.Event("input"));
+    hex.dispatchEvent(new window.Event("blur"));
+    assert.strictEqual(hex.getAttribute("aria-invalid"), "true",
+      "invalid custom colors are identified accessibly");
+    assert.strictEqual(picker.querySelector(".color-error").hidden, false,
+      "invalid custom colors explain the required format");
+
+    hex.value = "abcdef";
+    hex.dispatchEvent(new window.Event("input"));
+    hex.dispatchEvent(new window.Event("blur"));
+    sameList(T.recentColors, ["#abcdef"], "valid custom colors join the shared recent palette");
+    picker = doc.querySelector("#inspector .color-picker");
+    assert.strictEqual(picker.querySelector(".color-current-name").textContent, "Custom color",
+      "custom colors are clearly distinguished from named presets");
+    assert.strictEqual(picker.querySelector(".color-current-hex").textContent, "#ABCDEF",
+      "custom color summary uses a copy-friendly uppercase value");
+
+    T.state.edges[0].lineColor = "#13579B";
+    T.render();
+    picker = doc.querySelector("#inspector .color-picker");
+    assert(picker.querySelector('.color-picker-section.document .swatch[data-color="#13579b"]'),
+      "picker offers reusable colors already present elsewhere in the diagram");
+    const clear = picker.querySelector(".color-picker-section.recent .color-picker-action");
+    assert(clear, "recent colors include a clear action");
+    clear.click();
+    sameList(T.recentColors, [], "clear removes all recent colors");
+    sameList(JSON.parse(storage.getItem("schematic.recentColors")), [],
+      "clearing recent colors updates local persistence");
+    assert.strictEqual(doc.querySelectorAll(".color-picker-section.recent").length, 0,
+      "clear immediately removes recent sections from every visible picker");
+
+    T.nodeMenu(concept, 10, 10);
+    const contextPicker = doc.querySelector("#ctxMenu .color-picker.context");
+    assert(contextPicker, "right-click colors use the same picker component as the inspector");
+    assert.strictEqual(contextPicker.querySelector(".color-picker-panel").hidden, false,
+      "context-menu picker opens directly for fast color changes");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    const before = T.undoDepth;
+    const alternate = [...doc.querySelectorAll("#inspector .color-picker .swatches .swatch")]
+      .find(swatch => swatch.getAttribute("aria-pressed") === "false");
+    alternate.click();
+    assert.strictEqual(T.undoDepth, before + 1, "a color choice creates exactly one undo step");
   }
 
   /* SCH-010 — multi-select, marquee, group drag */
@@ -637,14 +871,15 @@ if (process.argv.includes("--api-surface")){
     const values = fn => T.selectedNodes().map(T.nodeRect).map(fn);
     const allEqual = list => list.every(value => Math.abs(value - list[0]) < 1e-9);
 
-    assert.strictEqual(window.document.getElementById("btnAlignMenu").disabled, true,
-      "Align menu starts disabled without a multi-selection");
+    const alignSubmenu = window.document.querySelector('#arrangeMenu [data-menu-submenu="align"]');
+    assert(alignSubmenu.classList.contains("disabled"),
+      "Arrange menu starts with alignment disabled without a multi-selection");
     selectAll();
-    const menuButton = window.document.getElementById("btnAlignMenu");
-    assert.strictEqual(menuButton.disabled, false, "Align menu enables for two or more selected nodes");
+    const menuButton = window.document.getElementById("btnArrangeMenu");
+    assert(!alignSubmenu.classList.contains("disabled"), "alignment enables for two or more selected nodes");
     menuButton.click();
-    assert(window.document.getElementById("alignMenu").classList.contains("open"),
-      "Align menu opens from the toolbar");
+    assert(window.document.getElementById("arrangeMenu").classList.contains("open"),
+      "Arrange menu opens from the toolbar");
 
     const cases = [
       ["btnAlignTop", r => r.y, "top"],
@@ -664,9 +899,7 @@ if (process.argv.includes("--api-surface")){
 
     T.clearSelection();
     T.render();
-    assert.strictEqual(menuButton.disabled, true, "Align menu disables below two selected nodes");
-    assert(!window.document.getElementById("alignMenu").classList.contains("open"),
-      "Align menu closes when the multi-selection is cleared");
+    assert(alignSubmenu.classList.contains("disabled"), "alignment disables below two selected nodes");
 
     selectAll();
     T.alignSelection("distributeX");
@@ -820,12 +1053,14 @@ if (process.argv.includes("--api-surface")){
     {
       const { window } = makeDom();
       const T = window.__T, doc = window.document;
-      const mixedIds = ["concept","text","note","table","todo","frame","lane"];
+      const mixedIds = ["concept","text","status","note","table","todo","frame","lane"];
       T.importDocText(JSON.stringify({version:1,nextId:20,edges:[],nodes:[
         {id:"concept",type:"concept",x:0,y:0,title:"Concept",notes:"",color:"#FFE9A8"},
         {id:"text",type:"text",x:200,y:0,title:"Plain text with enough words to reflow",notes:"",
          color:"#CFE8FF",w:280},
-        {id:"note",type:"note",x:500,y:0,title:"Note",content:"Rich note body",notes:"",
+        {id:"status",type:"status",x:500,y:0,title:"Approval status",status:"In progress",
+         statusSide:"right",color:"#CFE8FF",w:320},
+        {id:"note",type:"note",x:850,y:0,title:"Note",content:"Rich note body",notes:"",
          color:"#D8F3DC",w:260},
         {id:"table",type:"table",x:0,y:240,title:"records",notes:"",color:"#16232F",
          fields:[{id:"f1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]},
@@ -846,7 +1081,7 @@ if (process.argv.includes("--api-surface")){
         "every selectable node type honors the shared manual-width contract");
       const saved = T.serializeDocument();
       const savedNodes = JSON.parse(saved).nodes;
-      const configuredIds = ["text","note","frame","lane"];
+      const configuredIds = ["text","status","note","frame","lane"];
       assert(configuredIds.every(id => Number.isFinite(
         savedNodes.find(node => node.id === id).widthBeforeMatch)),
       "configured-width node types persist their pre-match widths");
@@ -2010,7 +2245,7 @@ if (process.argv.includes("--api-surface")){
       "nested submenu accessibility state follows disclosure state");
     const createActions = [...menu.querySelectorAll('[data-ctx-group="canvas:create"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action"));
-    sameList(createActions, ["add-concept", "add-table", "add-todo", "add-text", "add-note", "add-frame",
+    sameList(createActions, ["add-concept", "add-status", "add-table", "add-todo", "add-text", "add-note", "add-frame",
       "add-horizontal-lane", "add-vertical-lane"], "canvas menu exposes every primitive");
     sameList([...menu.querySelectorAll('[data-ctx-group="canvas:layout"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action")),
@@ -3118,18 +3353,23 @@ if (process.argv.includes("--api-surface")){
     // every historical toolbar action keeps its id (handlers bind by id)
     for (const id of ["btnNew","btnOpen","btnSave","btnSaveAs","btnExportJSON","btnImportJSON",
                       "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
-                      "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept","btnAddText","btnAddNote",
+                      "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept","btnAddText","btnAddStatus","btnAddNote",
                       "btnAddTable","btnAddTodo","btnAddFrame","btnAddSwimlane","btnAddHorizontalLane",
                       "btnAddVerticalLane","btnUndo","btnRedo","btnFit",
-                      "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup",
-                      "btnAlignMenu","btnAlignTop","btnAlignMiddle","btnAlignBottom",
-                      "btnAlignLeft","btnAlignCenter","btnAlignRight"])
+                      "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup","btnArrangeMenu",
+                      "btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
+                      "menuSave","menuUndo","menuRedo","menuCut","menuCopy","menuPaste","menuDuplicate","menuDelete",
+                      "menuAddConcept","menuAddText","menuAddStatus","menuAddNote","menuAddTable","menuAddTodo","menuAddFrame",
+                      "menuAddHorizontalLane","menuAddVerticalLane","menuDistributeHorizontal","menuDistributeVertical",
+                      "menuResetSize","menuWidthSmallest","menuWidthLargest","menuWidthAverage","menuBringFront","menuSendBack",
+                      "btnSelectionMenu","menuFit","menuActualSize","menuZoomIn","menuZoomOut","menuInspector","menuTheme"])
       assert(doc.getElementById(id), `toolbar button #${id} still exists`);
 
     // menus: open, switch, outside-close, Escape-close without nuking selection
     const menus = [...doc.querySelectorAll("header .menu")];
-    assert.strictEqual(menus.length, 5, "toolbar exposes File / Export / Layout / Align / Lane menus");
-    const [fileMenu, exportMenu] = menus;
+    assert.strictEqual(menus.length, 8,
+      "toolbar exposes File / Edit / Insert / Arrange / Selection / View / Export / Lane menus");
+    const fileMenu = doc.getElementById("fileMenu"), exportMenu = doc.getElementById("exportMenu");
     fileMenu.querySelector(".menubtn").click();
     assert(fileMenu.classList.contains("open"), "clicking a menu trigger opens its panel");
     assert.strictEqual(fileMenu.querySelector(".menubtn").getAttribute("aria-expanded"), "true",
@@ -3175,6 +3415,109 @@ if (process.argv.includes("--api-surface")){
       "an explicit fontColor still wins over auto-contrast");
     assert.strictEqual(doc.querySelector('[data-node="tb1"] text').getAttribute("fill"), "#16232F",
       "table headers flip to dark ink on light header colors");
+  }
+
+  /* ---- SCH-093: complete dropdown command parity ---- */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    const selectionButton = doc.getElementById("btnSelectionMenu");
+    const selectionPanel = doc.getElementById("selectionMenuPanel");
+    const action = name => selectionPanel.querySelector(`[data-menu-action="${name}"]`);
+    const submenu = name => selectionPanel.querySelector(`[data-menu-submenu="${name}"]`);
+
+    assert(selectionButton.disabled, "Selection menu is disabled when the canvas selection is empty");
+    for (const id of ["menuAddConcept","menuAddText","menuAddStatus","menuAddNote","menuAddTable",
+                      "menuAddTodo","menuAddFrame","menuAddHorizontalLane","menuAddVerticalLane"])
+      assert(doc.getElementById(id), `Insert menu exposes ${id}`);
+    for (const id of ["btnLayoutTree","btnLayoutSchema","btnCleanup","btnSnap",
+                      "menuFit","menuActualSize","menuZoomIn","menuZoomOut"])
+      assert(doc.getElementById(id), `layout and view dropdowns expose ${id}`);
+    assert(!doc.querySelector(".menubar .color-picker, .menubar input[type=color]"),
+      "dropdown menus intentionally omit color controls");
+    assert(!doc.querySelector('.menubar [aria-label="Font size"]'),
+      "dropdown menus intentionally omit font-size controls");
+
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    assert(!selectionButton.disabled, "selecting a node enables the Selection menu");
+    assert(action("edit-primary") && action("add-linked"), "concept dropdown exposes content commands");
+    assert(submenu("selection-shape"), "concept dropdown exposes flowchart shapes");
+    for (const shape of T.FLOWCHART_SHAPES.map(option => option.id))
+      assert(action("shape-" + shape), `concept dropdown exposes the ${shape} shape`);
+    const shapeDepth = T.undoDepth;
+    action("shape-decision").click();
+    assert.strictEqual(T.conceptShape(concept), "decision", "dropdown shape command changes the node");
+    assert.strictEqual(T.undoDepth, shapeDepth + 1, "dropdown shape command creates one undo step");
+
+    const note = T.state.nodes.find(n => n.type === "note");
+    T.selectNode(note.id);
+    assert(action("edit-note-content") && action("add-linked"),
+      "rich-note dropdown exposes content editing and linked-node creation");
+
+    const table = T.state.nodes.find(n => n.type === "table");
+    T.selectNode(table.id);
+    for (const name of ["add-related-table","toggle-table-collapse","add-field"])
+      assert(action(name), `table dropdown exposes ${name}`);
+
+    const todo = T.state.nodes.find(n => n.type === "todo");
+    T.selectNode(todo.id);
+    assert(action("toggle-list-collapse") && action("add-todo-item"),
+      "to-do dropdown exposes collapse and item creation");
+
+    const status = T.state.nodes.find(n => n.type === "status");
+    T.addCustomStatus("Awaiting review");
+    T.selectNode(status.id);
+    for (const label of ["not-started","in-progress","blocked","completed","canceled","awaiting-review"])
+      assert(action("status-" + label), `status dropdown exposes ${label}`);
+    assert(action("status-side-left") && action("status-side-right"),
+      "status dropdown exposes both indicator sides");
+    assert(submenu("selection-width").querySelector('[aria-label="Status node width"]'),
+      "status dropdown retains node width without exposing font size");
+
+    const textNode = T.state.nodes.find(n => n.type === "text");
+    T.selectNode(textNode.id);
+    assert(action("shape-none") && action("shape-process"),
+      "plain-text dropdown exposes no-box and shaped variants");
+    assert(submenu("selection-width").querySelector('[aria-label="Maximum text width"]'),
+      "plain-text dropdown exposes wrapping width");
+
+    const lane = T.state.nodes.find(n => n.type === "swimlane");
+    T.selectNode(lane.id);
+    assert(action("orientation-horizontal") && action("orientation-vertical"),
+      "swimlane dropdown exposes both orientations");
+
+    concept.manualWidth = true;
+    concept.w = T.nodeRect(concept).w;
+    T.setSelection("node", [concept.id, textNode.id]);
+    T.render();
+    for (const id of ["btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
+                      "menuDistributeHorizontal","menuDistributeVertical","menuWidthSmallest","menuWidthLargest","menuWidthAverage"])
+      assert(!doc.getElementById(id).disabled, `multi-selection enables ${id}`);
+    assert(!doc.getElementById("menuResetSize").disabled, "forced sizing enables Reset size");
+    assert(!doc.querySelector('#arrangeMenu [data-menu-submenu="align"]').classList.contains("disabled"),
+      "multi-selection enables the Align submenu");
+
+    const edge = T.state.edges.find(e => e.kind !== "link");
+    edge.routing = "ortho";
+    edge.orthoX = 850;
+    T.setSelection("edge", edge.id);
+    T.render();
+    for (const name of ["edge-kind-link","edge-kind-1-1","edge-kind-1-N","edge-kind-N-M",
+                        "edit-edge-label","start-arrow","end-arrow","line-style-solid","line-style-dash",
+                        "line-style-dot","routing-curve","routing-ortho","reset-waypoint","swap-edge"])
+      assert(action(name), `link dropdown exposes ${name}`);
+    assert(submenu("selection-relationship").querySelector('[aria-label="Edge relationship"]'),
+      "link dropdown exposes semantic relationship presets and custom text");
+    assert(submenu("selection-line").querySelector('[aria-label="Line width"]'),
+      "link dropdown exposes line width");
+    assert(doc.getElementById("menuCut").disabled && doc.getElementById("menuCopy").disabled &&
+           doc.getElementById("menuDuplicate").disabled,
+      "node-only Edit commands disable for a selected link");
+    assert(!doc.getElementById("menuDelete").disabled, "Delete remains available for a selected link");
+    assert(!selectionPanel.querySelector('.color-picker, input[type="color"], [aria-label="Font size"]'),
+      "selection-specific dropdowns omit color and font-size controls for every object");
   }
 
   /* ---- SCH-066: hide / show the inspector ---- */
