@@ -1491,6 +1491,22 @@ preserved; automated command-parity tests and browser visual/interaction QA pass
 
 ---
 
+**SCH-094 · Collapsible frames · P1 · M · Done 2026-07-18**
+
+Let a frame collapse into a compact, titled canvas node that carries its full contents as one reversible
+visual unit. Hide contained objects and internal links while collapsed without deleting or rewriting them;
+keep boundary-crossing links visible by proxying hidden endpoints to the collapsed frame's center; and
+restore the frame's exact expanded dimensions, content geometry, and original link endpoints when expanded.
+
+AC: canvas affordance, inspector, right-click menu, and Selection dropdown all expose collapse/expand;
+nested frame/swimlane contents are included; invisible objects are excluded from hit-testing, marquee,
+alignment guides, minimap/document bounds, fit-to-view, and exports; internal links are hidden while every
+link crossing a frame boundary remains visible at the compact frame's center; dragging or nudging the compact
+frame moves every contained object; JSON round-trips collapsed state and original dimensions; each toggle and
+move has a clear one-step undo boundary; legacy documents load expanded; automated and browser QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.

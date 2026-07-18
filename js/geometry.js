@@ -311,6 +311,7 @@ function tableMetrics(n){
 }
 function nodeSize(n){
   if (n.type === "frame"){
+    if (n.collapsed === true) return {...FRAME_COLLAPSED};
     const fixedWidth = manualNodeWidth(n);
     return {
       w: fixedWidth == null ? clampSize(n.w || FRAME_DEFAULT.w, 120, 4000) : fixedWidth,
@@ -390,18 +391,98 @@ function rectsIntersect(a, b){
 function rectsOverlap(a, b){
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
-function documentBounds(nodes = state.nodes){
-  if (!nodes.length) return null;
+function expandedFrameRect(frame){
+  const w = clampSize(Number(frame && frame.w) || FRAME_DEFAULT.w, 120, 4000);
+  const h = clampSize(Number(frame && frame.h) || FRAME_DEFAULT.h, 90, 4000);
+  return {x:frame.x, y:frame.y, w, h, cx:frame.x+w/2, cy:frame.y+h/2};
+}
+function containmentRect(n){ return n && n.type === "frame" ? expandedFrameRect(n) : nodeRect(n); }
+function nodeCenterForContainment(n){
+  const r = containmentRect(n);
+  return {x:r.cx, y:r.cy};
+}
+function directContainedNodes(container, includeStructural = false){
+  const outer = containmentRect(container);
+  return state.nodes.filter(n => n.id !== container.id && (includeStructural || !isStructuralNode(n))).filter(n => {
+    if (isStructuralNode(n)){
+      const inner = containmentRect(n);
+      if (inner.w * inner.h >= outer.w * outer.h) return false;
+    }
+    const center = nodeCenterForContainment(n);
+    return center.x >= outer.x && center.x <= outer.x + outer.w &&
+           center.y >= outer.y && center.y <= outer.y + outer.h;
+  });
+}
+/* A collapsed frame hides every object centered inside its expanded footprint.
+   Structural children recursively carry their own contents, so nested frames and
+   swimlanes collapse as a single visual unit without changing document data. */
+function collapsedFrameContentNodes(frame){
+  if (!frame || frame.type !== "frame") return [];
+  const contents = [], visited = new Set([frame.id]), queue = [frame];
+  while (queue.length){
+    const container = queue.shift();
+    for (const child of directContainedNodes(container, true)){
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      contents.push(child);
+      if (isStructuralNode(child)) queue.push(child);
+    }
+  }
+  return contents;
+}
+function collapsedFrameHiddenNodeIds(){
+  const hidden = new Set();
+  for (const frame of state.nodes){
+    if (frame.type !== "frame" || frame.collapsed !== true || hidden.has(frame.id)) continue;
+    for (const child of collapsedFrameContentNodes(frame)) hidden.add(child.id);
+  }
+  return hidden;
+}
+/* Map each hidden object to the visible collapsed frame representing it. An
+   outer collapsed frame wins over nested collapsed frames because the nested
+   frame is itself hidden; overlapping visible frames prefer the smallest frame. */
+function collapsedFrameProxyMap(hidden = collapsedFrameHiddenNodeIds()){
+  const proxies = new Map();
+  const frames = state.nodes
+    .filter(n => n.type === "frame" && n.collapsed === true && !hidden.has(n.id))
+    .sort((a, b) => {
+      const ar = expandedFrameRect(a), br = expandedFrameRect(b);
+      return ar.w * ar.h - br.w * br.h;
+    });
+  for (const frame of frames){
+    for (const child of collapsedFrameContentNodes(frame)){
+      if (hidden.has(child.id) && !proxies.has(child.id)) proxies.set(child.id, frame.id);
+    }
+  }
+  return proxies;
+}
+function visibleCanvasNodes(hidden = collapsedFrameHiddenNodeIds()){
+  return state.nodes.filter(n => !hidden.has(n.id));
+}
+function visibleCanvasEdges(hidden = collapsedFrameHiddenNodeIds(), proxies = collapsedFrameProxyMap(hidden)){
+  return state.edges.filter(e => {
+    const fromProxy = hidden.has(e.from) ? proxies.get(e.from) : null;
+    const toProxy = hidden.has(e.to) ? proxies.get(e.to) : null;
+    if ((hidden.has(e.from) && !fromProxy) || (hidden.has(e.to) && !toProxy)) return false;
+    return !(fromProxy && toProxy && fromProxy === toProxy);
+  });
+}
+function documentBounds(nodes = null){
+  const wholeDocument = nodes == null || nodes === state.nodes;
+  const hidden = wholeDocument ? collapsedFrameHiddenNodeIds() : null;
+  const proxies = wholeDocument ? collapsedFrameProxyMap(hidden) : null;
+  const boundedNodes = wholeDocument ? visibleCanvasNodes(hidden) : nodes;
+  if (!boundedNodes.length) return null;
   let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
-  for (const n of nodes){
+  for (const n of boundedNodes){
     const r = nodeRect(n);
     x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
     x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
   }
-  if (nodes === state.nodes){
-    for (const e of state.edges){
+  if (wholeDocument){
+    for (const e of visibleCanvasEdges(hidden, proxies)){
       if (e.routing !== "ortho" || !hasCustomOrthoBend(e)) continue;
-      const ep = edgeEndpoints(e);
+      const ep = edgeEndpoints(e, hidden, proxies);
       if (!ep) continue;
       const bend = orthoEdgeRoute(e, ep.pa, ep.pb).bend;
       x0 = Math.min(x0, bend.x); y0 = Math.min(y0, bend.y);
@@ -411,11 +492,7 @@ function documentBounds(nodes = state.nodes){
   return { x:x0, y:y0, w:x1-x0, h:y1-y0, cx:(x0+x1)/2, cy:(y0+y1)/2 };
 }
 function containerContainedNodes(container){
-  const fr = nodeRect(container);
-  return state.nodes.filter(n => !isStructuralNode(n) && n.id !== container.id).filter(n => {
-    const r = nodeRect(n);
-    return r.cx >= fr.x && r.cx <= fr.x + fr.w && r.cy >= fr.y && r.cy <= fr.y + fr.h;
-  });
+  return directContainedNodes(container, false);
 }
 function frameContainedNodes(frame){ return containerContainedNodes(frame); }
 

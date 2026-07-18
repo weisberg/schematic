@@ -329,6 +329,18 @@ function buildNodeSelectionDropdown(panel, primary, targets){
     menuCommand(body, "Add item", () => addTodoItem(primary), {action:"add-todo-item"});
   });
 
+  if (primary.type === "frame") menuSubmenu(panel, "selection-frame", "Frame", body => {
+    const frames = targets.filter(target => target.type === "frame");
+    const next = primary.collapsed !== true;
+    menuCommand(body, next ? "Collapse with contents" : "Expand with contents", () => {
+      const changed = frames.filter(frame => (frame.collapsed === true) !== next);
+      if (!changed.length) return;
+      pushHistory();
+      for (const frame of changed) setFrameCollapsed(frame, next, {history:false, select:false, render:false});
+      render();
+    }, {action:"toggle-frame-collapse"});
+  });
+
   if (primary.type === "status") menuSubmenu(panel, "selection-status", "Status", body => {
     const statusTargets = targets.filter(target => target.type === "status");
     menuLabel(body, "Status label");
@@ -550,6 +562,17 @@ function nodeMenu(n, x, y){
           render();
         });
         ctxItem(sub, "Add item", () => addTodoItem(n));
+      });
+      if (n.type === "frame") ctxSubmenu(panel, "node:content:frame", "Frame", sub => {
+        const frames = targets.filter(target => target.type === "frame");
+        const next = n.collapsed !== true;
+        ctxItem(sub, next ? "Collapse with contents" : "Expand with contents", () => {
+          const changed = frames.filter(frame => (frame.collapsed === true) !== next);
+          if (!changed.length) return;
+          pushHistory();
+          for (const frame of changed) setFrameCollapsed(frame, next, {history:false, select:false, render:false});
+          render();
+        }, {action:"toggle-frame-collapse"});
       });
       if (n.type === "status") ctxSubmenu(panel, "node:content:status", "Status", sub => {
         const statusTargets = targets.filter(target => target.type === "status");

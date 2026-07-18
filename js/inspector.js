@@ -303,15 +303,19 @@ function renderInspector(){
           (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
       });
     } else if (n.type === "frame"){
-      inspectorSection("frame:basics", "Basics", () => renderNodeTitleField(n));
+      inspectorSection("frame:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Display", () => mkFlag(n.collapsed === true ? "Collapsed" : "Expanded", n.collapsed === true,
+          collapsed => setFrameCollapsed(n, collapsed, {history:false})));
+      });
       inspectorSection("frame:appearance", "Appearance", () => {
         frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
           (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
       });
       inspectorSection("frame:size", "Size", () => {
-        frow("Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
+        frow(n.collapsed === true ? "Expanded width" : "Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
-        frow("Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
+        frow(n.collapsed === true ? "Expanded height" : "Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
       });
     } else if (n.type === "concept"){
@@ -1398,9 +1402,13 @@ function mkFlag(txt, on, set){
 function drawOnly(){
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
-  for (const n of state.nodes) if (isStructuralNode(n)) drawStructuralNode(n);
-  for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) if (!isStructuralNode(n)) drawNode(n);
+  const hidden = collapsedFrameHiddenNodeIds();
+  const proxies = collapsedFrameProxyMap(hidden);
+  for (const n of state.nodes) if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
+  for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
+  for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
+  for (const n of state.nodes)
+    if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
   renderMinimap();
 }

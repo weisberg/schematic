@@ -52,6 +52,16 @@ function addSwimlane(orientation, x, y){
   return addNode("swimlane", x == null ? viewCenter().x - defaults.w/2 : x,
                  y == null ? viewCenter().y - defaults.h/2 : y, {orientation:normalized});
 }
+function setFrameCollapsed(frame, collapsed, opts = {}){
+  if (!frame || frame.type !== "frame") return false;
+  const next = collapsed === true;
+  if ((frame.collapsed === true) === next) return false;
+  if (opts.history !== false) pushHistory();
+  if (next) frame.collapsed = true; else delete frame.collapsed;
+  if (opts.select !== false) setSelection("node", frame.id);
+  if (opts.render !== false) render();
+  return true;
+}
 function addNodeCentered(type, point, opts = {}){
   return addNode(type, point.x, point.y, {...opts, center:true});
 }
