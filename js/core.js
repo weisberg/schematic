@@ -86,13 +86,14 @@ const STATUS_BUILTINS = [
 const STATUS_DEFAULT = STATUS_BUILTINS[0][0];
 const STATUS_CUSTOM_COLOR = "#8A3FA8";
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
+const FRAME_COLLAPSED = { w:220, h:48 };
 const SWIMLANE_DEFAULT = {
   bodyColor:"#DCEAFE", titleColor:"#2456E6",
   horizontal:{ w:600, h:180, titleSize:48 },
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.19.0";
+const APP_VERSION = "v1.20.2";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -601,9 +602,10 @@ function conceptContainsPoint(n, r, point){
 }
 /* topmost node (and row, for tables/todos) under a world point */
 function hitTest(w){
+  const hidden = collapsedFrameHiddenNodeIds();
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
-    if (isStructuralNode(n)) continue;
+    if (isStructuralNode(n) || hidden.has(n.id)) continue;
     if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
     if (!nodeContainsPoint(n, r, w)) continue;
     let field = null;
@@ -735,6 +737,13 @@ function cleanNodeForDocument(n){
     out.color = normalizeHex(out.color) || SWIMLANE_DEFAULT.bodyColor;
     out.titleColor = normalizeHex(out.titleColor) || SWIMLANE_DEFAULT.titleColor;
   }
+  if (out.type === "frame"){
+    out.title = typeof out.title === "string" && out.title.trim() ? out.title : "Subject area";
+    out.color = normalizeHex(out.color) || frameColorDefault();
+    out.w = clampSize(Number(out.w) || FRAME_DEFAULT.w, 120, 4000);
+    out.h = clampSize(Number(out.h) || FRAME_DEFAULT.h, 90, 4000);
+    if (out.collapsed !== true) delete out.collapsed;
+  }
   if (out.type === "text"){
     const shape = textBoxShape(out);
     if (shape === "none") delete out.shape; else out.shape = shape;
@@ -825,6 +834,12 @@ function applyDocument(d, opts = {}){
         ? clampSize(n.w, 80, 4000)
         : clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
       n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
+    } else if (n.type === "frame"){
+      n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Subject area";
+      n.color = normalizeHex(n.color) || frameColorDefault();
+      n.w = clampSize(Number(n.w) || FRAME_DEFAULT.w, 120, 4000);
+      n.h = clampSize(Number(n.h) || FRAME_DEFAULT.h, 90, 4000);
+      if (n.collapsed !== true) delete n.collapsed;
     } else if (n.type === "text"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Text";
       setTextBoxShape(n, n.shape);

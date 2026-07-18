@@ -1985,6 +1985,160 @@ if (process.argv.includes("--api-surface")){
     assert(T.state.nodes.some(n => n.type === "frame" && n.title === "Area"), "frame imports from JSON");
   }
 
+  /* SCH-094 — collapsible frames preserve and restore their contents */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:10, nodes:[
+      {id:"f1", type:"frame", x:0, y:0, title:"Program", color:"#2456E6", w:300, h:220},
+      {id:"n2", type:"concept", x:40, y:60, title:"Discovery", notes:"", color:"#FFE9A8"},
+      {id:"n3", type:"concept", x:150, y:90, title:"Delivery", notes:"", color:"#CFE8FF"},
+      {id:"lane4", type:"swimlane", orientation:"horizontal", x:80, y:120, title:"Nested lane",
+        color:"#DCEAFE", titleColor:"#2456E6", w:260, h:180},
+      {id:"n5", type:"concept", x:180, y:210, title:"Nested outside parent", notes:"", color:"#D7F3DF"},
+      {id:"n6", type:"concept", x:450, y:70, title:"Outside", notes:"", color:"#E9E2F8"}
+    ], edges:[
+      {id:"e7", from:"n2", to:"n3", kind:"link", label:"internal"},
+      {id:"e8", from:"n5", to:"n6", kind:"link", label:"crosses boundary"},
+      {id:"e9", from:"n3", to:"n6", kind:"link", label:"orthogonal boundary",
+        routing:"ortho", orthoX:350, orthoY:120}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    const frame = T.state.nodes.find(n => n.id === "f1");
+    const original = {w:frame.w, h:frame.h};
+    const boundaryBeforeCollapse = T.edgeEndpoints(T.state.edges.find(e => e.id === "e8"));
+    sameList(T.collapsedFrameContentNodes(frame).map(n => n.id).sort(), ["lane4","n2","n3","n5"],
+      "frame collapse includes nested structural contents outside the parent footprint");
+
+    const historyBefore = T.undoDepth;
+    assert(T.setFrameCollapsed(frame, true), "frame can be collapsed");
+    assert.strictEqual(T.undoDepth, historyBefore + 1, "collapse creates one undo entry");
+    sameList(Object.values(T.nodeRect(frame)), [0,0,220,48,110,24],
+      "collapsed frame uses compact node geometry");
+    assert.deepStrictEqual({w:frame.w, h:frame.h}, original, "collapse preserves expanded dimensions");
+    sameList([...T.collapsedFrameHiddenNodeIds()].sort(), ["lane4","n2","n3","n5"],
+      "collapsed frame hides all contained objects");
+    sameList(T.visibleCanvasNodes().map(n => n.id), ["f1","n6"], "only the compact frame and outside nodes remain visible");
+    sameList(T.visibleCanvasEdges().map(e => e.id), ["e8","e9"],
+      "internal links hide while boundary-crossing links remain visible");
+    const proxies = T.collapsedFrameProxyMap();
+    for (const id of ["n2","n3","n5"])
+      assert.strictEqual(proxies.get(id), "f1", `${id} is represented by the collapsed frame`);
+    const frameCenter = T.nodeRect(frame);
+    const boundaryEndpoint = T.edgeEndpoints(T.state.edges.find(e => e.id === "e8"));
+    assert.deepStrictEqual({x:boundaryEndpoint.pa.x, y:boundaryEndpoint.pa.y},
+      {x:frameCenter.cx, y:frameCenter.cy}, "curved boundary link terminates at the collapsed frame center");
+    assert.strictEqual(boundaryEndpoint.proxyA, "f1", "curved boundary endpoint records its frame proxy");
+    const orthoEndpoint = T.edgeEndpoints(T.state.edges.find(e => e.id === "e9"));
+    assert.deepStrictEqual({x:orthoEndpoint.pa.x, y:orthoEndpoint.pa.y},
+      {x:frameCenter.cx, y:frameCenter.cy}, "orthogonal boundary link terminates at the collapsed frame center");
+    const orthoLabel = T.edgeLabelPoint(T.state.edges.find(e => e.id === "e9"), orthoEndpoint);
+    assert(Number.isFinite(orthoLabel.x) && Number.isFinite(orthoLabel.y),
+      "orthogonal boundary label follows the proxied route");
+    assert(doc.querySelector('[data-frame="f1"][data-frame-collapsed="true"]'), "compact frame artwork renders");
+    assert.strictEqual(doc.querySelector('[data-frame="f1"] [data-frame-count]').textContent, "4 items hidden",
+      "compact frame reports how much content it contains");
+    assert.strictEqual(doc.querySelector('[data-frame="f1"] [data-frame-resize]'), null,
+      "compact frame does not expose a misleading resize handle");
+    assert(doc.querySelector('#nodeLayer > [data-frame="f1"]'),
+      "compact frame renders above retained links");
+    assert.strictEqual(doc.querySelectorAll('[data-collapse="f1"]').length, 1,
+      "compact frame exposes one expand control");
+    assert(doc.querySelector('#nodeLayer [data-frame-collapse-overlay="f1"] [data-collapse="f1"]'),
+      "compact frame expand control stays above retained links");
+    assert.strictEqual(doc.querySelector('[data-node="n2"]'), null, "contained node is removed from the rendered canvas");
+    assert.strictEqual(doc.querySelector('[data-edge="e7"]'), null, "contained link is removed from the rendered canvas");
+    assert(doc.querySelector('[data-edge="e8"][data-edge-proxy-from="f1"]'),
+      "curved boundary link renders from the collapsed frame proxy");
+    assert(doc.querySelector('[data-edge="e9"][data-edge-proxy-from="f1"]'),
+      "orthogonal boundary link renders from the collapsed frame proxy");
+    assert(doc.querySelector('[data-node="n6"]'), "outside node remains rendered");
+    assert.strictEqual(T.hitTest({x:70, y:85}), null, "hidden contents cannot be hit-tested");
+    assert(doc.getElementById("inspector").textContent.includes("Collapsed"), "inspector exposes collapsed state");
+
+    T.nodeMenu(frame, 10, 10);
+    assert(doc.getElementById("ctxMenu").textContent.includes("Expand with contents"),
+      "right-click menu offers frame expansion");
+    T.render();
+    assert(doc.getElementById("selectionMenuPanel").textContent.includes("Expand with contents"),
+      "Selection dropdown mirrors the frame command");
+
+    const savedCollapsed = JSON.parse(T.serializeDocument());
+    const savedFrame = savedCollapsed.nodes.find(n => n.id === "f1");
+    assert.strictEqual(savedFrame.collapsed, true, "collapsed state persists");
+    assert.deepStrictEqual({w:savedFrame.w, h:savedFrame.h}, original, "saved frame retains expanded dimensions");
+    assert.strictEqual(savedCollapsed.nodes.length, 6, "collapse does not remove saved objects");
+    assert.strictEqual(savedCollapsed.edges.length, 3, "collapse does not remove saved links");
+    const collapsedSvg = T.serializedSvg(true);
+    assert(collapsedSvg.includes('data-frame-collapsed="true"'), "SVG exports the compact frame as shown");
+    assert(!collapsedSvg.includes('data-node="n2"'), "SVG omits hidden contents while collapsed");
+    assert(collapsedSvg.includes('data-edge-proxy-from="f1"'), "SVG retains links crossing a collapsed frame boundary");
+
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(n => n.id === "f1").collapsed, undefined, "one undo expands the frame");
+    assert(doc.querySelector('[data-node="n2"]'), "undo restores contained nodes");
+    T.redo();
+    assert.strictEqual(T.state.nodes.find(n => n.id === "f1").collapsed, true, "redo collapses the frame again");
+
+    const collapsedAgain = T.state.nodes.find(n => n.id === "f1");
+    const expandDepth = T.undoDepth;
+    const collapseControl = doc.querySelector('[data-frame-collapse-overlay="f1"] [data-collapse="f1"]');
+    firePointer(window, collapseControl, "pointerdown", {clientX:205, clientY:24});
+    assert.strictEqual(T.undoDepth, expandDepth + 1, "canvas expand control creates one undo entry");
+    const expanded = T.state.nodes.find(n => n.id === "f1");
+    assert.strictEqual(expanded.collapsed, undefined, "canvas control expands the frame");
+    assert(doc.querySelector('#frameLayer > [data-frame="f1"]'),
+      "expanded frame returns behind links and contained nodes");
+    assert.deepStrictEqual({w:T.nodeRect(expanded).w, h:T.nodeRect(expanded).h}, original,
+      "expansion restores the exact original dimensions");
+    assert(doc.querySelector('[data-node="n2"]') && doc.querySelector('[data-edge="e7"]') && doc.querySelector('[data-edge="e8"]'),
+      "expansion restores contents and links");
+    const boundaryAfterExpand = T.edgeEndpoints(T.state.edges.find(e => e.id === "e8"));
+    assert.deepStrictEqual(boundaryAfterExpand, boundaryBeforeCollapse,
+      "expansion restores the boundary link's original node endpoint");
+
+    T.setFrameCollapsed(expanded, true);
+    const beforeMove = Object.fromEntries(T.state.nodes.map(n => [n.id, {x:n.x, y:n.y}]));
+    firePointer(window, doc.querySelector('[data-frame="f1"]'), "pointerdown", {clientX:10, clientY:10});
+    firePointer(window, doc.getElementById("board"), "pointermove", {clientX:58, clientY:34});
+    firePointer(window, doc.getElementById("board"), "pointerup", {clientX:58, clientY:34});
+    for (const id of ["f1","n2","n3","lane4","n5"]){
+      const moved = T.state.nodes.find(n => n.id === id);
+      assert(moved.x > beforeMove[id].x && moved.y > beforeMove[id].y, `collapsed frame drag carries ${id}`);
+    }
+    assert.deepStrictEqual({x:T.state.nodes.find(n => n.id === "n6").x, y:T.state.nodes.find(n => n.id === "n6").y},
+      beforeMove.n6, "collapsed frame drag leaves outside objects alone");
+    const movedProxy = T.edgeEndpoints(T.state.edges.find(e => e.id === "e8"));
+    const movedFrameRect = T.nodeRect(T.state.nodes.find(n => n.id === "f1"));
+    assert.deepStrictEqual({x:movedProxy.pa.x, y:movedProxy.pa.y}, {x:movedFrameRect.cx, y:movedFrameRect.cy},
+      "boundary links follow the collapsed frame while it moves");
+    T.setFrameCollapsed(T.state.nodes.find(n => n.id === "f1"), false);
+    assert.deepStrictEqual({w:T.nodeRect(T.state.nodes.find(n => n.id === "f1")).w,
+                            h:T.nodeRect(T.state.nodes.find(n => n.id === "f1")).h}, original,
+      "expansion after movement still restores original dimensions");
+
+    T.importDocText(JSON.stringify(savedCollapsed));
+    assert.strictEqual(T.state.nodes.find(n => n.id === "f1").collapsed, true, "collapsed frame round-trips through import");
+    T.importDocText(JSON.stringify({version:1, nextId:2, nodes:[
+      {id:"legacy", type:"frame", x:0, y:0, title:"Legacy", color:"#2456E6", w:300, h:200, collapsed:false}
+    ], edges:[]}));
+    assert.strictEqual(T.state.nodes[0].collapsed, undefined, "legacy and false collapsed values load expanded");
+
+    T.importDocText(JSON.stringify({version:1, nextId:6, nodes:[
+      {id:"outer", type:"frame", x:0, y:0, title:"Outer", color:"#2456E6", w:400, h:300},
+      {id:"inner", type:"frame", x:100, y:90, title:"Inner", color:"#007873", w:200, h:120, collapsed:true},
+      {id:"child", type:"concept", x:160, y:120, title:"Child", notes:"", color:"#FFE9A8"},
+      {id:"outside", type:"concept", x:500, y:120, title:"Outside", notes:"", color:"#CFE8FF"}
+    ], edges:[{id:"e5", from:"child", to:"outside", kind:"link", label:"nested boundary"}]}));
+    sameList([...T.collapsedFrameHiddenNodeIds()], ["child"],
+      "a centered nested frame never mistakes its larger parent for hidden content");
+    assert.strictEqual(T.edgeEndpoints(T.state.edges[0]).proxyA, "inner",
+      "an expanded outer frame leaves its collapsed inner frame as the link proxy");
+    T.setFrameCollapsed(T.state.nodes.find(n => n.id === "outer"), true);
+    assert.strictEqual(T.edgeEndpoints(T.state.edges[0]).proxyA, "outer",
+      "a collapsed outer frame becomes the visible proxy for all nested contents");
+  }
+
   /* SCH-077 — horizontal and vertical swimlanes */
   {
     const { window } = makeDom();

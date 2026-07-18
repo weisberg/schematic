@@ -40,9 +40,13 @@ function render(){
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
-  for (const n of state.nodes) if (isStructuralNode(n)) drawStructuralNode(n);
-  for (const e of state.edges) drawEdge(e);
-  for (const n of state.nodes) if (!isStructuralNode(n)) drawNode(n);
+  const hidden = collapsedFrameHiddenNodeIds();
+  const proxies = collapsedFrameProxyMap(hidden);
+  for (const n of state.nodes) if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
+  for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
+  for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
+  for (const n of state.nodes)
+    if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
   const frames = state.nodes.filter(n => n.type === "frame").length;
   const lanes = state.nodes.filter(n => n.type === "swimlane").length;
@@ -58,16 +62,21 @@ function render(){
 function fastDragRender(ids){
   renderStats.fast++;
   const moved = new Set(ids);
+  const hidden = collapsedFrameHiddenNodeIds();
+  const proxies = collapsedFrameProxyMap(hidden);
+  const visibleEdges = new Set(visibleCanvasEdges(hidden, proxies));
   for (const id of moved){
     const n = nodeById(id);
     const g = n && document.querySelector(`[data-node="${id}"]`);
     if (n && g) g.setAttribute("transform", `translate(${n.x},${n.y})`);
+    const overlay = n && document.querySelector(`[data-frame-collapse-overlay="${id}"]`);
+    if (n && overlay) overlay.setAttribute("transform", `translate(${n.x},${n.y})`);
   }
   const incident = state.edges.filter(e => moved.has(e.from) || moved.has(e.to));
   for (const e of incident){
     const old = edgeLayer.querySelector(`[data-edge="${e.id}"]`);
     if (old) old.remove();
-    drawEdge(e);
+    if (visibleEdges.has(e)) drawEdge(e, hidden, proxies);
   }
   renderMinimap();
 }
@@ -145,7 +154,7 @@ function renderMinimap(){
   minimap.hidden = false;
   minimap.innerHTML = "";
   el("rect", {x:0, y:0, width:120, height:90, rx:6, fill:t.panel}, minimap);
-  for (const n of state.nodes){
+  for (const n of visibleCanvasNodes()){
     const r = nodeRect(n);
     const p = tx.toMini({x:r.x, y:r.y});
     const structural = isStructuralNode(n);
@@ -178,25 +187,45 @@ function edgeFieldPairs(e){
   if (e.fromField || e.toField) return [{ fromField:e.fromField || "", toField:e.toField || "" }];
   return [];
 }
-function edgeEndpoints(e){
+function collapsedFrameCenterAnchor(frame, toward){
+  const r = nodeRect(frame);
+  const dx = toward.x - r.cx, dy = toward.y - r.cy;
+  const side = Math.abs(dx) >= Math.abs(dy)
+    ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n");
+  return {x:r.cx, y:r.cy, side};
+}
+function edgeEndpoints(e, hidden = null, proxies = null){
   const a = nodeById(e.from), b = nodeById(e.to);
   if (!a || !b) return null;
-  if (isStructuralNode(a) || isStructuralNode(b)) return null;
-  const ra = nodeRect(a), rb = nodeRect(b);
+  if (hidden == null) hidden = collapsedFrameHiddenNodeIds();
+  if (proxies == null) proxies = collapsedFrameProxyMap(hidden);
+  const proxyAId = hidden.has(a.id) ? proxies.get(a.id) : null;
+  const proxyBId = hidden.has(b.id) ? proxies.get(b.id) : null;
+  if ((hidden.has(a.id) && !proxyAId) || (hidden.has(b.id) && !proxyBId)) return null;
+  if (proxyAId && proxyBId && proxyAId === proxyBId) return null;
+  const proxyA = proxyAId ? nodeById(proxyAId) : null;
+  const proxyB = proxyBId ? nodeById(proxyBId) : null;
+  if ((proxyAId && !proxyA) || (proxyBId && !proxyB)) return null;
+  if ((!proxyA && isStructuralNode(a)) || (!proxyB && isStructuralNode(b))) return null;
+  const ra = nodeRect(proxyA || a), rb = nodeRect(proxyB || b);
   const firstPair = edgeFieldPairs(e)[0] || {};
   const fromField = firstPair.fromField || e.fromField;
   const toField = firstPair.toField || e.toField;
-  const rowsA = a.collapsed ? null : nodeRows(a);
-  const rowsB = b.collapsed ? null : nodeRows(b);
+  const rowsA = proxyA || a.collapsed ? null : nodeRows(a);
+  const rowsB = proxyB || b.collapsed ? null : nodeRows(b);
   const ia = (fromField && rowsA) ? rowsA.findIndex(f => f.id === fromField) : -1;
   const ib = (toField   && rowsB) ? rowsB.findIndex(f => f.id === toField)   : -1;
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
-  const pa = ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, e.fromAnchor, refB);
-  const pb = ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, e.toAnchor, refA);
+  const pa = proxyA ? collapsedFrameCenterAnchor(proxyA, refB)
+    : ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, e.fromAnchor, refB);
+  const pb = proxyB ? collapsedFrameCenterAnchor(proxyB, refA)
+    : ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, e.toAnchor, refA);
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
-           pinnedA: ia < 0 && !!e.fromAnchor, pinnedB: ib < 0 && !!e.toAnchor };
+           pinnedA: !proxyA && ia < 0 && !!e.fromAnchor,
+           pinnedB: !proxyB && ib < 0 && !!e.toAnchor,
+           proxyA:proxyAId || null, proxyB:proxyBId || null };
 }
 function curveEdgeControlPoints(pa, pb){
   const dx = Math.max(40, Math.abs(pb.x - pa.x) * 0.45);
@@ -427,15 +456,18 @@ function drawEdgeArrow(g, p, color, width, end){
   el("polygon", {points, fill:color, stroke:color, "stroke-width":Math.max(.6, width*.35),
                  "stroke-linejoin":"round", "data-edge-arrow":end}, g);
 }
-function drawEdge(e){
-  const ep = edgeEndpoints(e);
+function drawEdge(e, hidden = null, proxies = null){
+  const ep = edgeEndpoints(e, hidden, proxies);
   if (!ep) return;
   const selected = isSelected("edge", e.id);
   const isLink = e.kind === "link";
   const t = themeColors();
   const color = edgeLineColor(e, t);
   const width = edgeLineWidth(e);
-  const g = el("g", {"data-edge": e.id, cursor:"pointer"}, edgeLayer);
+  const attrs = {"data-edge":e.id, cursor:"pointer"};
+  if (ep.proxyA) attrs["data-edge-proxy-from"] = ep.proxyA;
+  if (ep.proxyB) attrs["data-edge-proxy-to"] = ep.proxyB;
+  const g = el("g", attrs, edgeLayer);
   const d = edgeRenderPath(e, ep);
   el("path", {d, fill:"none", stroke:"transparent", "stroke-width":14}, g); // hit area
   if (selected) el("path", {d, fill:"none", stroke:t.accent, "stroke-width":width + 3,
@@ -469,21 +501,67 @@ function drawEdge(e){
 }
 
 /* ---- nodes ---- */
+function drawFrameCollapseControl(parent, n, r, collapsed, color){
+  const t = themeColors();
+  const collapseLabel = `${collapsed ? "Expand" : "Collapse"} frame ${n.title || "Subject area"}`;
+  const collapse = el("g", {"data-collapse":n.id, cursor:"pointer", role:"button", tabindex:0,
+                              "aria-label":collapseLabel}, parent);
+  el("title", {}, collapse).textContent = collapseLabel;
+  el("rect", {x:r.w - 34, y:0, width:34, height:collapsed ? r.h : 34, fill:"transparent"}, collapse);
+  el("path", {d:collapsed
+                ? `M ${r.w-22} ${r.h/2-4} L ${r.w-16} ${r.h/2} L ${r.w-22} ${r.h/2+4}`
+                : `M ${r.w-24} 15 L ${r.w-19} 20 L ${r.w-14} 15`,
+              fill:"none", stroke:collapsed ? t.muted : color, "stroke-width":1.8,
+              "stroke-linecap":"round", "stroke-linejoin":"round", "pointer-events":"none"}, collapse);
+  collapse.addEventListener("keydown", ev => {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    setFrameCollapsed(n, n.collapsed !== true);
+  });
+  return collapse;
+}
+function drawCollapsedFrameControlOverlay(n){
+  const r = nodeRect(n);
+  const overlay = el("g", {"data-frame-collapse-overlay":n.id,
+                            transform:`translate(${r.x},${r.y})`}, nodeLayer);
+  drawFrameCollapseControl(overlay, n, r, true, n.color || frameColorDefault());
+}
 function drawFrame(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
   const t = themeColors();
   const color = n.color || frameColorDefault();
-  const g = el("g", {"data-node": n.id, "data-frame": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, frameLayer);
-  el("rect", {width:r.w, height:r.h, rx:14, fill:color, opacity:.10,
-              stroke:selected ? t.accent : color, "stroke-width":selected ? 2.2 : 1.4}, g);
-  el("text", {x:14, y:24, fill:t.ink, "font-family":"Archivo, sans-serif",
-              "font-size":13, "font-weight":700}, g)
-    .textContent = truncate(n.title || "Subject area", r.w - 48, "700 13px Archivo, sans-serif");
-  const h = el("g", {class:"frame-resize", "data-frame-resize": n.id, cursor:"nwse-resize"}, g);
-  el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
-  el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
-              stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+  const collapsed = n.collapsed === true;
+  const layer = collapsed ? nodeLayer : frameLayer;
+  const g = el("g", {"data-node":n.id, "data-frame":n.id,
+                      "data-frame-collapsed":collapsed ? "true" : "false",
+                      transform:`translate(${r.x},${r.y})`, cursor:"grab"}, layer);
+  el("rect", {width:r.w, height:r.h, rx:collapsed ? 9 : 14, fill:collapsed ? t.panel : color,
+              opacity:collapsed ? 1 : .10, stroke:selected ? t.accent : color,
+              "stroke-width":selected ? 2.2 : 1.4, "data-frame-surface":"1"}, g);
+  if (collapsed){
+    el("path", {d:`M 9 0 H 7 Q 0 0 0 9 V ${r.h-9} Q 0 ${r.h} 9 ${r.h} H 7 Z`,
+                fill:color, "data-frame-accent":"1"}, g);
+    el("text", {x:18, y:20, fill:t.ink, "font-family":"Archivo, sans-serif",
+                "font-size":13, "font-weight":700, "data-frame-title":"1"}, g)
+      .textContent = truncate(n.title || "Subject area", r.w - 56, "700 13px Archivo, sans-serif");
+    const count = collapsedFrameContentNodes(n).length;
+    el("text", {x:18, y:36, fill:t.muted, "font-family":"'IBM Plex Mono', monospace",
+                "font-size":9.5, "font-weight":500, "data-frame-count":"1"}, g)
+      .textContent = `${count} item${count === 1 ? "" : "s"} hidden`;
+  } else {
+    el("text", {x:14, y:24, fill:t.ink, "font-family":"Archivo, sans-serif",
+                "font-size":13, "font-weight":700, "data-frame-title":"1"}, g)
+      .textContent = truncate(n.title || "Subject area", r.w - 70, "700 13px Archivo, sans-serif");
+  }
+  if (!collapsed) drawFrameCollapseControl(g, n, r, false, color);
+  if (!collapsed){
+    const h = el("g", {class:"frame-resize", "data-frame-resize":n.id, cursor:"nwse-resize"}, g);
+    el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
+    el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
+                stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+  }
 }
 function drawSwimlane(n){
   const r = nodeRect(n);

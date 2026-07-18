@@ -102,9 +102,10 @@ function drawEdgeGrips(){
 function looseHit(w, tol = 16){
   const hit = hitTest(w);
   if (hit) return hit;
+  const hidden = collapsedFrameHiddenNodeIds();
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i];
-    if (isStructuralNode(n)) continue;
+    if (isStructuralNode(n) || hidden.has(n.id)) continue;
     const r = nodeRect(n);
     if (w.x >= r.x - tol && w.x <= r.x + r.w + tol && w.y >= r.y - tol && w.y <= r.y + r.h + tol)
       return { node: n, field: null };
@@ -312,7 +313,9 @@ board.addEventListener("pointerdown", ev => {
   if (collapseEl){
     const id = collapseEl.getAttribute("data-collapse");
     const n = nodeById(id);
-    if (n && (n.type === "table" || n.type === "todo")){
+    if (n && n.type === "frame"){
+      setFrameCollapsed(n, n.collapsed !== true);
+    } else if (n && (n.type === "table" || n.type === "todo")){
       pushHistory();
       n.collapsed = !n.collapsed;
       setSelection("node", id);
@@ -323,7 +326,7 @@ board.addEventListener("pointerdown", ev => {
   if (resizeEl){
     const id = resizeEl.getAttribute("data-frame-resize");
     const n = nodeById(id);
-    if (!n || !isStructuralNode(n)) return;
+    if (!n || !isStructuralNode(n) || (n.type === "frame" && n.collapsed === true)) return;
     const w = clientToWorld(ev.clientX, ev.clientY);
     setSelection("node", id);
     const size = nodeSize(n);
@@ -405,7 +408,11 @@ board.addEventListener("pointerdown", ev => {
     const selectedIds = new Set(selectionIds("node"));
     if (ev.shiftKey && !wasSelected) selectedIds.add(id);
     const moveIds = new Set(selectedIds);
-    if (isStructuralNode(n)) for (const child of containerContainedNodes(n)) moveIds.add(child.id);
+    if (isStructuralNode(n)){
+      const contents = n.type === "frame" && n.collapsed === true
+        ? collapsedFrameContentNodes(n) : containerContainedNodes(n);
+      for (const child of contents) moveIds.add(child.id);
+    }
     const ids = [...moveIds];
     const moving = new Set(ids);
     drag = { mode:"node", id, start:w, starts: ids.map(nodeId => {
@@ -419,7 +426,7 @@ board.addEventListener("pointerdown", ev => {
         return {id:e.id, x:bend.x, y:bend.y};
       }).filter(bend => Number.isFinite(bend.x) && Number.isFinite(bend.y)),
       primaryRect:nodeRect(n),
-      targetRects:state.nodes.filter(other => !moving.has(other.id)).map(other => nodeRect(other)),
+      targetRects:visibleCanvasNodes().filter(other => !moving.has(other.id)).map(other => nodeRect(other)),
       selectionIds:[...selectedIds], shiftToggle:!!ev.shiftKey, wasSelected, moved:false, guides:null };
     render();
     return;
@@ -579,7 +586,7 @@ board.addEventListener("pointerup", ev => {
     draftLayer.innerHTML = "";
     if (drag.moved){
       const r = rectFromPoints(drag.start, drag.current);
-      const ids = state.nodes.filter(n => rectsIntersect(r, nodeRect(n))).map(n => n.id);
+      const ids = visibleCanvasNodes().filter(n => rectsIntersect(r, nodeRect(n))).map(n => n.id);
       setSelection("node", ids);
     } else {
       clearSelection();
@@ -689,7 +696,8 @@ function runShortcut(id, ev){
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
 }
 function cycleNodeSelection(reverse = false){
-  const nodes = state.nodes.filter(n => !isStructuralNode(n));
+  const hidden = collapsedFrameHiddenNodeIds();
+  const nodes = state.nodes.filter(n => !isStructuralNode(n) && !hidden.has(n.id));
   if (!nodes.length) return;
   const current = firstSelectionId("node");
   let idx = nodes.findIndex(n => n.id === current);
@@ -699,7 +707,15 @@ function cycleNodeSelection(reverse = false){
   render();
 }
 function nudgeSelection(key, step){
-  const nodes = selectedNodes();
+  const selected = selectedNodes();
+  const moving = new Map(selected.map(n => [n.id, n]));
+  for (const n of selected){
+    if (!isStructuralNode(n)) continue;
+    const contents = n.type === "frame" && n.collapsed === true
+      ? collapsedFrameContentNodes(n) : containerContainedNodes(n);
+    for (const child of contents) moving.set(child.id, child);
+  }
+  const nodes = [...moving.values()];
   if (!nodes.length) return;
   pushHistory();
   for (const n of nodes){
@@ -754,13 +770,9 @@ function zoomAtClient(scale, clientX, clientY){
   return view.k;
 }
 function fitView(){
-  if (!state.nodes.length) return;
-  let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
-  for (const n of state.nodes){
-    const r = nodeRect(n);
-    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
-    x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
-  }
+  const bounds = documentBounds();
+  if (!bounds) return;
+  const x0 = bounds.x, y0 = bounds.y, x1 = bounds.x + bounds.w, y1 = bounds.y + bounds.h;
   const b = board.getBoundingClientRect(), pad = 60;
   const k = Math.min(2, Math.min((b.width - pad*2)/(x1-x0), (b.height - pad*2)/(y1-y0)));
   view.k = Math.max(0.2, k);
