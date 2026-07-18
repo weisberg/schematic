@@ -3711,15 +3711,21 @@ if (process.argv.includes("--api-surface")){
 
   /* inspector preference survives reload; storage failures degrade gracefully */
   {
-    const { window } = makeDom({ storageSeed: { "schematic.inspectorPinned": "0" } });
+    const { window } = makeDom({ storageSeed: {
+      "schematic.inspectorPinned": "0", "schematic.inspectorWidth": "412"
+    } });
     assert.strictEqual(window.__T.inspectorPinned, false, "stored preference restores an unpinned inspector");
     assert.strictEqual(window.document.getElementById("inspector").hidden, true,
       "restored unpinned inspector starts hidden without a selection");
+    assert.strictEqual(window.document.getElementById("inspector").style.getPropertyValue("--inspector-width"), "412px",
+      "stored inspector width restores on reload");
   }
   {
     const { window } = makeDom({ storageThrows: true });
     const T = window.__T;
     assert.strictEqual(T.inspectorPinned, true, "throwing localStorage still defaults to a visible inspector");
+    assert.strictEqual(window.document.getElementById("inspector").style.getPropertyValue("--inspector-width"), "340px",
+      "inspector width defaults safely when storage is unavailable");
     T.toggleInspector();
     assert.strictEqual(T.inspectorPinned, false, "toggling works in-memory without localStorage");
     assert.strictEqual(window.document.getElementById("inspector").hidden, true,
@@ -3799,6 +3805,32 @@ if (process.argv.includes("--api-surface")){
     assert(doc.querySelector('[data-inspector-section="concept:notes"] textarea'),
       "notes editing lives in Notes");
     assert(doc.querySelector("#inspBody .inspector-actions"), "node actions use a dedicated sticky footer");
+    assert.strictEqual(doc.querySelector("#inspBody .inspector-actions").children.length, 1,
+      "node actions share one compact sticky row");
+    assert(doc.querySelector('[data-inspector-section="concept:basics"] .frow.compact select'),
+      "simple inspector controls render beside their labels");
+
+    const sectionToggle = doc.getElementById("inspectorSectionToggle");
+    assert.strictEqual(sectionToggle.hidden, false, "selected objects expose the section navigation control");
+    assert.strictEqual(sectionToggle.textContent, "Collapse all", "section navigation describes its next action");
+    sectionToggle.click();
+    assert([...doc.querySelectorAll("#inspBody .inspector-section")].every(section => !section.open),
+      "Collapse all closes every inspector section");
+    assert.strictEqual(sectionToggle.textContent, "Expand all", "section navigation follows collapsed state");
+    sectionToggle.click();
+    assert([...doc.querySelectorAll("#inspBody .inspector-section")].every(section => section.open),
+      "Expand all restores every inspector section");
+
+    const resizer = doc.getElementById("inspectorResizer");
+    assert.strictEqual(resizer.getAttribute("role"), "separator", "inspector resize handle is accessible");
+    resizer.dispatchEvent(new window.KeyboardEvent("keydown", {key:"ArrowLeft", bubbles:true}));
+    assert.strictEqual(doc.getElementById("inspector").style.getPropertyValue("--inspector-width"), "356px",
+      "keyboard resizing widens the inspector");
+    assert.strictEqual(window.localStorage.getItem("schematic.inspectorWidth"), "356",
+      "inspector width persists as a UI preference");
+    resizer.dispatchEvent(new window.MouseEvent("dblclick", {bubbles:true}));
+    assert.strictEqual(doc.getElementById("inspector").style.getPropertyValue("--inspector-width"), "340px",
+      "double-click resets the inspector width");
 
     T.nodeMenu(concept, 20, 20);
     let menu = doc.getElementById("ctxMenu");
@@ -3890,6 +3922,10 @@ if (process.argv.includes("--api-surface")){
         `${id} inspector uses the expected task hierarchy`);
       assert(doc.querySelector("#inspBody .inspector-actions"), `${id} inspector retains its action footer`);
     }
+    T.setSelection("node", "f1");
+    T.render();
+    assert.strictEqual(doc.querySelector('[data-inspector-section="frame:size"]').open, false,
+      "secondary size controls start compact");
     T.setSelection("node", "n1");
     T.render();
     const noteContentSection = doc.querySelector('[data-inspector-section="note:content"]');

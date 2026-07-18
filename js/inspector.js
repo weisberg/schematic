@@ -3,7 +3,63 @@
 /* -------------------------- Inspector ----------------------------- */
 const inspBody = document.getElementById("inspBody");
 const inspTitle = document.getElementById("inspTitle");
+const inspectorPanel = document.getElementById("inspector");
+const inspectorResizer = document.getElementById("inspectorResizer");
+const inspectorSectionToggle = document.getElementById("inspectorSectionToggle");
 let inspectorMount = inspBody;
+
+const INSPECTOR_WIDTH_KEY = "schematic.inspectorWidth";
+const INSPECTOR_WIDTH_DEFAULT = 340;
+const INSPECTOR_WIDTH_MIN = 280;
+const INSPECTOR_WIDTH_MAX = 520;
+function clampInspectorWidth(value){
+  const width = value == null || value === "" ? INSPECTOR_WIDTH_DEFAULT : Number(value);
+  return Math.max(INSPECTOR_WIDTH_MIN, Math.min(INSPECTOR_WIDTH_MAX,
+    Number.isFinite(width) ? Math.round(width) : INSPECTOR_WIDTH_DEFAULT));
+}
+function setInspectorWidth(value, persist = true){
+  const width = clampInspectorWidth(value);
+  inspectorPanel.style.setProperty("--inspector-width", `${width}px`);
+  inspectorResizer.setAttribute("aria-valuenow", String(width));
+  if (persist){ try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(width)); } catch {} }
+  return width;
+}
+function loadInspectorWidth(){
+  try { return setInspectorWidth(localStorage.getItem(INSPECTOR_WIDTH_KEY), false); }
+  catch { return setInspectorWidth(INSPECTOR_WIDTH_DEFAULT, false); }
+}
+let inspectorWidth = loadInspectorWidth();
+let inspectorResizeDrag = null;
+inspectorResizer.addEventListener("pointerdown", ev => {
+  ev.preventDefault();
+  inspectorResizeDrag = {x:ev.clientX, width:inspectorWidth};
+  if (inspectorResizer.setPointerCapture) inspectorResizer.setPointerCapture(ev.pointerId);
+  document.body.classList.add("inspector-resizing");
+});
+inspectorResizer.addEventListener("pointermove", ev => {
+  if (!inspectorResizeDrag) return;
+  inspectorWidth = setInspectorWidth(inspectorResizeDrag.width + inspectorResizeDrag.x - ev.clientX, false);
+});
+const finishInspectorResize = ev => {
+  if (!inspectorResizeDrag) return;
+  inspectorResizeDrag = null;
+  document.body.classList.remove("inspector-resizing");
+  inspectorWidth = setInspectorWidth(inspectorWidth, true);
+  if (ev && inspectorResizer.releasePointerCapture && inspectorResizer.hasPointerCapture &&
+      inspectorResizer.hasPointerCapture(ev.pointerId)) inspectorResizer.releasePointerCapture(ev.pointerId);
+};
+inspectorResizer.addEventListener("pointerup", finishInspectorResize);
+inspectorResizer.addEventListener("pointercancel", finishInspectorResize);
+inspectorResizer.addEventListener("dblclick", () => { inspectorWidth = setInspectorWidth(INSPECTOR_WIDTH_DEFAULT); });
+inspectorResizer.addEventListener("keydown", ev => {
+  let next = null;
+  if (ev.key === "ArrowLeft") next = inspectorWidth + (ev.shiftKey ? 40 : 16);
+  else if (ev.key === "ArrowRight") next = inspectorWidth - (ev.shiftKey ? 40 : 16);
+  else if (ev.key === "Home") next = INSPECTOR_WIDTH_DEFAULT;
+  if (next == null) return;
+  ev.preventDefault();
+  inspectorWidth = setInspectorWidth(next, true);
+});
 
 function appendInspector(node){
   inspectorMount.appendChild(node);
@@ -110,6 +166,26 @@ function edgeStyleSelect(e, id, opts = {}){
 }
 
 const inspectorDisclosureState = new Map();
+function inspectorSections(){
+  return [...inspBody.children].filter(child => child.classList && child.classList.contains("inspector-section"));
+}
+function updateInspectorSectionToggle(){
+  const sections = inspectorSections();
+  inspectorSectionToggle.hidden = sections.length === 0;
+  if (!sections.length) return;
+  const collapse = sections.some(section => section.open);
+  inspectorSectionToggle.textContent = collapse ? "Collapse all" : "Expand all";
+  inspectorSectionToggle.setAttribute("aria-label", collapse ? "Collapse all inspector sections" : "Expand all inspector sections");
+}
+inspectorSectionToggle.addEventListener("click", () => {
+  const sections = inspectorSections();
+  const open = !sections.some(section => section.open);
+  for (const section of sections){
+    section.open = open;
+    inspectorDisclosureState.set(section.getAttribute("data-inspector-section"), open);
+  }
+  updateInspectorSectionToggle();
+});
 function openInspectorSection(key){
   const details = document.querySelector(`[data-inspector-section="${key}"]`);
   if (!details) return false;
@@ -172,7 +248,11 @@ function inspectorSection(key, title, build, opts = {}){
   const previous = inspectorMount;
   inspectorMount = body;
   try { build(); } finally { inspectorMount = previous; }
-  details.addEventListener("toggle", () => inspectorDisclosureState.set(key, details.open));
+  details.addEventListener("toggle", () => {
+    inspectorDisclosureState.set(key, details.open);
+    updateInspectorSectionToggle();
+  });
+  updateInspectorSectionToggle();
   return details;
 }
 function inspectorActions(buttons, danger, opts = {}){
@@ -247,6 +327,7 @@ function renderNodeNotesField(n){
 function renderInspector(){
   updateInspectorVisibility();
   inspBody.innerHTML = "";
+  updateInspectorSectionToggle();
   inspectorMount = inspBody;
   colorPickerSequence = 0;
   if (!sel){ setInspectorHeader("Inspector"); renderHelp(); return; }
@@ -301,7 +382,7 @@ function renderInspector(){
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
         frow("Height", () => sizeStepper(nodeSize(n).h, orientation === "vertical" ? 260 : 100, 4000, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
-      });
+      }, {open:false});
     } else if (n.type === "frame"){
       inspectorSection("frame:basics", "Basics", () => {
         renderNodeTitleField(n);
@@ -317,7 +398,7 @@ function renderInspector(){
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
         frow(n.collapsed === true ? "Expanded height" : "Height", () => sizeStepper(n.h || FRAME_DEFAULT.h, 90, 4000, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.h = v; commit ? render() : drawOnly(); }));
-      });
+      }, {open:false});
     } else if (n.type === "concept"){
       inspectorSection("concept:basics", "Basics", () => {
         renderNodeTitleField(n);
@@ -387,7 +468,7 @@ function renderInspector(){
         frow("Maximum width", () => sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
           {ariaLabel:"Maximum width"}));
-      });
+      }, {open:false});
     } else if (n.type === "status"){
       inspectorSection("status:basics", "Basics", () => {
         renderNodeTitleField(n);
@@ -454,7 +535,7 @@ function renderInspector(){
         frow("Width", () => sizeStepper(n.w || STATUS_W_DEFAULT, 180, 720, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
           {ariaLabel:"Status node width"}));
-      });
+      }, {open:false});
     } else if (n.type === "note"){
       inspectorSection("note:basics", "Basics", () => renderNodeTitleField(n));
       inspectorSection("note:content", "Content", () => {
@@ -518,8 +599,14 @@ function renderInspector(){
     }
 
     const actions = [mkBtn("Duplicate", duplicateSelection)];
-    if (!isStructuralNode(n)) actions.push(mkBtn("Add linked concept  ⇥", addChildConcept));
-    inspectorActions(actions, mkBtn("Delete node", deleteSelection, "dangerbtn"));
+    if (!isStructuralNode(n)){
+      const child = mkBtn("Add child", addChildConcept);
+      child.title = "Add linked concept (Tab)";
+      actions.push(child);
+    }
+    const remove = mkBtn("Delete", deleteSelection, "dangerbtn");
+    remove.title = "Delete node";
+    inspectorActions(actions, remove, {inlineDanger:true});
 
   } else {
     const e = singleSelectedEdge();
@@ -736,7 +823,8 @@ function renderMultiInspector(){
         }));
     }
   });
-  inspectorActions([mkBtn("Duplicate", duplicateSelection)], mkBtn("Delete", deleteSelection, "dangerbtn"));
+  inspectorActions([mkBtn("Duplicate", duplicateSelection)], mkBtn("Delete", deleteSelection, "dangerbtn"),
+    {inlineDanger:true});
 }
 
 /* swap an edge's direction, carrying row bindings and pinned anchor points */
@@ -1004,7 +1092,9 @@ function frow(label, buildCtrl){
   d.className = "frow";
   const l = document.createElement("label");
   l.textContent = label;
-  d.append(l, buildCtrl());
+  const control = buildCtrl();
+  if (control && control.matches && control.matches("select,.sizestepper,.flag,.edgearrowrow")) d.classList.add("compact");
+  d.append(l, control);
   appendInspector(d);
 }
 function mkInput(val, onInput){
