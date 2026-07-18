@@ -1507,6 +1507,21 @@ move has a clear one-step undo boundary; legacy documents load expanded; automat
 
 ---
 
+**SCH-095 · Inspector density and navigation optimization · P1 · M · Done 2026-07-18**
+
+Make the inspector faster to scan and use without removing any editing capability. Let users resize the
+panel from its canvas edge, persist that preference locally, and support keyboard resizing. Place simple
+select, toggle, arrow, and numeric controls beside their labels; reduce redundant spacing; keep secondary
+size/layout sections compact by default; provide one clear Collapse all / Expand all section command; and
+consolidate object actions into a single sticky row.
+
+AC: panel width is adjustable from 280–520 px and resettable; resizing is accessible and does not change
+document data; disclosure state remains stable across rerenders; direct focus actions still reopen their
+target sections; all existing inspector controls and undo semantics remain available; common inspectors fit
+materially more content without scrolling; automated and browser QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.

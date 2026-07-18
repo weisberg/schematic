@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=1.21.0">
 </head>
 <body>
 <noscript>
@@ -195,7 +195,13 @@
     <svg id="board" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="application" aria-label="Schematic canvas"></svg>
   </div>
   <aside id="inspector">
-    <div class="head"><h2 id="inspTitle">Inspector</h2></div>
+    <div id="inspectorResizer" class="inspector-resizer" role="separator" tabindex="0"
+         aria-label="Resize inspector" aria-orientation="vertical" aria-valuemin="280"
+         aria-valuemax="520" aria-valuenow="340" title="Drag to resize · double-click to reset"></div>
+    <div class="head">
+      <h2 id="inspTitle">Inspector</h2>
+      <button id="inspectorSectionToggle" class="inspector-section-toggle" type="button" hidden>Collapse all</button>
+    </div>
     <div class="body" id="inspBody"></div>
   </aside>
 </main>
