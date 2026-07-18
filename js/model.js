@@ -10,6 +10,10 @@ function addNode(type, x, y, opts = {}){
   } else if (type === "text"){
     n = {id:uid(), type, x, y, title:"Text", color:conceptColors()[1] || CONCEPT_COLORS[1],
          fontSize:TEXT_FS_DEFAULT, w:TEXT_W_DEFAULT};
+  } else if (type === "status"){
+    n = {id:uid(), type, x, y, title:"Status item", status:STATUS_DEFAULT, statusSide:"right",
+         color:conceptColors()[1] || conceptColors()[0] || CONCEPT_COLORS[1],
+         fontSize:STATUS_FS_DEFAULT, w:STATUS_W_DEFAULT};
   } else if (type === "note"){
     n = { id:uid(), type, x, y, title:"Rich note",
           content:"Add context here.\n\n- Use **bold**, _italic_, or `code`\n- [ ] Track a decision",
@@ -165,8 +169,10 @@ function pastePayload(payload, offset = 36, mutate = true){
   state.nodes.push(...remapped.nodes);
   state.edges.push(...remapped.edges);
   /* duplicated/pasted tables must not collide with existing names (issue #46) */
-  for (const n of remapped.nodes)
+  for (const n of remapped.nodes){
     if (n.type === "table") n.title = uniqueTableTitle(n.title, n);
+    if (n.type === "status") normalizeNodeStatus(n);
+  }
   return remapped;
 }
 /* table names are unique by their SQL identifier (issue #46) */

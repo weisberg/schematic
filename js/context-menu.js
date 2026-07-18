@@ -141,31 +141,27 @@ function ctxLabel(parent, txt){
   parent.appendChild(d);
 }
 function ctxSwatches(parent, colors, current, apply){
-  parent.appendChild(swatchRow(colors, current, apply, "swrow", hideCtx));
-  if (recentColors.length)
-    parent.appendChild(swatchRow(recentColors, current, apply, "swrow recent", hideCtx));
-  const hexWrap = document.createElement("div");
-  hexWrap.className = "swrow";
-  hexWrap.appendChild(customColorRow(current, apply, { onCommit: hideCtx }));
-  parent.appendChild(hexWrap);
+  parent.appendChild(swatches(colors, current, apply, {
+    context:true,
+    open:true,
+    persist:false
+  }));
 }
 function ctxColorOverride(parent, colors, explicit, fallback, apply, reset, opts = {}){
-  const inherited = !normalizeHex(explicit);
-  const wrap = document.createElement("div");
-  wrap.setAttribute("data-color-override", opts.key || "color");
-  parent.appendChild(wrap);
-  ctxItem(wrap, inherited ? `✓ Use ${opts.inheritLabel}` : `Reset to ${opts.inheritLabel}`, () => {
-    if (!inherited) reset();
-  }, {action:opts.action});
-  ctxSwatches(wrap, colors, inherited ? fallback : explicit, apply);
+  parent.appendChild(colorOverrideControl(colors, explicit, fallback, apply, reset, {
+    ...opts,
+    context:true,
+    open:true,
+    persist:false
+  }));
 }
 /* compact font-size stepper for the context menu */
 function ctxSizeRow(parent, n, targets = [n]){
-  const isC = n.type === "concept", isNote = n.type === "note", isText = n.type === "text";
+  const isC = n.type === "concept", isNote = n.type === "note", isText = n.type === "text", isStatus = n.type === "status";
   const cur = nodeTextSize(n);
   const wrap = document.createElement("div");
   wrap.className = "swrow";
-  wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote || isText ? 10 : 8, isText ? 72 : isC ? 48 : 28, isC || isNote || isText ? 1 : 0.5,
+  wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote || isText || isStatus ? 10 : 8, isText || isStatus ? 72 : isC ? 48 : 28, isC || isNote || isText || isStatus ? 1 : 0.5,
     (v, commit) => {
       pushHistory(targets.length > 1 ? "fs:multi" : "fs:"+n.id);
       for (const t of targets) t.fontSize = clampNodeTextSize(t, v);
@@ -203,6 +199,322 @@ function ctxShapeRow(parent, n, targets = [n]){
   parent.appendChild(row);
 }
 
+/* Toolbar dropdown commands share the context-menu mutation functions, but use
+   a calmer desktop-menu hierarchy. Color and font-size controls intentionally
+   remain in the inspector and right-click menus. */
+function menuCommand(parent, label, fn, opts = {}){
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "menucommand" + (opts.danger ? " dangerbtn" : "");
+  button.setAttribute("role", "menuitem");
+  if (opts.action) button.setAttribute("data-menu-action", opts.action);
+  if (opts.pressed != null) button.setAttribute("aria-pressed", String(!!opts.pressed));
+  if (opts.disabled){
+    button.disabled = true;
+    button.setAttribute("aria-disabled", "true");
+  }
+  const text = document.createElement("span");
+  text.textContent = label;
+  button.appendChild(text);
+  if (opts.hint){
+    const hint = document.createElement("kbd");
+    hint.textContent = opts.hint;
+    button.appendChild(hint);
+  }
+  button.addEventListener("click", fn);
+  parent.appendChild(button);
+  return button;
+}
+function menuSeparator(parent){
+  const separator = document.createElement("div");
+  separator.className = "menusep";
+  separator.setAttribute("role", "separator");
+  parent.appendChild(separator);
+}
+function menuLabel(parent, label){
+  const heading = document.createElement("div");
+  heading.className = "menulabel";
+  heading.textContent = label;
+  parent.appendChild(heading);
+}
+function menuSubmenu(parent, key, label, build, opts = {}){
+  const details = document.createElement("details");
+  details.className = "menusubmenu";
+  details.setAttribute("data-menu-submenu", key);
+  if (opts.disabled) details.classList.add("disabled");
+  const summary = document.createElement("summary");
+  summary.setAttribute("role", "menuitem");
+  summary.setAttribute("aria-haspopup", "true");
+  summary.setAttribute("aria-expanded", "false");
+  if (opts.disabled) summary.setAttribute("aria-disabled", "true");
+  const text = document.createElement("span");
+  text.textContent = label;
+  summary.append(text, disclosureChevron());
+  const body = document.createElement("div");
+  body.className = "menusubbody";
+  body.setAttribute("role", "group");
+  build(body);
+  details.append(summary, body);
+  details.addEventListener("toggle", () => {
+    if (opts.disabled && details.open){ details.open = false; return; }
+    summary.setAttribute("aria-expanded", String(details.open));
+    if (!details.open) return;
+    for (const sibling of parent.children){
+      if (sibling !== details && sibling.classList && sibling.classList.contains("menusubmenu")) sibling.open = false;
+    }
+  });
+  parent.appendChild(details);
+  return details;
+}
+function menuContextHeader(parent, kind, title, count = 1){
+  const header = document.createElement("div");
+  header.className = "menucontext";
+  header.appendChild(contextIcon(kind));
+  const copy = document.createElement("div");
+  const type = document.createElement("small");
+  type.textContent = kind === "edge" ? "Link selected" : count > 1 ? `${count} nodes selected` : "Node selected";
+  const name = document.createElement("strong");
+  name.textContent = title || "Untitled";
+  copy.append(type, name);
+  header.appendChild(copy);
+  parent.appendChild(header);
+}
+function menuControl(parent, label, control){
+  const wrap = document.createElement("div");
+  wrap.className = "menucontrol";
+  const title = document.createElement("label");
+  title.textContent = label;
+  wrap.append(title, control);
+  parent.appendChild(wrap);
+  return wrap;
+}
+function nodeKindLabel(n){
+  if (!n) return "Node";
+  return n.type === "concept" ? "Concept" : n.type === "frame" ? "Frame"
+    : n.type === "swimlane" ? "Swimlane" : n.type === "todo" ? "To-do list"
+    : n.type === "note" ? "Rich note" : n.type === "text" ? "Plain text"
+    : n.type === "status" ? "Status node" : "Table";
+}
+function buildNodeSelectionDropdown(panel, primary, targets){
+  menuContextHeader(panel, "node", targets.length > 1 ? primary.title : `${nodeKindLabel(primary)} · ${primary.title || "Untitled"}`, targets.length);
+
+  menuSubmenu(panel, "selection-content", "Content", body => {
+    menuCommand(body, targets.length > 1 ? `Edit primary: ${primary.title || "Untitled"}`
+      : primary.type === "text" || primary.type === "status" ? "Edit text" : "Edit title",
+      () => startInlineEditor("node", primary.id), {hint:"↵", action:"edit-primary"});
+    if (primary.type === "note")
+      menuCommand(body, "Edit note content", () => { setSelection("node", primary.id); render(); focusNoteInput(); },
+        {action:"edit-note-content"});
+    if (!isStructuralNode(primary))
+      menuCommand(body, "Add linked concept", addChildConcept, {hint:"Tab", action:"add-linked"});
+  });
+
+  if (primary.type === "table") menuSubmenu(panel, "selection-table", "Table tools", body => {
+    menuCommand(body, "Add related table (1:N)", () => addRelatedTable(primary.id), {action:"add-related-table"});
+    menuCommand(body, primary.collapsed ? "Expand fields" : "Collapse fields", () => {
+      pushHistory(); primary.collapsed = !primary.collapsed; render();
+    }, {action:"toggle-table-collapse"});
+    menuCommand(body, "Add field", () => {
+      pushHistory();
+      primary.fields.push({id:uid(), name:"field_" + (primary.fields.length + 1),
+        type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
+      render();
+    }, {action:"add-field"});
+  });
+
+  if (primary.type === "todo") menuSubmenu(panel, "selection-list", "List tools", body => {
+    menuCommand(body, primary.collapsed ? "Expand items" : "Collapse items", () => {
+      pushHistory(); primary.collapsed = !primary.collapsed; render();
+    }, {action:"toggle-list-collapse"});
+    menuCommand(body, "Add item", () => addTodoItem(primary), {action:"add-todo-item"});
+  });
+
+  if (primary.type === "status") menuSubmenu(panel, "selection-status", "Status", body => {
+    const statusTargets = targets.filter(target => target.type === "status");
+    menuLabel(body, "Status label");
+    for (const label of statusOptions()) menuCommand(body, label, () => {
+      if (statusTargets.every(target => target.status === label)) return;
+      pushHistory();
+      for (const target of statusTargets) target.status = label;
+      render();
+    }, {pressed:primary.status === label, action:"status-" + label.toLowerCase().replace(/[^a-z0-9]+/g, "-")});
+    menuSeparator(body);
+    menuLabel(body, "Indicator side");
+    for (const [side, label] of [["left","Left"],["right","Right"]]) menuCommand(body, label, () => {
+      if (statusTargets.every(target => target.statusSide === side)) return;
+      pushHistory();
+      for (const target of statusTargets) target.statusSide = side;
+      render();
+    }, {pressed:primary.statusSide === side, action:"status-side-" + side});
+  });
+
+  if (primary.type === "concept" || primary.type === "text") menuSubmenu(panel, "selection-shape", "Shape", body => {
+    const matching = targets.filter(target => target.type === primary.type);
+    const options = primary.type === "text" ? TEXT_BOX_SHAPES : FLOWCHART_SHAPES;
+    const current = primary.type === "text" ? textBoxShape(primary) : conceptShape(primary);
+    for (const [shape, label] of options) menuCommand(body, label, () => {
+      pushHistory(matching.length > 1 ? "shape:multi" : "shape:" + primary.id);
+      for (const target of matching){
+        if (target.type === "text") setTextBoxShape(target, shape); else setConceptShape(target, shape);
+      }
+      render();
+    }, {pressed:current === shape, action:"shape-" + shape});
+  });
+
+  if (primary.type === "text" || primary.type === "status") menuSubmenu(panel, "selection-width", "Text box width", body => {
+    const matching = targets.filter(target => target.type === primary.type);
+    const minimum = primary.type === "status" ? 180 : 80;
+    const fallback = primary.type === "status" ? STATUS_W_DEFAULT : TEXT_W_DEFAULT;
+    const stepper = sizeStepper(primary.w || fallback, minimum, 720, 20, (value, commit) => {
+      pushHistory(matching.length > 1 ? "menu-width:multi" : "menu-width:" + primary.id);
+      for (const target of matching) target.w = value;
+      drawOnly();
+      if (commit) renderInspector();
+    }, {ariaLabel:primary.type === "status" ? "Status node width" : "Maximum text width"});
+    menuControl(body, "Width", stepper).setAttribute("data-menu-stay-open", "true");
+  });
+
+  if (primary.type === "swimlane") menuSubmenu(panel, "selection-orientation", "Orientation", body => {
+    const lanes = targets.filter(target => target.type === "swimlane");
+    for (const [orientation, label] of [["horizontal","Horizontal lane"],["vertical","Vertical lane"]])
+      menuCommand(body, label, () => {
+        const changed = lanes.filter(lane => swimlaneOrientation(lane) !== orientation);
+        if (!changed.length) return;
+        pushHistory(lanes.length > 1 ? "lane-orientation:multi" : "lane-orientation:" + primary.id);
+        for (const lane of changed) setSwimlaneOrientation(lane, orientation);
+        render();
+      }, {pressed:swimlaneOrientation(primary) === orientation, action:"orientation-" + orientation});
+  });
+}
+function buildEdgeSelectionDropdown(panel, edge){
+  const from = nodeById(edge.from), to = nodeById(edge.to);
+  menuContextHeader(panel, "edge", `${from ? from.title : "Unknown"} → ${to ? to.title : "Unknown"}`);
+  const touchesLinkOnlyNode = linkOnlyNode(from) || linkOnlyNode(to);
+
+  menuSubmenu(panel, "selection-relationship", "Relationship", body => {
+    if (!touchesLinkOnlyNode){
+      menuLabel(body, "Relation type");
+      for (const [kind, label] of [["link","Link"],["1:1","1:1"],["1:N","1:N"],["N:M","N:M"]])
+        menuCommand(body, label, () => {
+          if (edge.kind === kind) return;
+          pushHistory(); edge.kind = kind; render();
+        }, {pressed:edge.kind === kind, action:"edge-kind-" + kind.replace(/[^a-z0-9]+/gi, "-")});
+      menuSeparator(body);
+    }
+    menuControl(body, "Relationship label", edgeRelationshipSelect(edge));
+  });
+
+  menuSubmenu(panel, "selection-label", "Label", body => {
+    menuCommand(body, "Edit label text", () => startInlineEditor("edge", edge.id), {hint:"↵", action:"edit-edge-label"});
+  });
+
+  menuSubmenu(panel, "selection-line", "Line", body => {
+    menuLabel(body, "Arrowheads");
+    for (const [key, label] of [["startArrow","Start arrow"],["endArrow","End arrow"]])
+      menuCommand(body, label, () => {
+        pushHistory(); setEdgeArrow(edge, key, !edge[key]); render();
+      }, {pressed:edge[key] === true, action:key === "startArrow" ? "start-arrow" : "end-arrow"});
+    menuSeparator(body);
+    menuLabel(body, "Style");
+    for (const [style, label] of [["solid","Solid"],["dash","Dashed"],["dot","Dotted"]])
+      menuCommand(body, label, () => {
+        if (edgeLineStyle(edge) === style) return;
+        pushHistory(); edge.lineStyle = style; render();
+      }, {pressed:edgeLineStyle(edge) === style, action:"line-style-" + style});
+    menuSeparator(body);
+    const width = sizeStepper(edgeLineWidth(edge), 1, 8, .5, (value, commit) => {
+      pushHistory("menu-edge-width:" + edge.id);
+      edge.lineWidth = value;
+      drawOnly();
+      if (commit) renderInspector();
+    }, {ariaLabel:"Line width"});
+    menuControl(body, "Line width", width).setAttribute("data-menu-stay-open", "true");
+  });
+
+  menuSubmenu(panel, "selection-routing", "Routing", body => {
+    for (const [routing, label] of [["curve","Curved"],["ortho","Orthogonal"]]) menuCommand(body, label, () => {
+      if ((edge.routing || "curve") === routing) return;
+      pushHistory();
+      if (routing === "ortho") edge.routing = "ortho"; else delete edge.routing;
+      render();
+    }, {pressed:(edge.routing || "curve") === routing, action:"routing-" + routing});
+    if (edge.routing === "ortho" && hasCustomOrthoBend(edge)){
+      menuSeparator(body);
+      menuCommand(body, "Reset waypoint to automatic", () => resetOrthoBend(edge), {action:"reset-waypoint"});
+    }
+  });
+
+  menuSeparator(panel);
+  menuCommand(panel, "Swap direction", () => {
+    pushHistory(); swapEdgeDirection(edge); render();
+  }, {action:"swap-edge"});
+}
+function setMenuDisabled(id, disabled){
+  const control = document.getElementById(id);
+  if (!control) return;
+  control.disabled = !!disabled;
+  control.setAttribute("aria-disabled", String(!!disabled));
+}
+function setMenuSubmenuDisabled(key, disabled){
+  const submenu = document.querySelector(`#arrangeMenu [data-menu-submenu="${key}"]`);
+  if (!submenu) return;
+  submenu.classList.toggle("disabled", !!disabled);
+  const summary = submenu.querySelector(":scope > summary");
+  if (summary) summary.setAttribute("aria-disabled", String(!!disabled));
+  if (disabled) submenu.open = false;
+}
+function updateDropdownMenus(){
+  const nodeIds = selectionIds("node");
+  const edgeIds = selectionIds("edge");
+  const hasNodeSelection = nodeIds.length > 0;
+  const hasSelection = hasNodeSelection || edgeIds.length > 0;
+  const nodes = hasNodeSelection ? selectedNodes() : [];
+  const primaryNode = nodes[0] || null;
+  const primaryEdge = edgeIds.length ? edgeById(edgeIds[0]) : null;
+
+  setMenuDisabled("menuUndo", !undoStack.length);
+  setMenuDisabled("menuRedo", !redoStack.length);
+  setMenuDisabled("menuCut", !hasNodeSelection);
+  setMenuDisabled("menuCopy", !hasNodeSelection);
+  setMenuDisabled("menuPaste", !(clipboardData && clipboardData.nodes && clipboardData.nodes.length));
+  setMenuDisabled("menuDuplicate", !hasNodeSelection);
+  setMenuDisabled("menuDelete", !hasSelection);
+
+  const multi = nodes.length >= 2;
+  for (const id of ["btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
+                    "menuDistributeHorizontal","menuDistributeVertical","menuWidthSmallest","menuWidthLargest","menuWidthAverage"])
+    setMenuDisabled(id, !multi);
+  setMenuDisabled("menuResetSize", !nodes.some(node => manualNodeWidth(node) != null));
+  setMenuDisabled("menuBringFront", !primaryNode);
+  setMenuDisabled("menuSendBack", !primaryNode);
+  setMenuSubmenuDisabled("align", !multi);
+  setMenuSubmenuDisabled("distribute", !multi);
+  setMenuSubmenuDisabled("size", !hasNodeSelection);
+  setMenuSubmenuDisabled("layer", !primaryNode);
+
+  const inspector = document.getElementById("menuInspector");
+  const theme = document.getElementById("menuTheme");
+  if (inspector) inspector.setAttribute("aria-pressed", String(inspectorPinned));
+  if (theme) theme.setAttribute("aria-pressed", String(docTheme === "dark"));
+
+  const selectionButton = document.getElementById("btnSelectionMenu");
+  const selectionPanel = document.getElementById("selectionMenuPanel");
+  if (!selectionButton || !selectionPanel) return;
+  selectionButton.disabled = !hasSelection;
+  selectionButton.setAttribute("aria-disabled", String(!hasSelection));
+  selectionPanel.innerHTML = "";
+  if (primaryNode) buildNodeSelectionDropdown(selectionPanel, primaryNode, nodes);
+  else if (primaryEdge) buildEdgeSelectionDropdown(selectionPanel, primaryEdge);
+  else {
+    const empty = document.createElement("div");
+    empty.className = "menuempty";
+    empty.textContent = "Select a node or link to see its commands.";
+    selectionPanel.appendChild(empty);
+    const menu = document.getElementById("selectionMenu");
+    if (menu){ menu.classList.remove("open"); selectionButton.setAttribute("aria-expanded", "false"); }
+  }
+}
+
 function nodeMenu(n, x, y){
   const targets = isSelected("node", n.id) ? selectedNodes() : [n];
   const applyToTargets = (fn) => {
@@ -211,7 +523,7 @@ function nodeMenu(n, x, y){
   showCtx(x, y, m => {
     ctxHeader(m, "node", targets.length > 1 ? `${targets.length} nodes selected` : n.title || "Untitled");
     ctxGroup(m, "node:content", "Content", panel => {
-      ctxItem(panel, n.type === "text" ? "Edit text" : "Edit title",
+      ctxItem(panel, n.type === "text" || n.type === "status" ? "Edit text" : "Edit title",
         () => startInlineEditor("node", n.id), {kbd:"dbl-click"});
       if (n.type === "note")
         ctxItem(panel, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
@@ -239,15 +551,38 @@ function nodeMenu(n, x, y){
         });
         ctxItem(sub, "Add item", () => addTodoItem(n));
       });
+      if (n.type === "status") ctxSubmenu(panel, "node:content:status", "Status", sub => {
+        const statusTargets = targets.filter(target => target.type === "status");
+        ctxLabel(sub, "Status label");
+        for (const label of statusOptions()){
+          ctxItem(sub, (n.status === label ? "✓ " : "") + label, () => {
+            if (statusTargets.every(target => target.status === label)) return;
+            pushHistory();
+            for (const target of statusTargets) target.status = label;
+            render();
+          }, {action:"status-" + label.toLowerCase().replace(/[^a-z0-9]+/g, "-")});
+        }
+        ctxSep(sub);
+        ctxLabel(sub, "Indicator side");
+        for (const [side, label] of [["left","Left"],["right","Right"]]){
+          ctxItem(sub, (n.statusSide === side ? "✓ " : "") + label, () => {
+            if (statusTargets.every(target => target.statusSide === side)) return;
+            pushHistory();
+            for (const target of statusTargets) target.statusSide = side;
+            render();
+          }, {action:"status-side-" + side});
+        }
+      });
     });
     ctxGroup(m, "node:appearance", "Appearance", panel => {
       const palette = [...new Set([...conceptColors(), ...tableColors()])];
       const fillLabel = n.type === "swimlane" ? "Body background" : n.type === "text" ? "Shape background"
+        : n.type === "status" ? "Background"
         : n.type === "concept" ? "Fill color" : n.type === "frame" ? "Frame color"
         : n.type === "todo" ? "List color" : n.type === "note" ? "Note color" : "Header color";
       ctxSubmenu(panel, "node:appearance:fill", fillLabel, sub => {
         ctxSwatches(sub, n.type === "swimlane" ? palette
-          : (n.type === "concept" || n.type === "text" || n.type === "todo" || n.type === "note")
+          : (n.type === "concept" || n.type === "text" || n.type === "status" || n.type === "todo" || n.type === "note")
             ? conceptColors() : tableColors(), n.color,
           (c, commit) => {
             pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id);
@@ -270,16 +605,17 @@ function nodeMenu(n, x, y){
       }
       if (!isStructuralNode(n)){
         ctxSubmenu(panel, "node:appearance:text", "Text", sub => {
-          if (n.type === "text"){
-            ctxLabel(sub, "Maximum width");
+          if (n.type === "text" || n.type === "status"){
+            ctxLabel(sub, n.type === "status" ? "Width" : "Maximum width");
             const widthRow = document.createElement("div");
             widthRow.className = "swrow";
-            widthRow.appendChild(sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
+            widthRow.appendChild(sizeStepper(n.w || (n.type === "status" ? STATUS_W_DEFAULT : TEXT_W_DEFAULT),
+              n.type === "status" ? 180 : 80, 720, 20,
               (v, commit) => {
                 pushHistory(targets.length > 1 ? "size:multi" : "size:"+n.id);
-                applyToTargets(t => { if (t.type === "text") t.w = v; });
+                applyToTargets(t => { if (t.type === n.type) t.w = v; });
                 commit ? render() : drawOnly();
-              }, {ariaLabel:"Maximum width"}));
+              }, {ariaLabel:n.type === "status" ? "Status node width" : "Maximum width"}));
             sub.appendChild(widthRow);
           }
           ctxLabel(sub, "Text size");
@@ -487,6 +823,7 @@ function canvasMenu(w, x, y){
     ctxGroup(m, "canvas:create", "Create", panel => {
       ctxSubmenu(panel, "canvas:create:nodes", "Nodes and data", sub => {
         ctxItem(sub, "Concept", () => addNodeCentered("concept", w), {kbd:"C", action:"add-concept"});
+        ctxItem(sub, "Status", () => addNodeCentered("status", w), {kbd:"S", action:"add-status"});
         ctxItem(sub, "Table", () => addNodeCentered("table", w), {kbd:"T", action:"add-table"});
         ctxItem(sub, "To-do list", () => addNodeCentered("todo", w), {kbd:"D", action:"add-todo"});
       });

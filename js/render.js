@@ -581,6 +581,55 @@ function drawPlainText(g, n, r, selected, t){
     span.textContent = line;
   });
 }
+function drawStatusNode(g, n, r, selected, t){
+  const layout = statusNodeLayout(n);
+  const fill = n.color || conceptColors()[1];
+  const bodyInk = n.fontColor || autoInk(fill, t);
+  const bandFill = statusColor(layout.status);
+  const bandInk = autoInk(bandFill, t);
+  const left = layout.side === "left";
+  const bandX = left ? 0 : r.w - layout.bandW;
+  const mainX = left ? layout.bandW : 0;
+  const mainCenter = mainX + layout.mainW/2;
+  const bandCenter = bandX + layout.bandW/2;
+  const radius = Math.min(10, r.h/2);
+
+  g.setAttribute("data-status-node", n.id);
+  g.setAttribute("data-status-side", layout.side);
+  g.setAttribute("data-status-value", layout.status);
+  el("rect", {width:r.w, height:r.h, rx:radius, fill, "data-status-surface":"1"}, g);
+  const bandPath = left
+    ? `M ${radius} 0 H ${layout.bandW} V ${r.h} H ${radius} Q 0 ${r.h} 0 ${r.h-radius} V ${radius} Q 0 0 ${radius} 0 Z`
+    : `M ${bandX} 0 H ${r.w-radius} Q ${r.w} 0 ${r.w} ${radius} V ${r.h-radius} Q ${r.w} ${r.h} ${r.w-radius} ${r.h} H ${bandX} Z`;
+  el("path", {d:bandPath, fill:bandFill, "pointer-events":"none",
+              "data-status-band":"1"}, g);
+  el("line", {x1:left ? layout.bandW : bandX, y1:0,
+              x2:left ? layout.bandW : bandX, y2:r.h,
+              stroke:t.ink, "stroke-width":1, opacity:.22, "pointer-events":"none"}, g);
+  el("rect", {width:r.w, height:r.h, rx:radius, fill:"none", "pointer-events":"none",
+              stroke:selected ? t.accent : t.ink, "stroke-width":selected ? 2.2 : 1.2,
+              "data-status-outline":"1"}, g);
+
+  const title = el("text", {"text-anchor":"middle", fill:bodyInk, "pointer-events":"none",
+              "font-family":"Archivo, sans-serif", "font-size":layout.fs, "font-weight":600,
+              "data-status-title":"1"}, g);
+  const firstTitleY = r.h/2 - ((layout.titleLines.length - 1) * layout.lineH)/2 + layout.fs*.35;
+  layout.titleLines.forEach((line, i) => {
+    const span = el("tspan", {x:mainCenter, y:firstTitleY + i*layout.lineH,
+                              "data-status-title-line":i+1}, title);
+    span.textContent = line;
+  });
+
+  const status = el("text", {"text-anchor":"middle", fill:bandInk, "pointer-events":"none",
+              "font-family":"Archivo, sans-serif", "font-size":layout.statusFs, "font-weight":700,
+              "data-status-label":"1"}, g);
+  const firstStatusY = r.h/2 - ((layout.statusLines.length - 1) * layout.statusLineH)/2 + layout.statusFs*.35;
+  layout.statusLines.forEach((line, i) => {
+    const span = el("tspan", {x:bandCenter, y:firstStatusY + i*layout.statusLineH,
+                              "data-status-label-line":i+1}, status);
+    span.textContent = line;
+  });
+}
 function drawRichNote(g, n, r, selected, t){
   const layout = richNoteLayout(n);
   const fill = n.color || conceptColors()[0];
@@ -661,6 +710,8 @@ function drawNode(n){
     }
   } else if (n.type === "text"){
     drawPlainText(g, n, r, selected, t);
+  } else if (n.type === "status"){
+    drawStatusNode(g, n, r, selected, t);
   } else if (n.type === "note"){
     drawRichNote(g, n, r, selected, t);
   } else if (n.type === "todo"){

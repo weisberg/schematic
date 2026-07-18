@@ -5,12 +5,13 @@ function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; retu
 function conceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
 function noteFont(n){ return clampSize(n.fontSize || NOTE_FS_DEFAULT, 10, 28); }
 function textBoxFont(n){ return clampSize(n.fontSize || TEXT_FS_DEFAULT, 10, 72); }
+function statusNodeFont(n){ return clampSize(n.fontSize || STATUS_FS_DEFAULT, 10, 72); }
 function nodeTextSize(n){ return n.type === "concept" ? conceptFont(n) : n.type === "note" ? noteFont(n)
-  : n.type === "text" ? textBoxFont(n) : tableMetrics(n).base; }
+  : n.type === "text" ? textBoxFont(n) : n.type === "status" ? statusNodeFont(n) : tableMetrics(n).base; }
 function clampNodeTextSize(n, value){
   return n.type === "concept" ? clampSize(value, 9, 48)
        : n.type === "note" ? clampSize(value, 10, 28)
-       : n.type === "text" ? clampSize(value, 10, 72) : clampSize(value, 8, 28);
+       : n.type === "text" || n.type === "status" ? clampSize(value, 10, 72) : clampSize(value, 8, 28);
 }
 function richNoteInline(text){
   const source = String(text || "");
@@ -270,6 +271,32 @@ function textBoxLayout(n){
   const lines = limitedWrappedLines(title, font, maxWidth, maxLines);
   return {shape, fs, font, lineH, lines, w, h, centerY, maxWidth};
 }
+function statusNodeLayout(n){
+  const fs = statusNodeFont(n);
+  const font = `600 ${fs}px Archivo, sans-serif`;
+  const lineH = Math.ceil(fs * 1.28);
+  const statusFs = Math.max(10, Math.min(14, Math.round(fs * .72)));
+  const statusFont = `700 ${statusFs}px Archivo, sans-serif`;
+  const statusLineH = Math.ceil(statusFs * 1.22);
+  const fixedWidth = manualNodeWidth(n);
+  const w = fixedWidth == null
+    ? clampSize(n.w || STATUS_W_DEFAULT, 180, 720)
+    : fixedWidth;
+  const status = builtInStatus(n.status) || customStatus(n.status) || cleanStatusLabel(n.status) || STATUS_DEFAULT;
+  const desiredBand = Math.ceil(textW(status, statusFont) + 28);
+  const bandMax = Math.min(168, Math.max(48, Math.floor(w * .44)));
+  const bandW = clampSize(desiredBand, Math.min(88, bandMax), bandMax);
+  const mainW = Math.max(1, w - bandW);
+  const titleMaxWidth = Math.max(16, mainW - 28);
+  const statusMaxWidth = Math.max(20, bandW - 18);
+  const titleLines = wrapConceptTitle(n.title || "Status item", font, titleMaxWidth);
+  const statusLines = wrapConceptTitle(status, statusFont, statusMaxWidth);
+  const h = Math.max(60, titleLines.length * lineH + 26, statusLines.length * statusLineH + 22);
+  const side = n.statusSide === "left" ? "left" : "right";
+  return {w, h, fs, font, lineH, titleLines, titleMaxWidth,
+          status, statusFs, statusFont, statusLineH, statusLines, statusMaxWidth,
+          bandW, mainW, side};
+}
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
   const base = clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28);
@@ -307,6 +334,10 @@ function nodeSize(n){
   }
   if (n.type === "text"){
     const layout = textBoxLayout(n);
+    return {w:layout.w, h:layout.h};
+  }
+  if (n.type === "status"){
+    const layout = statusNodeLayout(n);
     return {w:layout.w, h:layout.h};
   }
   if (n.type === "note"){

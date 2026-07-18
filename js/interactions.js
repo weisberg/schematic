@@ -654,6 +654,7 @@ function matchShortcut(ev, typing){
   if (ev.key === "Escape") return "escape";
   if (!mod && key === "c") return "concept";
   if (!mod && key === "x") return "text";
+  if (!mod && key === "s") return "status";
   if (!mod && key === "n") return "note";
   if (!mod && key === "t") return "table";
   if (!mod && key === "d") return "todo";
@@ -679,6 +680,7 @@ function runShortcut(id, ev){
   if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
   if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
   if (id === "text"){ const c = viewCenter(); addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20); return; }
+  if (id === "status"){ const c = viewCenter(); addNode("status", c.x-STATUS_W_DEFAULT/2, c.y-30); return; }
   if (id === "note"){ const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); return; }
   if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
   if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
@@ -807,6 +809,13 @@ function inlineEditorBox(kind, id, rowId){
       const p = worldToWrap(r.x + 4, r.y + 4);
       return {x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 8), h:Math.max(36, r.h*view.k - 8),
               fontSize:Math.max(12, textBoxFont(n)*view.k)};
+    }
+    if (n.type === "status"){
+      const layout = statusNodeLayout(n);
+      const mainX = layout.side === "left" ? r.x + layout.bandW : r.x;
+      const p = worldToWrap(mainX + 6, r.y + 5);
+      return {x:p.x, y:p.y, w:Math.max(80, layout.mainW*view.k - 12),
+              h:Math.max(36, r.h*view.k - 10), fontSize:Math.max(12, statusNodeFont(n)*view.k)};
     }
     if (n.type === "concept"){
       const p = worldToWrap(r.x + 12, r.y + 8);
@@ -947,6 +956,7 @@ function paletteItems(){
   for (const c of [
     ["addConcept", "Add concept"],
     ["addText", "Add plain text"],
+    ["addStatus", "Add status node"],
     ["addNote", "Add rich note"],
     ["addTable", "Add table"],
     ["addTodo", "Add to-do list"],
@@ -989,6 +999,7 @@ function activatePaletteItem(item){
   const c = viewCenter();
   if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
   if (item.command === "addText") addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20);
+  if (item.command === "addStatus") addNode("status", c.x-STATUS_W_DEFAULT/2, c.y-30);
   if (item.command === "addNote") addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60);
   if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
   if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);

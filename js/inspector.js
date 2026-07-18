@@ -65,6 +65,27 @@ function edgeRelationshipSelect(e, opts = {}){
   });
   return s;
 }
+function statusValueSelect(n, opts = {}){
+  const s = document.createElement("select");
+  s.setAttribute("aria-label", "Status");
+  if (opts.id) s.id = opts.id;
+  for (const label of statusOptions()){
+    const o = document.createElement("option");
+    o.value = label;
+    o.textContent = label;
+    if (n.status === label) o.selected = true;
+    s.appendChild(o);
+  }
+  s.addEventListener("change", () => {
+    const targets = opts.targets || [n];
+    if (targets.every(target => target.status === s.value)) return;
+    pushHistory();
+    for (const target of targets) target.status = s.value;
+    if (opts.close) opts.close();
+    render();
+  });
+  return s;
+}
 function setEdgeArrow(e, key, on){
   if (on) e[key] = true;
   else delete e[key];
@@ -168,7 +189,7 @@ function inspectorActions(buttons, danger, opts = {}){
   appendInspector(footer);
 }
 function renderNodeTitleField(n){
-  frow(n.type === "table" ? "Table name" : n.type === "text" ? "Text" : "Title", () => {
+  frow(n.type === "table" ? "Table name" : n.type === "text" || n.type === "status" ? "Text" : "Title", () => {
     const update = v => {
       n.title = v;
       const headerName = document.querySelector("#inspTitle .inspector-name");
@@ -227,6 +248,7 @@ function renderInspector(){
   updateInspectorVisibility();
   inspBody.innerHTML = "";
   inspectorMount = inspBody;
+  colorPickerSequence = 0;
   if (!sel){ setInspectorHeader("Inspector"); renderHelp(); return; }
 
   if (sel.kind === "node"){
@@ -235,7 +257,7 @@ function renderInspector(){
     if (!n){ clearSelection(); renderHelp(); return; }
     const kind = n.type === "concept" ? "Concept node" : n.type === "frame" ? "Frame" : n.type === "swimlane" ? "Swimlane"
                : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note"
-               : n.type === "text" ? "Plain text" : "Table node";
+               : n.type === "text" ? "Plain text" : n.type === "status" ? "Status node" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
 
     if (n.type === "swimlane"){
@@ -361,6 +383,73 @@ function renderInspector(){
         frow("Maximum width", () => sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
           {ariaLabel:"Maximum width"}));
+      });
+    } else if (n.type === "status"){
+      inspectorSection("status:basics", "Basics", () => {
+        renderNodeTitleField(n);
+        frow("Status", () => statusValueSelect(n, {id:"statusValue"}));
+        frow("Indicator side", () => {
+          const s = document.createElement("select");
+          s.id = "statusSide";
+          s.setAttribute("aria-label", "Status indicator side");
+          for (const [value, label] of [["left","Left"],["right","Right"]]){
+            const o = document.createElement("option");
+            o.value = value; o.textContent = label; o.selected = n.statusSide === value;
+            s.appendChild(o);
+          }
+          s.addEventListener("change", () => {
+            if (s.value === n.statusSide) return;
+            pushHistory();
+            n.statusSide = s.value;
+            render();
+          });
+          return s;
+        });
+        frow("Custom status", () => {
+          const row = document.createElement("div");
+          row.className = "status-custom-row";
+          const input = document.createElement("input");
+          input.type = "text";
+          input.id = "customStatusInput";
+          input.maxLength = 40;
+          input.placeholder = "e.g. Waiting for review";
+          input.setAttribute("aria-label", "New custom status label");
+          const button = mkBtn("Add", () => {
+            const raw = cleanStatusLabel(input.value);
+            if (!raw){ input.focus(); return; }
+            pushHistory();
+            const label = addCustomStatus(raw);
+            if (!label) return;
+            n.status = label;
+            render();
+          });
+          button.id = "addCustomStatusButton";
+          input.addEventListener("keydown", ev => {
+            if (ev.key !== "Enter") return;
+            ev.preventDefault();
+            button.click();
+          });
+          row.append(input, button);
+          return row;
+        });
+        const help = document.createElement("div");
+        help.className = "helper";
+        help.textContent = "Custom labels become available on every status node in this diagram.";
+        appendInspector(help);
+      });
+      inspectorSection("status:appearance", "Appearance", () => {
+        frow("Background", () => swatches(conceptColors(), n.color || conceptColors()[1],
+          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        frow("Text size", () => sizeStepper(statusNodeFont(n), 10, 72, 1,
+          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); },
+          {ariaLabel:"Text size"}));
+        frow("Text color", () => swatches(fontColors(), n.fontColor || themeColors().ink,
+          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+      });
+      inspectorSection("status:layout", "Layout", () => {
+        frow("Width", () => sizeStepper(n.w || STATUS_W_DEFAULT, 180, 720, 20,
+          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
+          {ariaLabel:"Status node width"}));
       });
     } else if (n.type === "note"){
       inspectorSection("note:basics", "Basics", () => renderNodeTitleField(n));
@@ -573,6 +662,28 @@ function renderMultiInspector(){
   const nodes = selectedNodes();
   const nonStructural = nodes.filter(n => !isStructuralNode(n));
   setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
+  if (nodes.every(n => n.type === "status")){
+    inspectorSection("multi:status", "Status", () => {
+      frow("Status", () => {
+        return statusValueSelect(nodes[0], {targets:nodes});
+      });
+      frow("Indicator side", () => {
+        const s = document.createElement("select");
+        s.setAttribute("aria-label", "Status indicator side");
+        for (const [value, label] of [["left","Left"],["right","Right"]]){
+          const o = document.createElement("option");
+          o.value = value; o.textContent = label; o.selected = nodes[0].statusSide === value;
+          s.appendChild(o);
+        }
+        s.addEventListener("change", () => {
+          pushHistory();
+          for (const n of nodes) n.statusSide = s.value;
+          render();
+        });
+        return s;
+      });
+    });
+  }
   inspectorSection("multi:appearance", "Appearance", () => {
     const helper = document.createElement("div");
     helper.className = "helper";
@@ -853,8 +964,8 @@ function renderHelp(){
   h.className = "helper";
   h.innerHTML = `
     <p><b>Flexible primitives, one canvas.</b><br>
-    Concepts sketch the business thinking, plain text adds titles and labels, rich notes preserve
-    formatted context, tables carry the data model, and to-do lists track the work. Link them freely — a label, note, or idea
+    Concepts sketch the business thinking, plain text adds titles and labels, status nodes show progress,
+    rich notes preserve formatted context, tables carry the data model, and to-do lists track the work. Link them freely — a label, note, or idea
     can point at an entity, an exact column, or the task that will deliver it.</p>
     <p style="margin-top:10px"><b>Field-level connections.</b><br>
     Hover a table to reveal ○ handles on each field row. Drag from a row to another
@@ -872,7 +983,7 @@ function renderHelp(){
       <line x1="36" y1="8" x2="44" y2="13" stroke="#33475C" stroke-width="1.6"/></svg>
       1:N — crow's-foot relation</div>
     <p style="margin-top:12px"><b>Shortcuts</b><br>
-    <kbd>C</kbd> concept · <kbd>X</kbd> plain text · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
+    <kbd>C</kbd> concept · <kbd>X</kbd> plain text · <kbd>S</kbd> status · <kbd>N</kbd> note · <kbd>T</kbd> table · <kbd>⇥ Tab</kbd> linked child ·
     <kbd>Del</kbd> delete · <kbd>Ctrl+Z</kbd> undo · <kbd>Ctrl+D</kbd> duplicate ·
     <kbd>F</kbd> fit · <kbd>Shift</kbd>+drag snap · arrows nudge</p>
     <p style="margin-top:12px"><b>Type &amp; color</b><br>
@@ -910,6 +1021,70 @@ function mkBtn(txt, fn, cls){
   b.addEventListener("click", fn);
   return b;
 }
+
+const COLOR_NAMES = new Map(Object.entries({
+  "#ffe9a8":"Warm yellow", "#cfe8ff":"Sky blue", "#d8f3dc":"Mint",
+  "#f4d8f0":"Soft orchid", "#ffd9c7":"Peach", "#e4e7ec":"Cool gray",
+  "#007873":"Teal", "#c20029":"Crimson", "#16232f":"Ink",
+  "#2456e6":"Cobalt", "#8a3fa8":"Purple", "#6b7683":"Slate",
+  "#33475c":"Navy gray", "#7a8794":"Muted gray", "#ffffff":"White",
+  "#c63a3a":"Red", "#e7f4f3":"Pale teal", "#fbe8ec":"Pale rose",
+  "#e9e2f8":"Pale violet", "#000000":"Black"
+}));
+const colorPickerDisclosureState = new Map();
+let colorPickerSequence = 0;
+
+function colorDisplayName(hex){
+  const normalized = normalizeHex(hex);
+  return normalized ? COLOR_NAMES.get(normalized) || "Custom color" : "No color";
+}
+function colorDisplayHex(hex){
+  return (normalizeHex(hex) || "#000000").toUpperCase();
+}
+function colorCheckIcon(){
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("swatch-check");
+  const path = document.createElementNS(SVGNS, "path");
+  path.setAttribute("d", "M3.2 8.1l3 3.1 6.6-6.8");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "2.2");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
+}
+function uniqueColors(colors){
+  const result = [];
+  const seen = new Set();
+  for (const color of colors || []){
+    const normalized = normalizeHex(color);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    const original = typeof color === "string" ? color.trim() : "";
+    result.push(/^#[0-9a-fA-F]{6}$/.test(original) ? original : normalized);
+  }
+  return result;
+}
+function documentColors(exclude = []){
+  const blocked = new Set(uniqueColors(exclude).map(color => color.toLowerCase()));
+  const candidates = [];
+  for (const n of state.nodes || []){
+    for (const key of ["color", "fontColor", "titleColor"]){
+      const color = normalizeHex(n && n[key]);
+      if (color) candidates.push(color);
+    }
+  }
+  for (const e of state.edges || []){
+    for (const key of ["lineColor", "labelTextColor", "labelBackgroundColor"]){
+      const color = normalizeHex(e && e[key]);
+      if (color) candidates.push(color);
+    }
+  }
+  return uniqueColors(candidates).filter(color => !blocked.has(color.toLowerCase())).slice(0, 12);
+}
 /* accept "#abc", "abc", "#aabbcc", "AABBCC" → "#aabbcc"; else null */
 function normalizeHex(raw){
   let s = (raw || "").trim().replace(/^#/, "");
@@ -922,6 +1097,8 @@ function normalizeHex(raw){
    apply(color, commit): commit=false while live-editing (redraw canvas only,
    keep this input alive); commit=true on a settled value (full render). */
 function customColorRow(current, apply, opts = {}){
+  const group = document.createElement("div");
+  group.className = "color-custom";
   const row = document.createElement("div");
   row.className = "hexrow";
 
@@ -930,8 +1107,7 @@ function customColorRow(current, apply, opts = {}){
   well.className = "colorwell";
   well.value = normalizeHex(current) || "#000000";
   well.title = "Pick a color";
-  well.addEventListener("input",  () => { syncText(well.value); apply(well.value, false); });
-  well.addEventListener("change", () => { syncText(well.value); recordRecentColor(well.value); apply(well.value, true); if (opts.onCommit) opts.onCommit(); });
+  well.setAttribute("aria-label", "Open the native color picker");
 
   const hash = document.createElement("span");
   hash.className = "hexhash";
@@ -945,17 +1121,44 @@ function customColorRow(current, apply, opts = {}){
   txt.placeholder = "aabbcc";
   txt.setAttribute("aria-label", "Hex color code");
   txt.value = (normalizeHex(current) || "").replace(/^#/, "");
-  const syncText = hex => { txt.value = hex.replace(/^#/, ""); txt.classList.remove("bad"); };
+  const error = document.createElement("span");
+  error.className = "color-error";
+  error.id = `color-error-${Math.random().toString(36).slice(2)}`;
+  error.textContent = "Enter a 3- or 6-digit hex color.";
+  error.hidden = true;
+  txt.setAttribute("aria-describedby", error.id);
+  const showValid = () => {
+    txt.classList.remove("bad");
+    txt.removeAttribute("aria-invalid");
+    error.hidden = true;
+  };
+  const showInvalid = () => {
+    txt.classList.add("bad");
+    txt.setAttribute("aria-invalid", "true");
+    error.hidden = false;
+  };
+  const syncText = hex => { txt.value = hex.replace(/^#/, ""); showValid(); };
+
+  well.addEventListener("input", () => {
+    syncText(well.value);
+    apply(well.value, false);
+  });
+  well.addEventListener("change", () => {
+    syncText(well.value);
+    recordRecentColor(well.value);
+    apply(well.value, true);
+    if (opts.onCommit) opts.onCommit();
+  });
 
   txt.addEventListener("input", () => {
     const n = normalizeHex(txt.value);
-    if (n){ txt.classList.remove("bad"); well.value = n; apply(n, false); }   // live once valid
-    else txt.classList.remove("bad");                                          // don't nag mid-type
+    showValid();
+    if (n){ well.value = n; apply(n, false); }   // live once valid
   });
   const commit = () => {
     const n = normalizeHex(txt.value);
-    if (n){ txt.classList.remove("bad"); well.value = n; syncText(n); recordRecentColor(n); apply(n, true); return true; }
-    if (txt.value.trim() !== ""){ txt.classList.add("bad"); return false; }
+    if (n){ showValid(); well.value = n; syncText(n); recordRecentColor(n); apply(n, true); return true; }
+    if (txt.value.trim() !== ""){ showInvalid(); return false; }
     return true;
   };
   txt.addEventListener("keydown", ev => {
@@ -964,8 +1167,40 @@ function customColorRow(current, apply, opts = {}){
   txt.addEventListener("blur", commit);
   txt.addEventListener("pointerdown", ev => ev.stopPropagation());  // don't let menu-close swallow focus
 
-  row.append(well, hash, txt);
-  return row;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "color-copy";
+  copy.textContent = "Copy";
+  copy.setAttribute("aria-label", "Copy hex color");
+  copy.addEventListener("click", () => {
+    const color = normalizeHex(txt.value) || normalizeHex(current);
+    if (!color) return;
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(color.toUpperCase()).catch(() => {});
+    announce(`${color.toUpperCase()} copied`);
+  });
+
+  row.append(well, hash, txt, copy);
+  if (typeof window.EyeDropper === "function"){
+    const eyedropper = document.createElement("button");
+    eyedropper.type = "button";
+    eyedropper.className = "color-eyedropper";
+    eyedropper.textContent = "Pick from screen";
+    eyedropper.addEventListener("click", async () => {
+      try {
+        const result = await new window.EyeDropper().open();
+        const color = normalizeHex(result && result.sRGBHex);
+        if (!color) return;
+        well.value = color;
+        syncText(color);
+        recordRecentColor(color);
+        apply(color, true);
+        if (opts.onCommit) opts.onCommit();
+      } catch {}
+    });
+    group.append(row, eyedropper, error);
+  } else group.append(row, error);
+  return group;
 }
 
 /* − [number] + stepper. apply(value, commit) — live while typing/holding, commit on settle */
@@ -1003,37 +1238,154 @@ function sizeStepper(current, lo, hi, step, apply, opts = {}){
 function swatchRow(colors, current, apply, className, onPick){
   const d = document.createElement("div");
   d.className = className;
-  for (const c of colors){
+  for (const c of uniqueColors(colors)){
+    const normalized = normalizeHex(c);
     const b = document.createElement("button");
-    b.className = "swatch" + (c.toLowerCase() === (current||"").toLowerCase() ? " on" : "");
+    b.className = "swatch" + (normalized === normalizeHex(current) ? " on" : "");
     b.style.background = c;
     b.title = c;
+    b.type = "button";
+    b.setAttribute("data-color", normalized);
+    b.setAttribute("aria-label", `${colorDisplayName(c)}, ${colorDisplayHex(c)}`);
+    b.setAttribute("aria-pressed", String(normalized === normalizeHex(current)));
+    if (relativeLuminance(c) > .72) b.classList.add("light");
+    b.appendChild(colorCheckIcon());
     b.addEventListener("click", () => { apply(c, true); if (onPick) onPick(); });
     d.appendChild(b);
   }
   return d;
 }
-function swatches(colors, current, apply){
-  const wrap = document.createElement("div");
-  wrap.className = "swatchgroup";
-  wrap.appendChild(swatchRow(colors, current, apply, "swatches"));
-  if (recentColors.length)
-    wrap.appendChild(swatchRow(recentColors, current, apply, "swatches recent"));
-  wrap.appendChild(customColorRow(current, apply));
-  return wrap;
+function colorPickerSection(label, colors, current, apply, className, opts = {}){
+  const section = document.createElement("section");
+  section.className = `color-picker-section ${opts.sectionClass || ""}`.trim();
+  const heading = document.createElement("div");
+  heading.className = "color-picker-heading";
+  const title = document.createElement("span");
+  title.textContent = label;
+  heading.appendChild(title);
+  if (opts.action){
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "color-picker-action";
+    action.textContent = opts.action.label;
+    action.addEventListener("click", opts.action.run);
+    heading.appendChild(action);
+  }
+  section.append(heading, swatchRow(colors, current, apply, className));
+  return section;
+}
+function updateColorPickerCurrent(picker, color){
+  const normalized = normalizeHex(color) || "#000000";
+  picker.setAttribute("data-current-color", normalized);
+  const preview = picker.querySelector(".color-current-preview");
+  const name = picker.querySelector(".color-current-name");
+  const hex = picker.querySelector(".color-current-hex");
+  if (preview) preview.style.background = normalized;
+  if (name) name.textContent = colorDisplayName(normalized);
+  if (hex) hex.textContent = colorDisplayHex(normalized);
+  const summary = picker.querySelector(".color-picker-summary");
+  if (summary) summary.setAttribute("aria-label",
+    `Current color: ${colorDisplayName(normalized)}, ${colorDisplayHex(normalized)}. Choose a color.`);
+  for (const swatch of picker.querySelectorAll(".swatch")){
+    const selected = swatch.getAttribute("data-color") === normalized;
+    swatch.classList.toggle("on", selected);
+    swatch.setAttribute("aria-pressed", String(selected));
+  }
+}
+function swatches(colors, current, apply, opts = {}){
+  const palette = uniqueColors(colors);
+  const currentColor = normalizeHex(current) || palette[0] || "#000000";
+  const selectionKey = sel ? `${sel.kind}:${selectionIds().join(",")}` : "none";
+  const key = opts.key || `color:${selectionKey}:${colorPickerSequence++}`;
+  const picker = document.createElement("div");
+  picker.className = "color-picker swatchgroup" + (opts.context ? " context" : "");
+  picker.setAttribute("data-color-picker", key);
+  picker.setAttribute("data-current-color", currentColor);
+  const stored = colorPickerDisclosureState.get(key);
+  let pickerOpen = opts.open === true || (opts.persist !== false && stored === true);
+  picker.classList.toggle("open", pickerOpen);
+
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "color-picker-summary";
+  summary.setAttribute("aria-expanded", String(pickerOpen));
+  summary.setAttribute("aria-label", `Current color: ${colorDisplayName(currentColor)}, ${colorDisplayHex(currentColor)}. Choose a color.`);
+  const preview = document.createElement("span");
+  preview.className = "color-current-preview";
+  preview.style.background = currentColor;
+  const copy = document.createElement("span");
+  copy.className = "color-current-copy";
+  const name = document.createElement("strong");
+  name.className = "color-current-name";
+  name.textContent = colorDisplayName(currentColor);
+  const hex = document.createElement("span");
+  hex.className = "color-current-hex";
+  hex.textContent = colorDisplayHex(currentColor);
+  copy.append(name, hex);
+  summary.append(preview, copy, disclosureChevron());
+
+  const panel = document.createElement("div");
+  panel.className = "color-picker-panel";
+  panel.hidden = !pickerOpen;
+  const rowClass = `swatches${opts.context ? " swrow" : ""}`;
+  const select = (color, commit) => {
+    updateColorPickerCurrent(picker, color);
+    apply(color, commit);
+  };
+  panel.appendChild(colorPickerSection("Palette", palette, currentColor, select, rowClass));
+  if (recentColors.length){
+    const clearRecent = () => {
+      if (!clearRecentColors()) return;
+      for (const section of document.querySelectorAll(".color-picker-section.recent")) section.remove();
+      announce("Recent colors cleared");
+      if (opts.context && typeof fitCtxMenu === "function") fitCtxMenu();
+    };
+    panel.appendChild(colorPickerSection("Recent", recentColors, currentColor, select,
+      `${rowClass} recent`, {sectionClass:"recent", action:{label:"Clear", run:clearRecent}}));
+  }
+  const usedColors = documentColors([...palette, ...recentColors]);
+  if (usedColors.length)
+    panel.appendChild(colorPickerSection("In this diagram", usedColors, currentColor, select,
+      `${rowClass} document`, {sectionClass:"document"}));
+  const customSection = document.createElement("section");
+  customSection.className = "color-picker-section custom";
+  const customHeading = document.createElement("div");
+  customHeading.className = "color-picker-heading";
+  customHeading.textContent = "Custom color";
+  customSection.append(customHeading, customColorRow(currentColor, select, opts));
+  panel.appendChild(customSection);
+  picker.append(summary, panel);
+  summary.addEventListener("click", () => {
+    pickerOpen = !pickerOpen;
+    picker.classList.toggle("open", pickerOpen);
+    summary.setAttribute("aria-expanded", String(pickerOpen));
+    panel.hidden = !pickerOpen;
+    if (opts.persist !== false) colorPickerDisclosureState.set(key, pickerOpen);
+    if (opts.context && typeof fitCtxMenu === "function") fitCtxMenu();
+  });
+  return picker;
 }
 function colorOverrideControl(colors, explicit, fallback, apply, reset, opts = {}){
   const inherited = !normalizeHex(explicit);
-  const wrap = swatches(colors, inherited ? fallback : explicit, apply);
+  const container = document.createElement("div");
+  container.className = "color-override";
+  container.setAttribute("data-color-override", opts.key || "color");
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "flag colorinherit" + (inherited ? " on" : "");
+  button.className = "colorinherit" + (inherited ? " on" : "");
   button.textContent = inherited ? `Using ${opts.inheritLabel}` : `Reset to ${opts.inheritLabel}`;
   button.setAttribute("aria-pressed", String(inherited));
   button.setAttribute("data-color-inherit", opts.key || "color");
+  if (opts.action) button.setAttribute("data-ctx-action", opts.action);
+  button.disabled = inherited;
   button.addEventListener("click", reset);
-  wrap.insertBefore(button, wrap.firstChild);
-  return wrap;
+  const inheritedPreview = document.createElement("span");
+  inheritedPreview.className = "colorinherit-preview";
+  inheritedPreview.style.background = normalizeHex(fallback) || "#000000";
+  button.prepend(inheritedPreview);
+  const picker = swatches(colors, inherited ? fallback : explicit, apply, opts);
+  container.append(button, picker);
+  return container;
 }
 function mkFlag(txt, on, set){
   const b = document.createElement("button");

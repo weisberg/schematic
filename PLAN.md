@@ -104,6 +104,10 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - Rich-note nodes (v1.7): `{ "id":"n14", "type":"note", "x":0, "y":0,
   "title":"Decision context", "content":"## Evidence\n- **Strong** signal", "color":"#FFE9A8",
   "fontSize":13, "w":300 }` — `content` stores Markdown-style source; `w` is optional.
+- Status nodes (v1.17): `{ "id":"n15", "type":"status", "x":0, "y":0,
+  "title":"Launch approval", "status":"In progress", "statusSide":"right",
+  "color":"#CFE8FF", "fontSize":18, "w":320 }`. `statusSide` is `left|right`;
+  `status` is one built-in label or a document-wide custom label.
 - Any node may include `manualWidth:true` with `w` (v1.16, additive) after a multi-selection
   width-matching action. Without the flag, each node type keeps its legacy auto/default sizing;
   with the flag, `w` is the exact rendered width (clamped to 80–4000). Text, note, frame, and
@@ -113,7 +117,8 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   It is presentation-only, applies only to concept nodes, and is absent for the default
   `process` rectangle so all older documents render unchanged.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
-  kinds are table↔table only; edges touching a to-do list or rich note are always `link`.
+  kinds are table↔table only; edges touching a to-do list, rich note, plain text, or status node
+  are always `link`.
 - `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
 - `fromAnchor`/`toAnchor` (v1.3, additive) optionally pin a whole-node edge end to one of
   the 9 attachment points ∈ `tl|tc|tr|ml|mc|mr|bl|bc|br` (3×3: top/middle/bottom ×
@@ -127,6 +132,9 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
 - Table nodes may include `collapsed`; collapsed tables render header + field count.
 - `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
+- `meta.customStatuses` (v1.17, additive) is the shared, case-insensitively deduplicated list
+  of custom status labels in the diagram. Built-in labels are never written there.
+  Imports also recover custom labels already used by status nodes when older JSON lacks this key.
 - `meta.colorScheme` (v1.4, additive) optionally carries a custom color scheme that
   replaces the built-in palettes and defaults while the document is open:
   `{ "name"?, "concept"?: [hex…], "table"?: [hex…], "font"?: [hex…], "frame"?: hex,
@@ -137,7 +145,8 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   Node colors already written into the document are untouched — the scheme changes
   swatch palettes, new-node defaults, and (via `theme`) canvas + UI chrome colors.
 - `fontSize`/`fontColor` are optional; absence means defaults
-  (`CONCEPT_FS_DEFAULT = 14`, `NOTE_FS_DEFAULT = 13`, `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
+  (`CONCEPT_FS_DEFAULT = 14`, `NOTE_FS_DEFAULT = 13`, `STATUS_FS_DEFAULT = 18`,
+  `TABLE_FS_DEFAULT = 11.5`, color `#16232F`).
 
 ### 2.3 Key functions (call these; do not reimplement)
 
@@ -145,7 +154,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
 | Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
-| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
+| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
 | I/O | `openDoc`, `saveDoc`, `saveAsDoc`, `newDoc`, `download(name, text, mime)`, JSON import handler, `generateSQL`, `ident`, PNG export handler |
@@ -211,6 +220,8 @@ Harness quirks you must respect:
 - Rich-note nodes: title plus safe Markdown-style multiline content (headings, lists,
   tasks, blockquotes, bold, italic, and inline code), folded-note canvas rendering,
   configurable width/color/type, palette search, Markdown export, and node-level links.
+- Status nodes: wrapped text plus a colored left/right status band; five built-in states,
+  per-node selection, and a diagram-wide custom-label catalog edited in the inspector.
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
@@ -221,7 +232,7 @@ Harness quirks you must respect:
   tables retain relation anchoring through node-boundary fallback.
 - Frame nodes: labeled subject-area rectangles drawn behind nodes; drag a frame to move
   nodes contained by center point; resize via corner handle; frames are not edge targets.
-- Add via toolbar, keyboard (`C`/`N`/`T`), double-click empty canvas, command palette, or
+- Add via toolbar, keyboard (`C`/`S`/`N`/`T`), double-click empty canvas, command palette, or
   context menu ("here").
 - Duplicate (Ctrl+D, remaps node/field ids and internal edges), copy/cut/paste
   (Ctrl/Cmd+C/X/V with in-memory clipboard and best-effort OS clipboard), delete
@@ -1330,8 +1341,8 @@ documents remain visually unchanged; automated and browser interaction QA pass.
 
 Turn the fresh-document seed into a coherent feature tour of the complete canvas model without
 turning it into a flowchart-shape gallery. Preserve the established loyalty example while organizing
-its concepts and tables into labeled structural regions, then add unboxed text, a rich note, a to-do
-list, a frame, and horizontal and vertical swimlanes. Use a small number of representative styled,
+its concepts and tables into labeled structural regions, then add unboxed text, a status node, a rich
+note, a to-do list, a frame, and horizontal and vertical swimlanes. Use a small number of representative styled,
 labeled, and field-bound links so new users can see major link capabilities without visual overload.
 
 AC: every node type appears on a fresh load; both swimlane orientations appear; concepts retain the
@@ -1398,7 +1409,7 @@ QA pass.
 
 Add multi-selection right-click actions to set every selected node to the smallest, largest, or
 average width in the selection. Persist the resulting manual width across save/load and use one width
-contract across concepts, plain text, rich notes, tables, to-dos, frames, and swimlanes.
+contract across concepts, plain text, status nodes, rich notes, tables, to-dos, frames, and swimlanes.
 
 AC: the three commands appear only for two or more selected nodes; each command creates one undo step;
 all selected node rectangles end at the same computed width; concept, plain-text, and rich-note content
@@ -1428,8 +1439,55 @@ existed before matching.
 
 AC: Reset size is always visible under Arrange → Size and disabled when no selected node is forced;
 mixed selections reset only forced nodes; concepts, tables, and to-dos resume content sizing while
-text, notes, frames, and swimlanes restore their pre-match width; the reset is one undo step and
+text, status nodes, notes, frames, and swimlanes restore their pre-match width; the reset is one undo step and
 round-trips through save/load; automated and browser right-click QA pass.
+
+---
+
+**SCH-091 · Status node type and shared custom labels · P1 · M · Done 2026-07-17**
+
+Add a status node that combines wrapped text with a configurable left/right indicator. Provide the
+built-in labels Not started, In progress, Blocked, Completed, and Canceled, plus custom labels created
+from the inspector and shared by every status node in the current diagram.
+
+AC: toolbar, `S`, command palette, and blank-canvas menus create status nodes; the inspector and
+right-click menu change status and indicator side; long text wraps in the non-status portion; custom
+labels are normalized, deduplicated, saved once in document metadata, available on all status nodes,
+and included in undo/redo; legacy documents and status nodes without metadata import safely; status
+nodes support normal links, copy/paste, sizing, SVG/PNG export, lint, and starter-content behavior;
+automated and browser visual/interaction QA pass.
+
+---
+
+**SCH-092 · Unified color picker and document palette · P1 · M · Done 2026-07-17**
+
+Replace the duplicated inspector and context-menu color controls with one compact, accessible picker.
+Show the current color by name and exact hex value, then organize choices into the active scheme palette,
+recent custom colors, reusable colors found in the current diagram, and a validated custom-color field.
+Make inherited edge-label colors explicit and reversible without changing document color or undo semantics.
+
+AC: inspector and context menus use the same control; preset and selected colors have accessible names and
+pressed state; custom hex input validates 3- and 6-digit values with a visible error; custom colors appear in
+the persisted recent palette and can be cleared; colors already used by other nodes and edges are reusable;
+native color input and optional browser eyedropper remain available; edge-label text/background inheritance is
+clear; a settled color change creates one undo step; custom color schemes, legacy documents, dark mode, and
+direct `file://` operation remain intact; automated and browser visual/interaction QA pass.
+
+---
+
+**SCH-093 · Complete dropdown command parity · P1 · L · Done 2026-07-18**
+
+Expand the application menubar into a calm, desktop-style command surface organized as File, Edit,
+Insert, Arrange, Selection, View, and Export. Make node- and link-specific commands available through
+a selection-aware menu while keeping dense color pickers and font-size controls in the inspector and
+right-click menus.
+
+AC: every actionable canvas, node, and link context-menu feature other than color and font size has a
+dropdown equivalent; dynamic commands cover every node type and link appearance/routing option; static
+commands expose creation, layout, sizing, alignment, distribution, layering, editing, and view actions;
+unavailable commands are visibly disabled; nested menus allow only one sibling section open at a time;
+existing mutations, undo boundaries, shortcuts, direct `file://` operation, and compact/dark layouts are
+preserved; automated command-parity tests and browser visual/interaction QA pass.
 
 ---
 

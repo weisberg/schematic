@@ -54,7 +54,9 @@ function seed(){
   const evidence = N({type:"note", x:1310, y:105, title:"Launch decision",
      content:"## Why this matters\n- **Hypothesis:** tiers increase repeat orders\n- [x] Define the holdout\n- [ ] Review guardrails\n`owner: Growth + Data`",
      color:"#FFE9A8", fontSize:13, w:240});
-  const checklist = N({type:"todo", x:1320, y:350, title:"Launch readiness", notes:"",
+  const approval = N({type:"status", x:1310, y:300, title:"Launch approval",
+     status:"In progress", statusSide:"right", color:"#CFE8FF", fontSize:16, w:240});
+  const checklist = N({type:"todo", x:1320, y:385, title:"Launch readiness", notes:"",
      color:"#E9E2F8", items:[
        {id:"i_release_design", text:"Approve experiment design", done:true},
        {id:"i_release_events", text:"Validate tracking events"},
@@ -64,7 +66,10 @@ function seed(){
   E(orders, evidence, "link", "Produces", null, null, {
     fromAnchor:"mr", toAnchor:"ml", endArrow:true, lineColor:"#007873", lineStyle:"solid"
   });
-  E(evidence, checklist, "link", "Triggers", null, null, {
+  E(evidence, approval, "link", "Validates", null, null, {
+    fromAnchor:"bc", toAnchor:"tc", endArrow:true, lineColor:"#007873", lineStyle:"solid"
+  });
+  E(approval, checklist, "link", "Triggers", null, null, {
     fromAnchor:"bc", toAnchor:"tc", routing:"ortho", endArrow:true,
     lineColor:"#007873", lineWidth:2.5, lineStyle:"dot",
     labelTextColor:"#FFFFFF", labelBackgroundColor:"#C20029"
@@ -134,6 +139,15 @@ window.__T = {
   setTextBoxShape,
   textBoxLayout,
   textBoxFont,
+  statusNodeLayout,
+  statusNodeFont,
+  statusOptions,
+  addCustomStatus,
+  cleanStatusLabel,
+  normalizeNodeStatus,
+  statusColor,
+  get customStatuses(){ return customStatuses.slice(); },
+  get STATUS_BUILTINS(){ return STATUS_BUILTINS.map(([name, color]) => ({name, color})); },
   wrapConceptTitle,
   conceptWrappedLayout,
   conceptContainsPoint,
@@ -220,6 +234,7 @@ window.__T = {
   pushRecentColor,
   mergeRecentColors,
   recordRecentColor,
+  clearRecentColors,
   get recentColors(){ return recentColors; },
   normalizeColorScheme,
   applyColorScheme,
