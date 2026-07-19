@@ -3,7 +3,11 @@
 /* ---------------------------- Render ------------------------------ */
 function el(tag, attrs, parent){
   const e = document.createElementNS(SVGNS, tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  for (const k in attrs){
+    const value = (k === "fill" || k === "stroke") && /^#[0-9a-fA-F]{8}$/.test(String(attrs[k]))
+      ? normalizeHex(attrs[k]) : attrs[k];
+    e.setAttribute(k, value);
+  }
   if (parent) parent.appendChild(e);
   return e;
 }
