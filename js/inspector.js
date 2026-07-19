@@ -221,7 +221,7 @@ function setInspectorHeader(kind, name, opts = {}){
     else if (opts.kind === "node"){
       const mark = document.createElement("span");
       mark.className = "inspector-object-mark";
-      mark.style.background = opts.color || "transparent";
+      mark.style.background = normalizeHex(opts.color) || opts.color || "transparent";
       row.appendChild(mark);
     }
     const title = document.createElement("span");
@@ -1129,11 +1129,15 @@ const colorPickerDisclosureState = new Map();
 let colorPickerSequence = 0;
 
 function colorDisplayName(hex){
-  const normalized = normalizeHex(hex);
+  const normalized = colorBaseHex(hex);
   return normalized ? COLOR_NAMES.get(normalized) || "Custom color" : "No color";
 }
 function colorDisplayHex(hex){
-  return (normalizeHex(hex) || "#000000").toUpperCase();
+  return (colorBaseHex(hex) || "#000000").toUpperCase();
+}
+function colorTransparencyText(color){
+  const transparency = colorTransparency(color);
+  return transparency ? `${transparency}% transparent` : "Opaque";
 }
 function colorCheckIcon(){
   const svg = document.createElementNS(SVGNS, "svg");
@@ -1154,11 +1158,11 @@ function uniqueColors(colors){
   const result = [];
   const seen = new Set();
   for (const color of colors || []){
-    const normalized = normalizeHex(color);
+    const normalized = normalizeColorValue(color);
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     const original = typeof color === "string" ? color.trim() : "";
-    result.push(/^#[0-9a-fA-F]{6}$/.test(original) ? original : normalized);
+    result.push(/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(original) ? original : normalized);
   }
   return result;
 }
@@ -1167,24 +1171,58 @@ function documentColors(exclude = []){
   const candidates = [];
   for (const n of state.nodes || []){
     for (const key of ["color", "fontColor", "titleColor"]){
-      const color = normalizeHex(n && n[key]);
+      const color = normalizeColorValue(n && n[key]);
       if (color) candidates.push(color);
     }
   }
   for (const e of state.edges || []){
     for (const key of ["lineColor", "labelTextColor", "labelBackgroundColor"]){
-      const color = normalizeHex(e && e[key]);
+      const color = normalizeColorValue(e && e[key]);
       if (color) candidates.push(color);
     }
   }
   return uniqueColors(candidates).filter(color => !blocked.has(color.toLowerCase())).slice(0, 12);
 }
-/* accept "#abc", "abc", "#aabbcc", "AABBCC" → "#aabbcc"; else null */
-function normalizeHex(raw){
+/* Colors are stored as #rrggbb or #rrggbbaa. The alpha byte preserves the
+   user's transparency setting, while every canvas color is composited over
+   white before rendering so SVG/PNG output remains fully opaque. */
+function parseColorValue(raw){
+  if (typeof raw !== "string") return null;
   let s = (raw || "").trim().replace(/^#/, "");
   if (/^[0-9a-fA-F]{3}$/.test(s)) s = s.split("").map(c => c + c).join("");
-  if (/^[0-9a-fA-F]{6}$/.test(s)) return "#" + s.toLowerCase();
-  return null;
+  if (!/^[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(s)) return null;
+  s = s.toLowerCase();
+  return { base:"#" + s.slice(0, 6), alphaByte:s.length === 8 ? parseInt(s.slice(6), 16) : 255 };
+}
+function normalizeColorValue(raw){
+  const parsed = parseColorValue(raw);
+  if (!parsed) return null;
+  return parsed.base + (parsed.alphaByte === 255 ? "" : parsed.alphaByte.toString(16).padStart(2, "0"));
+}
+function colorBaseHex(raw){
+  const parsed = parseColorValue(raw);
+  return parsed ? parsed.base : null;
+}
+function colorTransparency(raw){
+  const parsed = parseColorValue(raw);
+  return parsed ? Math.round((255 - parsed.alphaByte) * 100 / 255) : 0;
+}
+function composeColorValue(base, transparency = 0){
+  const hex = colorBaseHex(base);
+  if (!hex) return null;
+  const amount = Math.min(100, Math.max(0, Math.round(Number(transparency) || 0)));
+  const alphaByte = Math.round((100 - amount) * 255 / 100);
+  return hex + (alphaByte === 255 ? "" : alphaByte.toString(16).padStart(2, "0"));
+}
+function normalizeHex(raw){
+  const parsed = parseColorValue(raw);
+  if (!parsed) return null;
+  const alpha = parsed.alphaByte / 255;
+  const channels = [1, 3, 5].map(index => {
+    const value = parseInt(parsed.base.slice(index, index + 2), 16);
+    return Math.round(value * alpha + 255 * (1 - alpha)).toString(16).padStart(2, "0");
+  });
+  return "#" + channels.join("");
 }
 
 /* native color well + validated hex field.
@@ -1193,13 +1231,15 @@ function normalizeHex(raw){
 function customColorRow(current, apply, opts = {}){
   const group = document.createElement("div");
   group.className = "color-custom";
+  let base = colorBaseHex(current) || "#000000";
+  let transparency = colorTransparency(current);
   const row = document.createElement("div");
   row.className = "hexrow";
 
   const well = document.createElement("input");
   well.type = "color";
   well.className = "colorwell";
-  well.value = normalizeHex(current) || "#000000";
+  well.value = base;
   well.title = "Pick a color";
   well.setAttribute("aria-label", "Open the native color picker");
 
@@ -1214,7 +1254,7 @@ function customColorRow(current, apply, opts = {}){
   txt.maxLength = 7;
   txt.placeholder = "aabbcc";
   txt.setAttribute("aria-label", "Hex color code");
-  txt.value = (normalizeHex(current) || "").replace(/^#/, "");
+  txt.value = base.replace(/^#/, "");
   const error = document.createElement("span");
   error.className = "color-error";
   error.id = `color-error-${Math.random().toString(36).slice(2)}`;
@@ -1233,25 +1273,62 @@ function customColorRow(current, apply, opts = {}){
   };
   const syncText = hex => { txt.value = hex.replace(/^#/, ""); showValid(); };
 
+  const transparencyControl = document.createElement("div");
+  transparencyControl.className = "color-transparency";
+  const transparencyHead = document.createElement("div");
+  transparencyHead.className = "color-transparency-head";
+  const transparencyLabel = document.createElement("label");
+  const transparencyId = `color-transparency-${Math.random().toString(36).slice(2)}`;
+  transparencyLabel.htmlFor = transparencyId;
+  transparencyLabel.textContent = "Transparency";
+  const transparencyOutput = document.createElement("output");
+  transparencyOutput.htmlFor = transparencyId;
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.id = transparencyId;
+  slider.className = "color-transparency-slider";
+  slider.min = "0";
+  slider.max = "100";
+  slider.step = "1";
+  slider.value = String(transparency);
+  slider.setAttribute("aria-label", "Color transparency");
+  transparencyHead.append(transparencyLabel, transparencyOutput);
+  transparencyControl.append(transparencyHead, slider);
+  const syncTransparency = () => {
+    transparencyOutput.value = `${transparency}%`;
+    transparencyOutput.textContent = `${transparency}%`;
+    slider.setAttribute("aria-valuetext", colorTransparencyText(composeColorValue(base, transparency)));
+    slider.style.setProperty("--transparency-color", base);
+  };
+  const applyComposed = (commit, remember = false) => {
+    const color = composeColorValue(base, transparency);
+    syncTransparency();
+    if (remember) recordRecentColor(color);
+    apply(color, commit);
+    return color;
+  };
+  syncTransparency();
+
   well.addEventListener("input", () => {
-    syncText(well.value);
-    apply(well.value, false);
+    base = colorBaseHex(well.value) || base;
+    syncText(base);
+    applyComposed(false);
   });
   well.addEventListener("change", () => {
-    syncText(well.value);
-    recordRecentColor(well.value);
-    apply(well.value, true);
+    base = colorBaseHex(well.value) || base;
+    syncText(base);
+    applyComposed(true, true);
     if (opts.onCommit) opts.onCommit();
   });
 
   txt.addEventListener("input", () => {
-    const n = normalizeHex(txt.value);
+    const n = colorBaseHex(txt.value);
     showValid();
-    if (n){ well.value = n; apply(n, false); }   // live once valid
+    if (n){ base = n; well.value = base; applyComposed(false); }   // live once valid
   });
   const commit = () => {
-    const n = normalizeHex(txt.value);
-    if (n){ showValid(); well.value = n; syncText(n); recordRecentColor(n); apply(n, true); return true; }
+    const n = colorBaseHex(txt.value);
+    if (n){ base = n; showValid(); well.value = base; syncText(base); applyComposed(true, true); return true; }
     if (txt.value.trim() !== ""){ showInvalid(); return false; }
     return true;
   };
@@ -1267,12 +1344,23 @@ function customColorRow(current, apply, opts = {}){
   copy.textContent = "Copy";
   copy.setAttribute("aria-label", "Copy hex color");
   copy.addEventListener("click", () => {
-    const color = normalizeHex(txt.value) || normalizeHex(current);
+    const color = colorBaseHex(txt.value) || base;
     if (!color) return;
     if (navigator.clipboard && navigator.clipboard.writeText)
       navigator.clipboard.writeText(color.toUpperCase()).catch(() => {});
     announce(`${color.toUpperCase()} copied`);
   });
+
+  slider.addEventListener("input", () => {
+    transparency = Number(slider.value);
+    applyComposed(false);
+  });
+  slider.addEventListener("change", () => {
+    transparency = Number(slider.value);
+    applyComposed(true, true);
+    if (opts.onCommit) opts.onCommit();
+  });
+  slider.addEventListener("pointerdown", ev => ev.stopPropagation());
 
   row.append(well, hash, txt, copy);
   if (typeof window.EyeDropper === "function"){
@@ -1283,17 +1371,17 @@ function customColorRow(current, apply, opts = {}){
     eyedropper.addEventListener("click", async () => {
       try {
         const result = await new window.EyeDropper().open();
-        const color = normalizeHex(result && result.sRGBHex);
+        const color = colorBaseHex(result && result.sRGBHex);
         if (!color) return;
-        well.value = color;
-        syncText(color);
-        recordRecentColor(color);
-        apply(color, true);
+        base = color;
+        well.value = base;
+        syncText(base);
+        applyComposed(true, true);
         if (opts.onCommit) opts.onCommit();
       } catch {}
     });
-    group.append(row, eyedropper, error);
-  } else group.append(row, error);
+    group.append(row, transparencyControl, eyedropper, error);
+  } else group.append(row, transparencyControl, error);
   return group;
 }
 
@@ -1333,16 +1421,19 @@ function swatchRow(colors, current, apply, className, onPick){
   const d = document.createElement("div");
   d.className = className;
   for (const c of uniqueColors(colors)){
-    const normalized = normalizeHex(c);
+    const normalized = normalizeColorValue(c);
+    const visible = normalizeHex(normalized);
+    const selected = normalized === normalizeColorValue(current);
     const b = document.createElement("button");
-    b.className = "swatch" + (normalized === normalizeHex(current) ? " on" : "");
-    b.style.background = c;
-    b.title = c;
+    b.className = "swatch" + (selected ? " on" : "");
+    b.style.background = visible;
+    b.title = colorTransparency(normalized)
+      ? `${c} · ${colorTransparencyText(normalized)}` : c;
     b.type = "button";
     b.setAttribute("data-color", normalized);
-    b.setAttribute("aria-label", `${colorDisplayName(c)}, ${colorDisplayHex(c)}`);
-    b.setAttribute("aria-pressed", String(normalized === normalizeHex(current)));
-    if (relativeLuminance(c) > .72) b.classList.add("light");
+    b.setAttribute("aria-label", `${colorDisplayName(normalized)}, ${colorDisplayHex(normalized)}, ${colorTransparencyText(normalized)}`);
+    b.setAttribute("aria-pressed", String(selected));
+    if (relativeLuminance(visible) > .72) b.classList.add("light");
     b.appendChild(colorCheckIcon());
     b.addEventListener("click", () => { apply(c, true); if (onPick) onPick(); });
     d.appendChild(b);
@@ -1369,17 +1460,19 @@ function colorPickerSection(label, colors, current, apply, className, opts = {})
   return section;
 }
 function updateColorPickerCurrent(picker, color){
-  const normalized = normalizeHex(color) || "#000000";
+  const normalized = normalizeColorValue(color) || "#000000";
   picker.setAttribute("data-current-color", normalized);
   const preview = picker.querySelector(".color-current-preview");
   const name = picker.querySelector(".color-current-name");
   const hex = picker.querySelector(".color-current-hex");
-  if (preview) preview.style.background = normalized;
+  const transparency = picker.querySelector(".color-current-transparency");
+  if (preview) preview.style.background = normalizeHex(normalized);
   if (name) name.textContent = colorDisplayName(normalized);
   if (hex) hex.textContent = colorDisplayHex(normalized);
+  if (transparency) transparency.textContent = colorTransparencyText(normalized);
   const summary = picker.querySelector(".color-picker-summary");
   if (summary) summary.setAttribute("aria-label",
-    `Current color: ${colorDisplayName(normalized)}, ${colorDisplayHex(normalized)}. Choose a color.`);
+    `Current color: ${colorDisplayName(normalized)}, ${colorDisplayHex(normalized)}, ${colorTransparencyText(normalized)}. Choose a color.`);
   for (const swatch of picker.querySelectorAll(".swatch")){
     const selected = swatch.getAttribute("data-color") === normalized;
     swatch.classList.toggle("on", selected);
@@ -1388,7 +1481,7 @@ function updateColorPickerCurrent(picker, color){
 }
 function swatches(colors, current, apply, opts = {}){
   const palette = uniqueColors(colors);
-  const currentColor = normalizeHex(current) || palette[0] || "#000000";
+  let currentColor = normalizeColorValue(current) || normalizeColorValue(palette[0]) || "#000000";
   const selectionKey = sel ? `${sel.kind}:${selectionIds().join(",")}` : "none";
   const key = opts.key || `color:${selectionKey}:${colorPickerSequence++}`;
   const picker = document.createElement("div");
@@ -1403,10 +1496,10 @@ function swatches(colors, current, apply, opts = {}){
   summary.type = "button";
   summary.className = "color-picker-summary";
   summary.setAttribute("aria-expanded", String(pickerOpen));
-  summary.setAttribute("aria-label", `Current color: ${colorDisplayName(currentColor)}, ${colorDisplayHex(currentColor)}. Choose a color.`);
+  summary.setAttribute("aria-label", `Current color: ${colorDisplayName(currentColor)}, ${colorDisplayHex(currentColor)}, ${colorTransparencyText(currentColor)}. Choose a color.`);
   const preview = document.createElement("span");
   preview.className = "color-current-preview";
-  preview.style.background = currentColor;
+  preview.style.background = normalizeHex(currentColor);
   const copy = document.createElement("span");
   copy.className = "color-current-copy";
   const name = document.createElement("strong");
@@ -1415,7 +1508,10 @@ function swatches(colors, current, apply, opts = {}){
   const hex = document.createElement("span");
   hex.className = "color-current-hex";
   hex.textContent = colorDisplayHex(currentColor);
-  copy.append(name, hex);
+  const transparency = document.createElement("span");
+  transparency.className = "color-current-transparency";
+  transparency.textContent = colorTransparencyText(currentColor);
+  copy.append(name, hex, transparency);
   summary.append(preview, copy, disclosureChevron());
 
   const panel = document.createElement("div");
@@ -1423,10 +1519,17 @@ function swatches(colors, current, apply, opts = {}){
   panel.hidden = !pickerOpen;
   const rowClass = `swatches${opts.context ? " swrow" : ""}`;
   const select = (color, commit) => {
-    updateColorPickerCurrent(picker, color);
+    const normalized = normalizeColorValue(color);
+    if (!normalized) return;
+    currentColor = normalized;
+    updateColorPickerCurrent(picker, currentColor);
     apply(color, commit);
   };
-  panel.appendChild(colorPickerSection("Palette", palette, currentColor, select, rowClass));
+  const selectPalette = (color, commit) => {
+    const transparency = colorTransparency(currentColor);
+    select(transparency ? composeColorValue(color, transparency) : color, commit);
+  };
+  panel.appendChild(colorPickerSection("Palette", palette, currentColor, selectPalette, rowClass));
   if (recentColors.length){
     const clearRecent = () => {
       if (!clearRecentColors()) return;

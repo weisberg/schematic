@@ -93,7 +93,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.21.0";
+const APP_VERSION = "v1.22.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -245,21 +245,22 @@ function setSwimlaneOrientation(n, orientation){
 }
 function normalizeColorScheme(raw){
   if (!raw || typeof raw !== "object") return null;
-  const hex = c => typeof c === "string" ? normalizeHex(c) : null;  // document JSON is untrusted
+  const color = c => typeof c === "string" ? normalizeColorValue(c) : null;
+  const opaque = c => typeof c === "string" ? normalizeHex(c) : null;  // document JSON is untrusted
   const out = {};
   if (typeof raw.name === "string" && raw.name.trim()) out.name = raw.name.trim().slice(0, 60);
   for (const key of ["concept","table","font"]){
     if (!Array.isArray(raw[key])) continue;
     const colors = [];
     for (const c of raw[key]){
-      const n = hex(c);
+      const n = color(c);
       if (n && !colors.includes(n)) colors.push(n);
       if (colors.length >= SCHEME_PALETTE_MAX) break;
     }
     if (colors.length) out[key] = colors;
   }
   for (const key of ["frame","todo"]){
-    const n = hex(raw[key]);
+    const n = color(raw[key]);
     if (n) out[key] = n;
   }
   if (raw.theme && typeof raw.theme === "object"){
@@ -269,7 +270,7 @@ function normalizeColorScheme(raw){
       if (!src || typeof src !== "object") continue;
       const dst = {};
       for (const k of Object.keys(THEME.light)){
-        const n = hex(src[k]);
+        const n = opaque(src[k]);
         if (n) dst[k] = n;
       }
       if (Object.keys(dst).length) theme[mode] = dst;
@@ -367,7 +368,7 @@ function computePresetColorSet(){
 }
 let presetColorSet = computePresetColorSet();
 function pushRecentColor(list, hex){
-  const n = normalizeHex(hex);
+  const n = normalizeColorValue(hex);
   if (!n || presetColorSet.has(n)) return list;
   return [n, ...list.filter(c => c !== n)].slice(0, RECENT_COLORS_MAX);
 }
@@ -375,7 +376,7 @@ function pushRecentColor(list, hex){
 function mergeRecentColors(docList, storedList){
   const merged = [];
   for (const c of [...(docList || []), ...(storedList || [])]){
-    const n = normalizeHex(c);
+    const n = normalizeColorValue(c);
     if (!n || presetColorSet.has(n) || merged.includes(n)) continue;
     merged.push(n);
     if (merged.length >= RECENT_COLORS_MAX) break;
@@ -706,10 +707,10 @@ function cleanEdgeForDocument(e){
   }
   if (out.startArrow !== true) delete out.startArrow;
   if (out.endArrow !== true) delete out.endArrow;
-  const lineColor = normalizeHex(out.lineColor);
+  const lineColor = normalizeColorValue(out.lineColor);
   if (lineColor) out.lineColor = lineColor; else delete out.lineColor;
   for (const key of ["labelTextColor", "labelBackgroundColor"]){
-    const color = normalizeHex(out[key]);
+    const color = normalizeColorValue(out[key]);
     if (color) out[key] = color; else delete out[key];
   }
   const lineWidth = edgeLineWidth(out);
@@ -734,12 +735,12 @@ function cleanNodeForDocument(n){
   }
   if (out.type === "swimlane"){
     out.orientation = swimlaneOrientation(out);
-    out.color = normalizeHex(out.color) || SWIMLANE_DEFAULT.bodyColor;
-    out.titleColor = normalizeHex(out.titleColor) || SWIMLANE_DEFAULT.titleColor;
+    out.color = normalizeColorValue(out.color) || SWIMLANE_DEFAULT.bodyColor;
+    out.titleColor = normalizeColorValue(out.titleColor) || SWIMLANE_DEFAULT.titleColor;
   }
   if (out.type === "frame"){
     out.title = typeof out.title === "string" && out.title.trim() ? out.title : "Subject area";
-    out.color = normalizeHex(out.color) || frameColorDefault();
+    out.color = normalizeColorValue(out.color) || frameColorDefault();
     out.w = clampSize(Number(out.w) || FRAME_DEFAULT.w, 120, 4000);
     out.h = clampSize(Number(out.h) || FRAME_DEFAULT.h, 90, 4000);
     if (out.collapsed !== true) delete out.collapsed;
@@ -747,8 +748,8 @@ function cleanNodeForDocument(n){
   if (out.type === "text"){
     const shape = textBoxShape(out);
     if (shape === "none") delete out.shape; else out.shape = shape;
-    out.color = normalizeHex(out.color) || CONCEPT_COLORS[1];
-    const fontColor = normalizeHex(out.fontColor);
+    out.color = normalizeColorValue(out.color) || CONCEPT_COLORS[1];
+    const fontColor = normalizeColorValue(out.fontColor);
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
     out.fontSize = textBoxFont(out);
     out.w = out.manualWidth === true
@@ -757,8 +758,8 @@ function cleanNodeForDocument(n){
   }
   if (out.type === "status"){
     normalizeNodeStatus(out);
-    out.color = normalizeHex(out.color) || CONCEPT_COLORS[1];
-    const fontColor = normalizeHex(out.fontColor);
+    out.color = normalizeColorValue(out.color) || CONCEPT_COLORS[1];
+    const fontColor = normalizeColorValue(out.fontColor);
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
     out.fontSize = statusNodeFont(out);
     out.w = out.manualWidth === true
@@ -828,23 +829,23 @@ function applyDocument(d, opts = {}){
       n.orientation = swimlaneOrientation(n);
       const defaults = swimlaneDefaults(n);
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Lane";
-      n.color = normalizeHex(n.color) || SWIMLANE_DEFAULT.bodyColor;
-      n.titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
+      n.color = normalizeColorValue(n.color) || SWIMLANE_DEFAULT.bodyColor;
+      n.titleColor = normalizeColorValue(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
       n.w = n.manualWidth === true
         ? clampSize(n.w, 80, 4000)
         : clampSize(Number(n.w) || defaults.w, n.orientation === "vertical" ? 120 : 260, 4000);
       n.h = clampSize(Number(n.h) || defaults.h, n.orientation === "vertical" ? 260 : 100, 4000);
     } else if (n.type === "frame"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Subject area";
-      n.color = normalizeHex(n.color) || frameColorDefault();
+      n.color = normalizeColorValue(n.color) || frameColorDefault();
       n.w = clampSize(Number(n.w) || FRAME_DEFAULT.w, 120, 4000);
       n.h = clampSize(Number(n.h) || FRAME_DEFAULT.h, 90, 4000);
       if (n.collapsed !== true) delete n.collapsed;
     } else if (n.type === "text"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Text";
       setTextBoxShape(n, n.shape);
-      n.color = normalizeHex(n.color) || CONCEPT_COLORS[1];
-      const fontColor = normalizeHex(n.fontColor);
+      n.color = normalizeColorValue(n.color) || CONCEPT_COLORS[1];
+      const fontColor = normalizeColorValue(n.fontColor);
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
       n.fontSize = textBoxFont(n);
       n.w = n.manualWidth === true
@@ -853,8 +854,8 @@ function applyDocument(d, opts = {}){
     } else if (n.type === "status"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Status item";
       normalizeNodeStatus(n);
-      n.color = normalizeHex(n.color) || CONCEPT_COLORS[1];
-      const fontColor = normalizeHex(n.fontColor);
+      n.color = normalizeColorValue(n.color) || CONCEPT_COLORS[1];
+      const fontColor = normalizeColorValue(n.fontColor);
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
       n.fontSize = statusNodeFont(n);
       n.w = n.manualWidth === true
@@ -869,7 +870,7 @@ function applyDocument(d, opts = {}){
       else delete e[key];
     }
     for (const key of ["lineColor", "labelTextColor", "labelBackgroundColor"]){
-      const color = normalizeHex(e[key]);
+      const color = normalizeColorValue(e[key]);
       if (color) e[key] = color; else delete e[key];
     }
   }

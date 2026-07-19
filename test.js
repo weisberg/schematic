@@ -589,6 +589,120 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(T.undoDepth, before + 1, "a color choice creates exactly one undo step");
   }
 
+  /* SCH-096 — transparent palette values with opaque white compositing */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    assert.strictEqual(T.normalizeColorValue("#00787380"), "#00787380",
+      "8-digit colors preserve their editable alpha byte");
+    assert.strictEqual(T.colorBaseHex("#00787380"), "#007873",
+      "the editable hex remains separate from transparency");
+    assert.strictEqual(T.colorTransparency("#00787380"), 50,
+      "the alpha byte maps back to the transparency percentage");
+    assert.strictEqual(T.composeColorValue("#007873", 50), "#00787380",
+      "base hex and transparency compose into a saved color value");
+    assert.strictEqual(T.normalizeHex("#00787380"), "#7fbbb9",
+      "transparent colors are composited over white for display");
+    assert.strictEqual(T.normalizeHex("#00787300"), "#ffffff",
+      "fully transparent colors display as opaque white");
+    assert.strictEqual(T.normalizeHex("#007873"), "#007873",
+      "legacy six-digit colors remain unchanged");
+
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    const picker = doc.querySelector("#inspector .color-picker");
+    picker.querySelector(".color-picker-summary").click();
+    const slider = picker.querySelector('[aria-label="Color transparency"]');
+    assert(slider, "the shared inspector color picker includes a transparency slider");
+    assert.strictEqual(slider.value, "0", "existing colors start opaque");
+    const before = T.undoDepth;
+    slider.value = "50";
+    slider.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(concept.color, "#ffe9a880",
+      "live slider changes retain the base hex and store transparency");
+    assert.strictEqual(picker.querySelector(".color-current-hex").textContent, "#FFE9A8",
+      "the picker summary continues to show the base six-digit hex");
+    assert.strictEqual(picker.querySelector(".color-current-transparency").textContent, "50% transparent",
+      "the picker summary exposes the current transparency");
+    assert.strictEqual(picker.querySelector(".color-transparency output").textContent, "50%",
+      "the slider has a visible percentage readout");
+    const visible = T.normalizeHex(concept.color);
+    const shape = doc.querySelector(`[data-node="${concept.id}"] [data-node-shape]`);
+    assert.strictEqual(shape.getAttribute("fill"), visible,
+      "the canvas shape receives the opaque white-composited color");
+    assert(/^#[0-9a-f]{6}$/i.test(shape.getAttribute("fill")),
+      "the rendered canvas color is a six-digit opaque hex");
+    slider.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(T.undoDepth, before + 1, "a transparency gesture creates exactly one undo step");
+    assert(T.recentColors.includes("#ffe9a880"), "settled transparent colors join the recent palette");
+
+    const saved = T.serializeDocument();
+    const savedNode = JSON.parse(saved).nodes.find(n => n.id === concept.id);
+    assert.strictEqual(savedNode.color, "#ffe9a880", "documents preserve the editable transparent color");
+    const svg = T.serializedSvg(true);
+    assert(svg.includes(`fill="${visible}"`), "SVG export contains the white-composited fill");
+    assert(!svg.includes("#ffe9a880"), "SVG export never leaks an alpha color into the canvas representation");
+    T.importDocText(saved);
+    const imported = T.state.nodes.find(n => n.id === concept.id);
+    assert.strictEqual(imported.color, "#ffe9a880", "transparent colors survive save and reload");
+    assert.strictEqual(doc.querySelector(`[data-node="${concept.id}"] [data-node-shape]`).getAttribute("fill"), visible,
+      "reloaded transparent colors still render as the same opaque composite");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    T.selectNode(concept.id);
+    let picker = doc.querySelector("#inspector .color-picker");
+    picker.querySelector(".color-picker-summary").click();
+    let slider = picker.querySelector('[aria-label="Color transparency"]');
+    slider.value = "40";
+    slider.dispatchEvent(new window.Event("input", {bubbles:true}));
+    const hex = picker.querySelector(".hexinput");
+    hex.value = "007873";
+    hex.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(concept.color, T.composeColorValue("#007873", 40),
+      "editing the base hex preserves the active transparency");
+    hex.dispatchEvent(new window.Event("blur"));
+    picker = doc.querySelector("#inspector .color-picker");
+    picker.querySelector('.swatch[title="#CFE8FF"]').click();
+    assert.strictEqual(concept.color, T.composeColorValue("#CFE8FF", 40),
+      "choosing a palette hue preserves the active transparency");
+
+    T.nodeMenu(concept, 10, 10);
+    assert(doc.querySelector('#ctxMenu [aria-label="Color transparency"]'),
+      "right-click color pickers expose the same transparency control");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const edge = T.state.edges.find(e => e.label);
+    const lane = T.state.nodes.find(n => n.type === "swimlane");
+    edge.lineColor = "#00787380";
+    edge.labelTextColor = "#c2002980";
+    edge.labelBackgroundColor = "#ffe9a880";
+    lane.color = "#00787380";
+    lane.titleColor = "#c2002980";
+    T.render();
+    assert.strictEqual(doc.querySelector(`[data-edge="${edge.id}"] [data-edge-line]`).getAttribute("stroke"),
+      T.normalizeHex(edge.lineColor), "link strokes are opaque composites");
+    assert.strictEqual(doc.querySelector(`[data-edge="${edge.id}"] [data-edge-label]`).getAttribute("fill"),
+      T.normalizeHex(edge.labelTextColor), "link label text is an opaque composite");
+    assert.strictEqual(doc.querySelector(`[data-edge="${edge.id}"] [data-edge-label-bg]`).getAttribute("fill"),
+      T.normalizeHex(edge.labelBackgroundColor), "link label backgrounds are opaque composites");
+    assert.strictEqual(doc.querySelector(`[data-swimlane="${lane.id}"] [data-swimlane-body]`).getAttribute("fill"),
+      T.normalizeHex(lane.color), "swimlane bodies are opaque composites");
+    assert.strictEqual(doc.querySelector(`[data-swimlane="${lane.id}"] [data-swimlane-title-band]`).getAttribute("fill"),
+      T.normalizeHex(lane.titleColor), "swimlane title bands are opaque composites");
+    const saved = JSON.parse(T.serializeDocument());
+    assert.strictEqual(saved.edges.find(e => e.id === edge.id).lineColor, "#00787380",
+      "link transparency remains editable in saved documents");
+    assert.strictEqual(saved.nodes.find(n => n.id === lane.id).titleColor, "#c2002980",
+      "structural-node transparency remains editable in saved documents");
+  }
+
   /* SCH-010 — multi-select, marquee, group drag */
   {
     const { window } = makeDom();

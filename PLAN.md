@@ -1522,6 +1522,21 @@ materially more content without scrolling; automated and browser QA pass.
 
 ---
 
+**SCH-096 · Transparent palette colors with opaque canvas compositing · P1 · M · Done 2026-07-19**
+
+Add a transparency control to the shared color picker without introducing translucent SVG output.
+Preserve the user's base six-digit hex and transparency setting in document color values, then composite
+that color over white before drawing it on the canvas or exporting it.
+
+AC: every inspector and right-click color picker includes a 0–100% transparency slider; changing the hex
+preserves transparency and changing a palette hue preserves the current transparency; summaries and recent
+colors expose the base hex plus transparency; nodes, text, frames, swimlanes, links, and link labels store and
+round-trip the editable color; canvas, minimap, SVG, and PNG representations use an opaque six-digit color
+equal to the white-composited result; legacy six-digit colors remain opaque and unchanged; accessible labels,
+one-step undo, direct `file://` operation, automated tests, and browser interaction/visual QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.
