@@ -308,6 +308,9 @@
                  color:var(--ink);background:var(--panel);border:2px solid var(--accent);
                  border-radius:6px;padding:4px 8px;box-shadow:0 8px 24px rgba(10,20,30,.18)}
   .inline-editor.multiline{min-height:32px;resize:none;overflow:hidden;line-height:1.25;white-space:pre-wrap}
+  .inline-status-picker{position:absolute;z-index:13;font-family:var(--ui);font-weight:700;
+                        color:var(--ink);background:var(--panel);border:2px solid var(--accent);
+                        border-radius:7px;padding:4px 30px 4px 9px;box-shadow:0 8px 24px rgba(10,20,30,.2)}
 
   /* ---------- Status bar ---------- */
   footer{display:flex;align-items:center;gap:16px;padding:6px 16px;background:var(--panel);

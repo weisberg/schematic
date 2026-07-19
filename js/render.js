@@ -33,6 +33,7 @@ function buildScaffold(){
 }
 function applyView(){
   if (inlineEditor) closeInlineEditor(false);
+  if (inlineStatusPicker) closeInlineStatusPicker();
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
   renderMinimap();
@@ -40,6 +41,7 @@ function applyView(){
 
 function render(){
   renderStats.full++;
+  if (inlineStatusPicker) closeInlineStatusPicker();
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
@@ -613,6 +615,8 @@ function drawStructuralNode(n){
 function drawStandardShape(g, shape, r, attrs, dataAttr = "data-node-shape"){
   const common = { ...attrs, [dataAttr]:shape, "stroke-linejoin":"round" };
   if (shape === "process") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
+  if (shape === "rectangle")
+    return el("rect", {width:r.w, height:r.h, ...common, rx:0, "stroke-linejoin":"miter"}, g);
   if (shape === "square") return el("rect", {width:r.w, height:r.h, rx:4, ...common}, g);
   if (shape === "circle") return el("ellipse", {cx:r.w/2, cy:r.h/2, rx:r.w/2, ry:r.h/2, ...common}, g);
   if (shape === "triangle")
@@ -711,6 +715,11 @@ function drawStatusNode(g, n, r, selected, t){
                               "data-status-label-line":i+1}, status);
     span.textContent = line;
   });
+  /* The painted band and text ignore pointer events so they never interfere with
+     dragging. A transparent surface restores a precise hit target for the
+     band-specific double-click action; node drag and anchors still work normally. */
+  el("rect", {x:bandX, y:0, width:layout.bandW, height:r.h, fill:"transparent",
+              cursor:"pointer", "data-status-band-hit":"1"}, g);
 }
 function drawRichNote(g, n, r, selected, t){
   const layout = richNoteLayout(n);

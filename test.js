@@ -5,7 +5,8 @@ const { JSDOM } = require("jsdom");
 
 const ROOT = __dirname;
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-const scriptSources = [...html.matchAll(/<script\s+src="([^"]+\.js)"/g)].map(match => match[1]);
+const scriptUrls = [...html.matchAll(/<script\s+src="([^"]+\.js(?:\?[^\"]*)?)"/g)].map(match => match[1]);
+const scriptSources = scriptUrls.map(src => src.split("?")[0]);
 const script = scriptSources.map(src => fs.readFileSync(path.join(ROOT, src), "utf8")).join("\n;\n");
 const styles = fs.readFileSync(path.join(ROOT, "styles.css"), "utf8");
 
@@ -145,6 +146,9 @@ if (process.argv.includes("--api-surface")){
     "js/core.js", "js/geometry.js", "js/render.js", "js/model.js", "js/interactions.js",
     "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
+  const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
+  assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
+    "styles and every runtime script use one cache-busting release version");
   assert(html.includes("<!-- deployment"), "deployment comment is present");
   assert(html.includes("<noscript>"), "noscript warning is present");
   assert(html.includes(".schematic"), "fallback file input accepts .schematic files");
@@ -3355,6 +3359,64 @@ if (process.argv.includes("--api-surface")){
     assert(editor && editor.value === todo.title, "double-press on the header still edits the title");
     editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
 
+    const status = T.state.nodes.find(n => n.type === "status");
+    T.addCustomStatus("Waiting for review");
+    status.statusSide = "right";
+    T.render();
+    let statusLayout = T.statusNodeLayout(status);
+    const statusRect = T.nodeRect(status);
+    const statusPoint = {
+      clientX:statusRect.x + statusLayout.mainW + statusLayout.bandW/2,
+      clientY:statusRect.y + statusRect.h/2
+    };
+    assert(T.statusBandContainsPoint(status, {x:statusPoint.clientX, y:statusPoint.clientY}),
+      "status-band geometry recognizes a point in the visible right-side indicator");
+    assert(!T.statusBandContainsPoint(status, {x:statusRect.x + statusLayout.mainW/2, y:statusPoint.clientY}),
+      "status-band geometry excludes the node's main text area");
+    status.statusSide = "left";
+    statusLayout = T.statusNodeLayout(status);
+    assert(T.statusBandContainsPoint(status, {x:statusRect.x + statusLayout.bandW/2, y:statusPoint.clientY}),
+      "status-band geometry recognizes a left-side indicator");
+    status.statusSide = "right";
+    statusLayout = T.statusNodeLayout(status);
+    T.render();
+    doublePress(`[data-node="${status.id}"] [data-status-band-hit]`, statusPoint);
+    let statusPicker = window.document.querySelector(".inline-status-picker");
+    assert(statusPicker, "double-press on the status band opens an inline status dropdown");
+    sameList([...statusPicker.options].map(option => option.value),
+      ["Not started", "In progress", "Blocked", "Completed", "Canceled", "Waiting for review"],
+      "the inline dropdown includes every built-in and shared custom status");
+    assert.strictEqual(statusPicker.value, status.status, "the inline dropdown starts at the current status");
+    assert.strictEqual(window.document.activeElement, statusPicker, "the inline dropdown receives focus immediately");
+    assert(!window.document.querySelector(".inline-editor"), "the status band does not open the title editor");
+    const statusDepth = T.undoDepth;
+    statusPicker.value = "Blocked";
+    statusPicker.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(status.status, "Blocked", "choosing an inline status updates the node");
+    assert.strictEqual(T.undoDepth, statusDepth + 1, "an inline status change creates one undo step");
+    assert(!window.document.querySelector(".inline-status-picker"), "the inline dropdown closes after a choice");
+    assert.strictEqual(window.document.querySelector(`[data-node="${status.id}"] [data-status-band]`).getAttribute("fill"),
+      T.statusColor("Blocked"), "the status band redraws with the chosen status color");
+
+    statusLayout = T.statusNodeLayout(status);
+    doublePress(`[data-node="${status.id}"] [data-status-surface]`, {
+      clientX:statusRect.x + statusLayout.mainW/2,
+      clientY:statusRect.y + statusRect.h*.65
+    });
+    editor = window.document.querySelector(".inline-editor");
+    assert(editor && editor.value === status.title,
+      "double-press on the status node body still edits its title");
+    editor.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
+
+    doublePress(`[data-node="${status.id}"] [data-status-surface]`, {
+      clientX:statusRect.x + statusLayout.mainW + statusLayout.bandW/2,
+      clientY:statusRect.y + statusRect.h/2
+    });
+    statusPicker = window.document.querySelector(".inline-status-picker");
+    statusPicker.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Escape", bubbles:true, cancelable:true }));
+    assert(!window.document.querySelector(".inline-status-picker"), "Escape closes the inline status dropdown");
+    assert.strictEqual(status.status, "Blocked", "Escape leaves the current status unchanged");
+
     doublePress(`[data-todonode="${todo.id}"]`, { clientX: 0, clientY: 0 });
     assert(!window.document.querySelector(".inline-editor"), "double-press on a checkbox never opens an editor");
     assert(!todo.items[0].done, "checkbox double-press toggles twice back to unchecked");
@@ -3384,11 +3446,43 @@ if (process.argv.includes("--api-surface")){
     const concept = T.state.nodes.find(n => n.type === "concept");
     assert.strictEqual(T.conceptShape(concept), "process", "legacy concepts default to the Process shape");
     assert.strictEqual(Object.hasOwn(concept, "shape"), false, "default Process stays absent from legacy document data");
+    const defaultSurface = window.document.querySelector(
+      `[data-node="${concept.id}"] [data-node-shape="process"]`);
+    assert.strictEqual(defaultSurface.localName, "rect", "default Process renders as a rectangle");
+    assert.strictEqual(defaultSurface.getAttribute("rx"), "4", "default Process keeps rounded corners");
 
     T.selectNode(concept.id);
     let selector = window.document.querySelector('#inspector select[aria-label="Flowchart shape"]');
     assert(selector, "concept inspector exposes a flowchart-shape selector");
     assert.strictEqual(selector.value, "process", "inspector starts on the Process shape");
+    assert(selector.querySelector('option[value="rectangle"]'),
+      "inspector exposes the sharp-corner Rectangle shape");
+    const startingTitle = concept.title;
+    selector.value = "rectangle";
+    selector.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(concept.shape, "rectangle", "shape selector writes the additive rectangle shape");
+    const rectangleSurface = window.document.querySelector(
+      `[data-node="${concept.id}"] [data-node-shape="rectangle"]`);
+    assert.strictEqual(rectangleSurface.localName, "rect", "Rectangle renders as an SVG rectangle");
+    assert.strictEqual(rectangleSurface.getAttribute("rx"), "0", "Rectangle renders with sharp corners");
+    assert.strictEqual(rectangleSurface.getAttribute("stroke-linejoin"), "miter",
+      "Rectangle keeps sharp outer stroke corners");
+    concept.title = "A long rectangle node title that wraps cleanly across multiple centered lines";
+    T.render();
+    const rectangleLayout = T.conceptWrappedLayout(concept);
+    const rectangleLines = [...window.document.querySelectorAll(
+      `[data-node="${concept.id}"] [data-concept-line]`)];
+    assert(rectangleLayout.lines.length >= 2, "Rectangle wraps a long title over multiple lines");
+    assert.strictEqual(rectangleLines.length, rectangleLayout.lines.length,
+      "Rectangle renders every wrapped title line");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).nodes.find(n => n.id === concept.id).shape,
+      "rectangle", "Rectangle round-trips through document JSON");
+    concept.title = startingTitle;
+    T.setConceptShape(concept, "process");
+    T.render();
+
+    T.selectNode(concept.id);
+    selector = window.document.querySelector('#inspector select[aria-label="Flowchart shape"]');
     selector.value = "decision";
     selector.dispatchEvent(new window.Event("change"));
     assert.strictEqual(concept.shape, "decision", "shape selector writes the additive decision shape");
@@ -3478,10 +3572,11 @@ if (process.argv.includes("--api-surface")){
 
     T.setSelection("node", concept.id);
     T.nodeMenu(concept, 10, 10);
-    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length, 9,
+    assert.strictEqual(window.document.querySelectorAll('#ctxMenu [data-shape-option]').length,
+      T.FLOWCHART_SHAPES.length,
       "concept context menu exposes every standard flowchart shape");
-    window.document.querySelector('#ctxMenu [data-shape-option="terminator"]').click();
-    assert.strictEqual(concept.shape, "terminator", "context-menu shape selection updates the concept");
+    window.document.querySelector('#ctxMenu [data-shape-option="rectangle"]').click();
+    assert.strictEqual(concept.shape, "rectangle", "context-menu Rectangle selection updates the concept");
     assert.strictEqual(window.document.getElementById("ctxMenu").style.display, "none",
       "context menu closes after choosing a shape");
 
