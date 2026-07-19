@@ -256,6 +256,7 @@ board.addEventListener("pointerdown", ev => {
   if (ev.button === 2) return;
   ev.preventDefault();                       // stop native text-selection drags
   closeInlineEditor(false);
+  closeInlineStatusPicker();
   if (window.getSelection) window.getSelection().removeAllRanges();
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   const todoCheckEl = ev.target.closest("[data-todocheck]");
@@ -265,6 +266,7 @@ board.addEventListener("pointerdown", ev => {
   const collapseEl = ev.target.closest("[data-collapse]");
   const resizeEl = ev.target.closest("[data-frame-resize]");
   const edgeBendEl = ev.target.closest("[data-edgebend]");
+  const statusBandHitEl = ev.target.closest("[data-status-band-hit]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
@@ -379,13 +381,17 @@ board.addEventListener("pointerdown", ev => {
     board.classList.remove("panning","connecting");
     if (nodeEl){
       const id = nodeEl.getAttribute("data-node");
+      const clickedNode = nodeById(id);
       setSelection("node", id);
       render();
       /* Rows edit their value, a rich-note body focuses its Markdown editor, and headers edit titles. */
-      const hit = hitTest(clientToWorld(ev.clientX, ev.clientY));
+      const point = clientToWorld(ev.clientX, ev.clientY);
+      const hit = hitTest(point);
       if (hit && hit.node.id === id && hit.field) startInlineEditor("row", id, hit.field.id);
       else if (hit && hit.node.type === "note" &&
-               clientToWorld(ev.clientX, ev.clientY).y > hit.node.y + richNoteLayout(hit.node).titleH) focusNoteInput();
+               point.y > hit.node.y + richNoteLayout(hit.node).titleH) focusNoteInput();
+      else if (clickedNode && (statusBandHitEl || statusBandContainsPoint(clickedNode, point)))
+        startInlineStatusPicker(clickedNode);
       else startInlineEditor("node", id);
     } else if (edgeEl){
       const id = edgeEl.getAttribute("data-edge");
@@ -853,6 +859,62 @@ function inlineEditorRow(id, rowId){
   const n = nodeById(id);
   const rows = n ? nodeRows(n) : null;
   return rows ? rows.find(row => row.id === rowId) || null : null;
+}
+function inlineStatusPickerBox(n){
+  if (!n || n.type !== "status") return null;
+  const r = nodeRect(n);
+  const layout = statusNodeLayout(n);
+  const bandX = layout.side === "left" ? r.x : r.x + layout.mainW;
+  const band = worldToWrap(bandX, r.y);
+  const width = Math.max(150, Math.min(220, layout.bandW * view.k + 64));
+  return {
+    x:band.x + (layout.bandW * view.k - width) / 2,
+    y:band.y + Math.max(2, (r.h * view.k - 34) / 2),
+    w:width,
+    h:34,
+    fontSize:Math.max(11, layout.statusFs * view.k)
+  };
+}
+function closeInlineStatusPicker(){
+  if (!inlineStatusPicker) return;
+  const picker = inlineStatusPicker;
+  inlineStatusPicker = null;
+  document.removeEventListener("pointerdown", picker.outsidePointer, true);
+  if (picker.select.parentNode) picker.select.parentNode.removeChild(picker.select);
+}
+function startInlineStatusPicker(n){
+  closeInlineEditor(false);
+  closeInlineStatusPicker();
+  const box = inlineStatusPickerBox(n);
+  if (!box) return;
+  const select = statusValueSelect(n, {close:closeInlineStatusPicker});
+  select.className = "inline-status-picker";
+  select.setAttribute("aria-label", `Change status for ${n.title || "status node"}`);
+  select.title = "Choose a status";
+  select.style.left = box.x + "px";
+  select.style.top = box.y + "px";
+  select.style.width = box.w + "px";
+  select.style.height = box.h + "px";
+  select.style.fontSize = box.fontSize + "px";
+  select.addEventListener("pointerdown", ev => ev.stopPropagation());
+  select.addEventListener("keydown", ev => {
+    if (ev.key !== "Escape") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeInlineStatusPicker();
+    board.focus();
+  });
+  wrap.appendChild(select);
+  const outsidePointer = ev => {
+    if (!select.contains(ev.target)) closeInlineStatusPicker();
+  };
+  inlineStatusPicker = {nodeId:n.id, select, outsidePointer};
+  document.addEventListener("pointerdown", outsidePointer, true);
+  select.focus();
+  announce(`Choose a status for ${n.title || "status node"}`);
+  if (typeof select.showPicker === "function"){
+    try { select.showPicker(); } catch {}
+  }
 }
 function startInlineEditor(kind, id, rowId){
   closeInlineEditor(false);

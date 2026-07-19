@@ -297,6 +297,14 @@ function statusNodeLayout(n){
           status, statusFs, statusFont, statusLineH, statusLines, statusMaxWidth,
           bandW, mainW, side};
 }
+function statusBandContainsPoint(n, point){
+  if (!n || n.type !== "status" || !point) return false;
+  const r = nodeRect(n);
+  const layout = statusNodeLayout(n);
+  const left = layout.side === "left" ? r.x : r.x + layout.mainW;
+  return point.x >= left && point.x <= left + layout.bandW &&
+         point.y >= r.y && point.y <= r.y + r.h;
+}
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
   const base = clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28);

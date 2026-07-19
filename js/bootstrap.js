@@ -140,6 +140,7 @@ window.__T = {
   textBoxLayout,
   textBoxFont,
   statusNodeLayout,
+  statusBandContainsPoint,
   statusNodeFont,
   statusOptions,
   addCustomStatus,

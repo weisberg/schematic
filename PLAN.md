@@ -113,9 +113,10 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   with the flag, `w` is the exact rendered width (clamped to 80–4000). Text, note, frame, and
   swimlane nodes may also carry `widthBeforeMatch` so Reset size can restore their prior configured
   width; it is absent for content-sized concepts, tables, and to-dos.
-- Concept nodes may include optional `shape` ∈ `process|decision|terminator|data|document|manualInput`.
+- Concept nodes may include optional `shape` ∈ `process|rectangle|decision|terminator|data|document|manualInput|triangle|circle|square`.
   It is presentation-only, applies only to concept nodes, and is absent for the default
-  `process` rectangle so all older documents render unchanged.
+  rounded-corner `process` rectangle so all older documents render unchanged. The explicit
+  `rectangle` value renders the same layout with sharp corners.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
   kinds are table↔table only; edges touching a to-do list, rich note, plain text, or status node
   are always `link`.
@@ -344,8 +345,8 @@ Harness quirks you must respect:
   the inspector and context menus (normalized, deduped, capped at 8, presets excluded);
   stored in the document (`meta.recentColors`, written only when non-empty) and mirrored
   to localStorage when available; document colors win on import merge.
-- Concept nodes support standard flowchart shapes: Process, Decision, Terminator, Data
-  (input/output), Document, and Manual input. The Inspector also applies a shape to a
+- Concept nodes support standard flowchart shapes: Process (the rounded default), Rectangle,
+  Decision, Terminator, Data (input/output), Document, Manual input, Triangle, Circle, and Square. The Inspector also applies a shape to a
   multi-selection of concept nodes, and the concept-node context menu exposes the same
   controls; Decision anchors follow the diamond perimeter.
 - Dark theme: status-bar toggle persisted in `meta.theme`; SVG draw code reads a `THEME`
@@ -870,7 +871,7 @@ most needs.
 
 **SCH-054 · Standard flowchart shapes for concept nodes · P2 · M · Done 2026-07-09**
 
-Add the optional concept-only `shape` key with nine standard symbols: Process, Decision,
+Add the optional concept-only `shape` key with ten standard symbols: Process, Rectangle, Decision,
 Terminator, Data (input/output), Document, Manual input, Triangle, Circle, and Square. Expose it through the
 Inspector and concept-node context menu for individual concept nodes and concept-only
 multi-selections. Keep the default Process shape absent from JSON for backward-compatible
@@ -1186,7 +1187,7 @@ anchors resolve against their actual silhouettes, and hit testing ignores their 
 box corners; Square keeps conventional rectangular geometry.
 
 AC: all three shapes render and round-trip through JSON; inspector/context controls expose all
-nine concept shapes; long titles wrap without clipping; fixed aspect ratios hold; circle and
+ten concept shapes; long titles wrap without clipping; fixed aspect ratios hold; circle and
 triangle anchors and hit targets follow their visible boundaries; automated and browser QA pass.
 
 ---
@@ -1534,6 +1535,33 @@ colors expose the base hex plus transparency; nodes, text, frames, swimlanes, li
 round-trip the editable color; canvas, minimap, SVG, and PNG representations use an opaque six-digit color
 equal to the white-composited result; legacy six-digit colors remain opaque and unchanged; accessible labels,
 one-step undo, direct `file://` operation, automated tests, and browser interaction/visual QA pass.
+
+---
+
+**SCH-097 · Inline status-band picker · P1 · S · Done 2026-07-19**
+
+Make the two parts of a status node respond according to their content: double-clicking the status band
+opens an inline dropdown, while double-clicking the main text area continues to edit the node title.
+
+AC: the band picker contains all five built-in statuses plus every diagram-wide custom status; it starts
+at the current value, receives focus, attempts to open immediately where the browser supports native
+picker opening, updates the node and indicator color in one undo step, and closes after selection, Escape,
+an outside click, canvas rerender, or view movement; the pointer-based double-press implementation remains
+intact; automated and browser interaction/visual QA pass.
+
+---
+
+**SCH-098 · Sharp-corner rectangle node shape · P2 · S · Done 2026-07-19**
+
+Add Rectangle as an explicit flowchart shape without changing the existing rounded Process default.
+The shared shape registry exposes it in the inspector, right-click context menu, Selection dropdown,
+multi-selection controls, and shaped text boxes. Rectangle uses the established auto-sizing and wrapped
+text layout but renders with a zero corner radius; choosing Process still removes the optional `shape`
+key so legacy documents and new default nodes remain visually and structurally unchanged.
+
+AC: Rectangle is distinct from Process in SVG output, long titles wrap without clipping, standard
+rectangular hit testing and edge anchoring remain intact, selection surfaces expose the option, the
+explicit value round-trips through JSON, and automated plus browser interaction/visual QA pass.
 
 ---
 
