@@ -76,7 +76,8 @@ const EDGE_RELATIONSHIPS = [
 const EDGE_CUSTOM_RELATIONSHIP = "__custom__";
 const CONCEPT_FS_DEFAULT = 14, TABLE_FS_DEFAULT = 11.5;
 const NOTE_FS_DEFAULT = 13, NOTE_W_DEFAULT = 300;
-const TEXT_FS_DEFAULT = 24, TEXT_W_DEFAULT = 260;
+const TEXT_FS_DEFAULT = 24, TEXT_W_DEFAULT = 260, TEXT_W_MIN = 32;
+const TEXT_H_MIN = 20, TEXT_H_MAX = 4000, TEXT_MARGIN_MAX = 400;
 const STATUS_FS_DEFAULT = 18, STATUS_W_DEFAULT = 320;
 const STATUS_BUILTINS = [
   ["Not started", "#7A8794"],
@@ -95,7 +96,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.24.0";
+const APP_VERSION = "v1.26.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -180,7 +181,7 @@ function isStructuralNode(n){ return !!n && (n.type === "frame" || n.type === "s
 function manualNodeWidth(n){
   const width = n ? parseFloat(n.w) : NaN;
   if (!n || n.manualWidth !== true || !Number.isFinite(width)) return null;
-  return clampSize(width, 80, 4000);
+  return clampSize(width, n.type === "text" ? TEXT_W_MIN : 80, 4000);
 }
 function configuredNodeWidth(n){
   const width = n ? parseFloat(n.w) : NaN;
@@ -201,7 +202,7 @@ function setNodeWidth(n, width){
     if (configured == null) delete n.widthBeforeMatch;
     else n.widthBeforeMatch = configured;
   }
-  n.w = clampSize(width, 80, 4000);
+  n.w = clampSize(width, n.type === "text" ? TEXT_W_MIN : 80, 4000);
   n.manualWidth = true;
   return true;
 }
@@ -226,6 +227,54 @@ function resetNodeWidth(n){
     delete n.w;
   }
   return true;
+}
+const TEXT_MARGIN_FIELDS = {
+  top:"textMarginTop", right:"textMarginRight",
+  bottom:"textMarginBottom", left:"textMarginLeft"
+};
+function textBoxWrapEnabled(n){ return !n || n.type !== "text" || n.wrapText !== false; }
+function setTextBoxWrapping(n, enabled){
+  if (!n || n.type !== "text") return false;
+  if (enabled === false) n.wrapText = false; else delete n.wrapText;
+  return true;
+}
+function textBoxMargin(n, side){
+  const key = TEXT_MARGIN_FIELDS[side];
+  const value = key && n ? Number(n[key]) : NaN;
+  return Number.isFinite(value) ? clampSize(value, 0, TEXT_MARGIN_MAX) : 0;
+}
+function textBoxMargins(n){
+  return {
+    top:textBoxMargin(n, "top"), right:textBoxMargin(n, "right"),
+    bottom:textBoxMargin(n, "bottom"), left:textBoxMargin(n, "left")
+  };
+}
+function setTextBoxMargin(n, side, value){
+  const key = TEXT_MARGIN_FIELDS[side];
+  if (!n || n.type !== "text" || !key) return false;
+  const next = clampSize(value, 0, TEXT_MARGIN_MAX);
+  if (next === 0) delete n[key]; else n[key] = next;
+  return true;
+}
+function manualNodeHeight(n){
+  const height = n ? Number(n.h) : NaN;
+  if (!n || n.type !== "text" || n.manualHeight !== true || !Number.isFinite(height)) return null;
+  return clampSize(height, TEXT_H_MIN, TEXT_H_MAX);
+}
+function setTextBoxHeight(n, height){
+  if (!n || n.type !== "text") return false;
+  n.h = clampSize(height, TEXT_H_MIN, TEXT_H_MAX);
+  n.manualHeight = true;
+  return true;
+}
+function resetTextBoxHeight(n){
+  if (manualNodeHeight(n) == null) return false;
+  delete n.manualHeight;
+  delete n.h;
+  return true;
+}
+function hasForcedNodeSize(n){
+  return manualNodeWidth(n) != null || manualNodeHeight(n) != null;
 }
 function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text" || n.type === "status"); }
 function insertTextLineBreak(control){
@@ -707,6 +756,7 @@ function cleanEdgeForDocument(e){
     if (Number.isFinite(value)) out[key] = value;
     else delete out[key];
   }
+  setEdgeLabelPosition(out, out.labelPosition);
   if (out.startArrow !== true) delete out.startArrow;
   if (out.endArrow !== true) delete out.endArrow;
   const lineColor = normalizeColorValue(out.lineColor);
@@ -755,8 +805,17 @@ function cleanNodeForDocument(n){
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
     out.fontSize = textBoxFont(out);
     out.w = out.manualWidth === true
-      ? clampSize(out.w, 80, 4000)
+      ? clampSize(out.w, TEXT_W_MIN, 4000)
       : clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
+    if (out.wrapText !== false) delete out.wrapText;
+    for (const side of Object.keys(TEXT_MARGIN_FIELDS)){
+      const key = TEXT_MARGIN_FIELDS[side];
+      const value = textBoxMargin(out, side);
+      if (value === 0) delete out[key]; else out[key] = value;
+    }
+    const height = manualNodeHeight(out);
+    if (height == null){ delete out.manualHeight; delete out.h; }
+    else { out.manualHeight = true; out.h = height; }
   }
   if (out.type === "status"){
     normalizeNodeStatus(out);
@@ -851,8 +910,13 @@ function applyDocument(d, opts = {}){
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
       n.fontSize = textBoxFont(n);
       n.w = n.manualWidth === true
-        ? clampSize(n.w, 80, 4000)
+        ? clampSize(n.w, TEXT_W_MIN, 4000)
         : clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
+      if (n.wrapText !== false) delete n.wrapText;
+      for (const side of Object.keys(TEXT_MARGIN_FIELDS)) setTextBoxMargin(n, side, textBoxMargin(n, side));
+      const height = manualNodeHeight(n);
+      if (height == null){ delete n.manualHeight; delete n.h; }
+      else { n.manualHeight = true; n.h = height; }
     } else if (n.type === "status"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Status item";
       normalizeNodeStatus(n);
@@ -875,6 +939,7 @@ function applyDocument(d, opts = {}){
       const color = normalizeColorValue(e[key]);
       if (color) e[key] = color; else delete e[key];
     }
+    setEdgeLabelPosition(e, e.labelPosition);
   }
   state.nextId = migrated.nextId;
   ensureFieldIds();

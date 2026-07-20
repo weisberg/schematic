@@ -263,10 +263,13 @@ function matchSelectionWidths(mode){
 }
 function resetSelectionSizes(){
   const nodes = selectedNodes();
-  const forced = nodes.filter(node => manualNodeWidth(node) != null);
+  const forced = nodes.filter(hasForcedNodeSize);
   if (!forced.length) return false;
   pushHistory();
-  for (const node of forced) resetNodeWidth(node);
+  for (const node of forced){
+    resetNodeWidth(node);
+    resetTextBoxHeight(node);
+  }
   render();
   return forced.length;
 }

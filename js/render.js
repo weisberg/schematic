@@ -248,7 +248,22 @@ function curveEdgePoint(pa, pb, t, controls = curveEdgeControlPoints(pa, pb)){
     y:uu * u * pa.y + 3 * uu * t * controls.c1.y + 3 * u * tt * controls.c2.y + tt * t * pb.y
   };
 }
-function curveEdgeMidpoint(pa, pb){
+function clampEdgeLabelPosition(value){
+  const next = typeof value === "number" ? value
+    : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isFinite(next) ? Math.min(1, Math.max(0, next)) : .5;
+}
+function edgeLabelPosition(e){
+  return clampEdgeLabelPosition(e && e.labelPosition);
+}
+function setEdgeLabelPosition(e, value){
+  if (!e) return false;
+  const next = Math.round(clampEdgeLabelPosition(value) * 10000) / 10000;
+  if (Math.abs(next - .5) < .00005) delete e.labelPosition;
+  else e.labelPosition = next;
+  return true;
+}
+function curveEdgePointAt(pa, pb, position){
   const controls = curveEdgeControlPoints(pa, pb);
   const segments = [];
   let previous = curveEdgePoint(pa, pb, 0, controls), total = 0;
@@ -261,7 +276,8 @@ function curveEdgeMidpoint(pa, pb){
     previous = point;
   }
   if (!total) return {x:pa.x, y:pa.y};
-  let remaining = total / 2;
+  let remaining = total * clampEdgeLabelPosition(position);
+  if (remaining <= 0) return {x:pa.x, y:pa.y};
   for (const segment of segments){
     if (remaining <= segment.length){
       const fraction = segment.length ? remaining / segment.length : 0;
@@ -271,6 +287,9 @@ function curveEdgeMidpoint(pa, pb){
     remaining -= segment.length;
   }
   return {x:pb.x, y:pb.y};
+}
+function curveEdgeMidpoint(pa, pb){
+  return curveEdgePointAt(pa, pb, .5);
 }
 function curveEdgeCommand(pa, pb){
   const {c1, c2} = curveEdgeControlPoints(pa, pb);
@@ -324,7 +343,7 @@ function orthoEdgeRoute(e, pa, pb){
 function orthoEdgePath(pa, pb, e = null){
   return orthoEdgeRoute(e, pa, pb).d;
 }
-function polylineMidpoint(points){
+function polylinePointAt(points, position){
   if (!Array.isArray(points) || !points.length) return {x:0, y:0};
   const segments = [];
   let total = 0;
@@ -336,7 +355,8 @@ function polylineMidpoint(points){
     total += length;
   }
   if (!total) return {x:points[0].x, y:points[0].y};
-  let remaining = total / 2;
+  let remaining = total * clampEdgeLabelPosition(position);
+  if (remaining <= 0) return {x:points[0].x, y:points[0].y};
   for (const segment of segments){
     if (remaining <= segment.length){
       const t = remaining / segment.length;
@@ -350,11 +370,80 @@ function polylineMidpoint(points){
   const last = points[points.length - 1];
   return {x:last.x, y:last.y};
 }
+function polylineMidpoint(points){
+  return polylinePointAt(points, .5);
+}
+function projectPointToPolyline(points, point){
+  if (!Array.isArray(points) || !points.length) return {x:0, y:0, position:.5, distance:Infinity};
+  let total = 0;
+  const segments = [];
+  for (let i = 1; i < points.length; i++){
+    const from = points[i - 1], to = points[i];
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (!length) continue;
+    segments.push({from, dx, dy, length, start:total});
+    total += length;
+  }
+  if (!segments.length){
+    const first = points[0];
+    return {x:first.x, y:first.y, position:.5, totalLength:0,
+            distance:Math.hypot(point.x - first.x, point.y - first.y)};
+  }
+  let best = null;
+  for (const segment of segments){
+    const lengthSquared = segment.length * segment.length;
+    const t = Math.min(1, Math.max(0,
+      ((point.x - segment.from.x) * segment.dx + (point.y - segment.from.y) * segment.dy) /
+      lengthSquared));
+    const x = segment.from.x + segment.dx * t;
+    const y = segment.from.y + segment.dy * t;
+    const distance = Math.hypot(point.x - x, point.y - y);
+    if (!best || distance < best.distance){
+      best = {x, y, distance, totalLength:total,
+              position:(segment.start + segment.length * t) / total};
+    }
+  }
+  return best;
+}
+function edgeLabelCurveEndpoints(e, ep){
+  return {
+    pa:e && e.kind !== "link" ? notationVertex(ep.pa) : ep.pa,
+    pb:e && e.kind !== "link" ? notationVertex(ep.pb) : ep.pb
+  };
+}
 function edgeLabelPoint(e, ep){
-  if (e && e.routing === "ortho") return polylineMidpoint(orthoEdgeRoute(e, ep.pa, ep.pb).points);
-  const pa = e && e.kind !== "link" ? notationVertex(ep.pa) : ep.pa;
-  const pb = e && e.kind !== "link" ? notationVertex(ep.pb) : ep.pb;
-  return curveEdgeMidpoint(pa, pb);
+  const position = edgeLabelPosition(e);
+  if (e && e.routing === "ortho") return polylinePointAt(orthoEdgeRoute(e, ep.pa, ep.pb).points, position);
+  const {pa, pb} = edgeLabelCurveEndpoints(e, ep);
+  return curveEdgePointAt(pa, pb, position);
+}
+function projectEdgeLabelToPath(e, ep, point){
+  if (e && e.routing === "ortho"){
+    return projectPointToPolyline(orthoEdgeRoute(e, ep.pa, ep.pb).points, point);
+  }
+  const {pa, pb} = edgeLabelCurveEndpoints(e, ep);
+  const controls = curveEdgeControlPoints(pa, pb);
+  const samples = Array.from({length:97}, (_, i) => curveEdgePoint(pa, pb, i / 96, controls));
+  const projected = projectPointToPolyline(samples, point);
+  const exact = curveEdgePointAt(pa, pb, projected.position);
+  return {...projected, x:exact.x, y:exact.y};
+}
+function edgeDisplayLabel(e){
+  if (!e) return "";
+  let label = e.label || (e.kind === "link" ? "" : e.kind);
+  const pairCount = edgeFieldPairs(e).length;
+  if (e.kind !== "link" && pairCount > 1) label += ` · ${pairCount} cols`;
+  return label;
+}
+function edgeLabelDragPosition(e, projected){
+  if (!projected || !Number.isFinite(projected.position)) return .5;
+  const label = edgeDisplayLabel(e);
+  const width = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
+  const length = Number(projected.totalLength);
+  if (!Number.isFinite(length) || length <= 0) return .5;
+  const padding = Math.min(.25, (width / 2 + 10) / length);
+  return Math.min(1 - padding, Math.max(padding, projected.position));
 }
 function nearestSnap(value, candidates, threshold){
   let best = null, distance = threshold + Number.EPSILON;
@@ -490,19 +579,19 @@ function drawEdge(e, hidden = null, proxies = null){
   }
   if (ep.boundA || ep.pinnedA) el("circle", {cx:ep.pa.x, cy:ep.pa.y, r:3, fill:color}, g);
   if (ep.boundB || ep.pinnedB) el("circle", {cx:ep.pb.x, cy:ep.pb.y, r:3, fill:color}, g);
-  let label = e.label || (isLink ? "" : e.kind);
-  const pairCount = edgeFieldPairs(e).length;
-  if (!isLink && pairCount > 1) label += ` · ${pairCount} cols`;
+  const label = edgeDisplayLabel(e);
   if (label){
     const {x:mx, y:my} = edgeLabelPoint(e, ep);
     const w = textW(label, "600 10.5px 'IBM Plex Mono', monospace") + 14;
     const labelTextColor = edgeLabelTextColor(e, t);
     const labelBackgroundColor = edgeLabelBackgroundColor(e, t);
+    const labelGroup = el("g", {"data-edge-label-handle":e.id, cursor:"move"}, g);
+    el("title", {}, labelGroup).textContent = "Drag label along link";
     el("rect", {x:mx - w/2, y:my - 10, width:w, height:20, rx:10,
-                fill:labelBackgroundColor, stroke:color, "stroke-width":1, "data-edge-label-bg":"1"}, g);
+                fill:labelBackgroundColor, stroke:color, "stroke-width":1, "data-edge-label-bg":"1"}, labelGroup);
     el("text", {x:mx, y:my + 3.5, "text-anchor":"middle", fill:labelTextColor,
                 "font-family":"'IBM Plex Mono', monospace", "font-size":10.5,
-                "font-weight":600, "data-edge-label":"1"}, g).textContent = label;
+                "font-weight":600, "data-edge-label":"1"}, labelGroup).textContent = label;
   }
 }
 
@@ -663,7 +752,7 @@ function drawPlainText(g, n, r, selected, t){
               "data-plain-text":"1"}, g);
   const firstY = layout.centerY - ((layout.lines.length - 1) * layout.lineH)/2 + layout.fs*.35;
   layout.lines.forEach((line, i) => {
-    const span = el("tspan", {x:r.w/2, y:firstY + i*layout.lineH, "data-text-line":i+1}, text);
+    const span = el("tspan", {x:layout.textX, y:firstY + i*layout.lineH, "data-text-line":i+1}, text);
     span.textContent = line;
   });
 }
