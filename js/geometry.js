@@ -231,26 +231,52 @@ function limitedWrappedLines(text, font, maxWidth, maxLines){
   visible[visible.length - 1] = (last || "").trimEnd() + "…";
   return visible;
 }
+function unwrappedTextBoxLines(text){
+  const source = String(text || "Text").replace(/\r\n?/g, "\n");
+  const lines = source.split("\n").map(line => line.trim());
+  return lines.length ? lines : ["Text"];
+}
 function textBoxLayout(n){
   const shape = textBoxShape(n);
   const fs = textBoxFont(n);
   const font = `600 ${fs}px Archivo, sans-serif`;
   const lineH = Math.ceil(fs * 1.28);
+  const wrap = textBoxWrapEnabled(n);
+  const margins = textBoxMargins(n);
+  const marginX = margins.left + margins.right;
+  const marginY = margins.top + margins.bottom;
   const fixedWidth = manualNodeWidth(n);
   const maxW = fixedWidth == null
     ? clampSize(n.w || TEXT_W_DEFAULT, 80, 720)
     : fixedWidth;
   const title = n.title || "Text";
+  const linesFor = width => wrap
+    ? wrapConceptTitle(title, font, Math.max(1, width))
+    : unwrappedTextBoxLines(title);
+  const fixedHeight = manualNodeHeight(n);
   if (shape === "none"){
-    const lines = wrapConceptTitle(title, font, maxW);
+    const availableWidth = Math.max(1, maxW - marginX);
+    let lines = linesFor(availableWidth);
     const contentW = Math.max(...lines.map(line => textW(line, font)), fs);
     const w = fixedWidth == null
-      ? Math.max(32, Math.min(maxW, Math.ceil(contentW + 12)))
+      ? wrap
+        ? Math.max(32, Math.min(maxW, Math.ceil(contentW + 12 + marginX)))
+        : clampSize(Math.ceil(contentW + 12 + marginX), 32, 4000)
       : maxW;
-    const h = Math.max(lineH + 8, lines.length * lineH + 8);
-    return {shape, fs, font, lineH, lines, w, h, centerY:h/2, maxWidth:maxW};
+    const naturalHeight = Math.max(lineH + 8 + marginY, lines.length * lineH + 8 + marginY);
+    const h = fixedHeight == null ? naturalHeight : fixedHeight;
+    if (fixedHeight != null && wrap){
+      const maxLines = Math.max(1, Math.floor((h - 8 - marginY) / lineH));
+      lines = limitedWrappedLines(title, font, availableWidth, maxLines);
+    }
+    const innerWidth = Math.max(1, w - marginX);
+    const innerHeight = Math.max(1, h - marginY);
+    return {shape, fs, font, lineH, lines, w, h,
+            textX:margins.left + innerWidth/2,
+            centerY:margins.top + innerHeight/2, maxWidth:availableWidth,
+            margins, wrap, manualHeight:fixedHeight != null};
   }
-  const w = Math.max(120, maxW);
+  const w = fixedWidth == null ? Math.max(120, maxW) : maxW;
   let h, widthRatio, heightRatio, centerY;
   if (shape === "triangle"){
     h = Math.round(w * .866); widthRatio = .46; heightRatio = .38; centerY = h * .64;
@@ -261,15 +287,23 @@ function textBoxLayout(n){
     h = Math.max(120, Math.round(w * .6)); widthRatio = .48; heightRatio = .52; centerY = h/2;
   } else {
     widthRatio = shape === "data" || shape === "manualInput" ? .72 : .82;
-    const maxWidth = Math.max(48, Math.round(w * widthRatio));
-    const draftLines = wrapConceptTitle(title, font, maxWidth);
-    h = Math.max(shape === "terminator" ? 64 : 56, draftLines.length * lineH + 32) + (shape === "document" ? 18 : 0);
+    const draftWidth = Math.max(12, Math.round(w * widthRatio) - marginX);
+    const draftLines = linesFor(draftWidth);
+    h = Math.max(shape === "terminator" ? 64 : 56,
+      draftLines.length * lineH + 32 + marginY) + (shape === "document" ? 18 : 0);
     heightRatio = .72; centerY = shape === "document" ? (h - 12)/2 : h/2;
   }
-  const maxWidth = Math.max(44, Math.round(w * widthRatio));
-  const maxLines = Math.max(1, Math.floor(h * heightRatio / lineH));
-  const lines = limitedWrappedLines(title, font, maxWidth, maxLines);
-  return {shape, fs, font, lineH, lines, w, h, centerY, maxWidth};
+  if (fixedHeight != null){
+    h = fixedHeight;
+    centerY = shape === "triangle" ? h * .64 : shape === "document" ? (h - 12)/2 : h/2;
+  }
+  const maxWidth = Math.max(12, Math.round(w * widthRatio) - marginX);
+  const maxLines = Math.max(1, Math.floor((h * heightRatio - marginY) / lineH));
+  const lines = wrap ? limitedWrappedLines(title, font, maxWidth, maxLines) : unwrappedTextBoxLines(title);
+  return {shape, fs, font, lineH, lines, w, h,
+          textX:w/2 + (margins.left - margins.right)/2,
+          centerY:centerY + (margins.top - margins.bottom)/2, maxWidth,
+          margins, wrap, manualHeight:fixedHeight != null};
 }
 function statusNodeLayout(n){
   const fs = statusNodeFont(n);

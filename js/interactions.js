@@ -266,6 +266,7 @@ board.addEventListener("pointerdown", ev => {
   const collapseEl = ev.target.closest("[data-collapse]");
   const resizeEl = ev.target.closest("[data-frame-resize]");
   const edgeBendEl = ev.target.closest("[data-edgebend]");
+  const edgeLabelEl = ev.target.closest("[data-edge-label-handle]");
   const statusBandHitEl = ev.target.closest("[data-status-band-hit]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
@@ -405,6 +406,19 @@ board.addEventListener("pointerdown", ev => {
     return;
   }
 
+  if (edgeLabelEl){
+    const e = edgeById(edgeLabelEl.getAttribute("data-edge-label-handle"));
+    const ep = e && edgeEndpoints(e);
+    if (!e || !ep) return;
+    if (!isSelected("edge", e.id)){
+      setSelection("edge", e.id);
+      render();
+    }
+    drag = {mode:"edge-label", edgeId:e.id,
+            start:clientToWorld(ev.clientX, ev.clientY), moved:false};
+    return;
+  }
+
   if (nodeEl){
     const id = nodeEl.getAttribute("data-node");
     const n = nodeById(id);
@@ -532,6 +546,20 @@ board.addEventListener("pointermove", ev => {
     e.orthoY = snapped.y;
     drag.snap = snapped;
     drawOnly();
+  } else if (drag.mode === "edge-label"){
+    const e = edgeById(drag.edgeId);
+    const ep = e && edgeEndpoints(e);
+    if (!e || !ep) return;
+    const w = clientToWorld(ev.clientX, ev.clientY);
+    if (!drag.moved && Math.hypot(w.x - drag.start.x, w.y - drag.start.y) <= 1 / view.k) return;
+    if (!drag.moved){
+      pushHistory();
+      drag.moved = true;
+      lastPress = null;
+    }
+    const projected = projectEdgeLabelToPath(e, ep, w);
+    setEdgeLabelPosition(e, edgeLabelDragPosition(e, projected));
+    drawOnly();
   } else if (drag.mode === "marquee"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     drag.current = w;
@@ -619,6 +647,8 @@ board.addEventListener("pointerup", ev => {
   } else if (drag.mode === "ortho-bend"){
     drag.snap = null;
     render();
+  } else if (drag.mode === "edge-label"){
+    render();
   }
   board.classList.remove("panning","connecting");
   drag = null;
@@ -627,7 +657,8 @@ board.addEventListener("pointercancel", ev => {
   activePointers.delete(ev.pointerId);
   clearLongPress();
   if (activePointers.size < 2) touchGesture = null;
-  const redrawDraft = drag && (drag.mode === "ortho-bend" || (drag.mode === "node" && drag.guides));
+  const redrawDraft = drag && (drag.mode === "ortho-bend" || drag.mode === "edge-label" ||
+    (drag.mode === "node" && drag.guides));
   drag = null;
   board.classList.remove("panning","connecting");
   if (redrawDraft) render();
@@ -852,7 +883,8 @@ function inlineEditorBox(kind, id, rowId){
   }
   const e = edgeById(id), ep = e && edgeEndpoints(e);
   if (!e || !ep) return null;
-  const p = worldToWrap((ep.pa.x + ep.pb.x)/2 - 70, (ep.pa.y + ep.pb.y)/2 - 16);
+  const labelPoint = edgeLabelPoint(e, ep);
+  const p = worldToWrap(labelPoint.x - 70, labelPoint.y - 16);
   return { x:p.x, y:p.y, w:140, h:30, fontSize:13 };
 }
 function inlineEditorRow(id, rowId){

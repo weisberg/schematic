@@ -496,7 +496,7 @@ function updateDropdownMenus(){
   for (const id of ["btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
                     "menuDistributeHorizontal","menuDistributeVertical","menuWidthSmallest","menuWidthLargest","menuWidthAverage"])
     setMenuDisabled(id, !multi);
-  setMenuDisabled("menuResetSize", !nodes.some(node => manualNodeWidth(node) != null));
+  setMenuDisabled("menuResetSize", !nodes.some(hasForcedNodeSize));
   setMenuDisabled("menuBringFront", !primaryNode);
   setMenuDisabled("menuSendBack", !primaryNode);
   setMenuSubmenuDisabled("align", !multi);
@@ -667,7 +667,7 @@ function nodeMenu(n, x, y){
     ctxGroup(m, "node:arrange", "Arrange", panel => {
       ctxSubmenu(panel, "node:arrange:size", "Size", sub => {
         ctxItem(sub, "Reset size", resetSelectionSizes,
-          {action:"reset-size", disabled:!targets.some(target => manualNodeWidth(target) != null)});
+          {action:"reset-size", disabled:!targets.some(hasForcedNodeSize)});
         if (targets.length >= 2){
           ctxSep(sub);
           ctxLabel(sub, "Match selected widths");

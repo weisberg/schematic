@@ -833,7 +833,7 @@ if (process.argv.includes("--api-surface")){
   {
     const { window } = makeDom();
     const T = window.__T, doc = window.document, board = doc.getElementById("board");
-    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+    T.importDocText(JSON.stringify({version:1, nextId:5, edges:[], nodes:[
       {id:"target", type:"concept", x:250, y:130, title:"Target", notes:"", color:"#CFE4FA"},
       {id:"moving", type:"concept", x:40, y:300, title:"Moving", notes:"", color:"#FFE9A8"},
       {id:"partner", type:"concept", x:500, y:400, title:"Partner", notes:"", color:"#D7F0D8"}
@@ -1882,6 +1882,158 @@ if (process.argv.includes("--api-surface")){
       "relationship labels follow the glyph-to-glyph curve body");
   }
 
+  /* SCH-100 — draggable labels remain constrained to curved and orthogonal link paths */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    T.setView({x:0, y:0, k:1});
+
+    const projectedPolyline = T.projectPointToPolyline(
+      [{x:0,y:0}, {x:100,y:0}, {x:100,y:100}], {x:70,y:20});
+    closeEnough(projectedPolyline.x, 70, "polyline projection snaps x to the nearest leg");
+    closeEnough(projectedPolyline.y, 0, "polyline projection snaps y to the nearest leg");
+    closeEnough(projectedPolyline.position, .35, "polyline projection returns cumulative path position");
+    closeEnough(T.polylinePointAt([{x:0,y:0}, {x:100,y:0}, {x:100,y:100}], .75).y, 50,
+      "stored positions resolve by cumulative path length");
+
+    const normalized = {labelPosition:"invalid"};
+    T.setEdgeLabelPosition(normalized, normalized.labelPosition);
+    assert.strictEqual(normalized.labelPosition, undefined, "invalid label positions normalize to the legacy midpoint");
+    T.setEdgeLabelPosition(normalized, null);
+    assert.strictEqual(normalized.labelPosition, undefined, "empty label positions also normalize to the legacy midpoint");
+    T.setEdgeLabelPosition(normalized, -3);
+    assert.strictEqual(normalized.labelPosition, 0, "label positions clamp to the path start");
+    T.setEdgeLabelPosition(normalized, 3);
+    assert.strictEqual(normalized.labelPosition, 1, "label positions clamp to the path end");
+    T.setEdgeLabelPosition(normalized, .5);
+    assert.strictEqual(normalized.labelPosition, undefined, "the default midpoint remains absent from compact documents");
+
+    let edge = T.state.edges.find(e => e.label === "drives");
+    let ep = T.edgeEndpoints(edge);
+    const initial = T.edgeLabelPoint(edge, ep);
+    const desiredPosition = .82;
+    const desired = T.edgeLabelPoint({...edge, labelPosition:desiredPosition}, ep);
+    const offCurveProjection = T.projectEdgeLabelToPath(edge, ep, {x:desired.x + 13, y:desired.y - 11});
+    const projectedExact = T.edgeLabelPoint({...edge, labelPosition:offCurveProjection.position}, ep);
+    assert(Math.hypot(offCurveProjection.x - projectedExact.x, offCurveProjection.y - projectedExact.y) < 1e-6,
+      "curved projection returns a point on the rendered Bezier");
+    const endpointProjection = T.projectEdgeLabelToPath(edge, ep, {x:ep.pb.x + 1000, y:ep.pb.y});
+    const safeEndpointPosition = T.edgeLabelDragPosition(edge, endpointProjection);
+    assert(safeEndpointPosition > 0 && safeEndpointPosition < 1,
+      "drag endpoint padding keeps the label reachable outside the node and endpoint grip");
+
+    T.render();
+    let labelHandle = doc.querySelector(`[data-edge-label-handle="${edge.id}"]`);
+    assert(labelHandle, "a visible edge label is a draggable canvas target");
+    assert.strictEqual(labelHandle.getAttribute("cursor"), "move", "the label advertises its drag behavior");
+    assert.strictEqual(labelHandle.querySelector("title").textContent, "Drag label along link",
+      "the label drag target has an accessible hint");
+    const beforeUndo = T.undoDepth;
+    firePointer(window, labelHandle, "pointerdown", {clientX:initial.x, clientY:initial.y});
+    firePointer(window, doc.getElementById("board"), "pointermove", {clientX:desired.x, clientY:desired.y});
+    assert(Math.abs(T.edgeLabelPosition(edge) - desiredPosition) < .02,
+      "dragging a curved label stores its normalized position along the curve");
+    const draggedPoint = T.edgeLabelPoint(edge, ep);
+    const labelText = doc.querySelector(`[data-edge="${edge.id}"] [data-edge-label]`);
+    closeEnough(Number(labelText.getAttribute("x")), draggedPoint.x,
+      "curved label redraws at its constrained x coordinate during drag");
+    closeEnough(Number(labelText.getAttribute("y")), draggedPoint.y + 3.5,
+      "curved label redraws at its constrained y coordinate during drag");
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "a label drag creates one undo step");
+    firePointer(window, doc.getElementById("board"), "pointermove", {clientX:desired.x, clientY:desired.y});
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "continued label movement stays in one undo step");
+    firePointer(window, doc.getElementById("board"), "pointerup", {clientX:desired.x, clientY:desired.y});
+
+    const saved = JSON.parse(T.serializeDocument());
+    const savedEdge = saved.edges.find(e => e.id === edge.id);
+    assert.strictEqual(savedEdge.labelPosition, edge.labelPosition, "moved label position serializes");
+    assert(T.serializedSvg(true).includes(`data-edge-label-handle=\"${edge.id}\"`),
+      "SVG export keeps the moved label itself");
+    const copied = T.remapPayload(T.cloneSelectionPayload([edge.from, edge.to]), 36);
+    assert.strictEqual(copied.edges[0].labelPosition, edge.labelPosition,
+      "copying linked nodes preserves their label position");
+
+    const movedPosition = edge.labelPosition;
+    T.undo();
+    edge = T.state.edges.find(e => e.id === savedEdge.id);
+    assert.strictEqual(edge.labelPosition, undefined, "undo restores the untouched midpoint label");
+    T.redo();
+    edge = T.state.edges.find(e => e.id === savedEdge.id);
+    assert.strictEqual(edge.labelPosition, movedPosition, "redo restores the dragged label position");
+
+    ep = T.edgeEndpoints(edge);
+    const beforeSwap = T.edgeLabelPoint(edge, ep);
+    const positionBeforeSwap = T.edgeLabelPosition(edge);
+    T.swapEdgeDirection(edge);
+    const afterSwap = T.edgeLabelPoint(edge, T.edgeEndpoints(edge));
+    closeEnough(T.edgeLabelPosition(edge), 1 - positionBeforeSwap,
+      "swapping direction reverses the normalized label position");
+    assert(Math.hypot(beforeSwap.x - afterSwap.x, beforeSwap.y - afterSwap.y) < .01,
+      "swapping direction leaves a moved label at the same visual point");
+
+    const importedDocument = JSON.parse(T.serializeDocument());
+    importedDocument.edges[0].labelPosition = "not-a-number";
+    const { window:importWindow } = makeDom();
+    importWindow.__T.importDocText(JSON.stringify(importedDocument));
+    assert.strictEqual(importWindow.__T.state.edges[0].labelPosition, undefined,
+      "invalid imported label positions safely fall back to the midpoint");
+  }
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    T.setView({x:0, y:0, k:1});
+    const edge = T.state.edges.find(e => e.label === "drives");
+    edge.routing = "ortho";
+    T.render();
+    const ep = T.edgeEndpoints(edge);
+    const route = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+    let longest = null;
+    for (let i = 1; i < route.points.length; i++){
+      const from = route.points[i - 1], to = route.points[i];
+      const length = Math.hypot(to.x - from.x, to.y - from.y);
+      if (!longest || length > longest.length) longest = {from, to, length};
+    }
+    const target = {x:longest.from.x + (longest.to.x - longest.from.x) * .72,
+                    y:longest.from.y + (longest.to.y - longest.from.y) * .72};
+    const start = T.edgeLabelPoint(edge, ep);
+    const labelHandle = doc.querySelector(`[data-edge-label-handle="${edge.id}"]`);
+    firePointer(window, labelHandle, "pointerdown", {clientX:start.x, clientY:start.y});
+    firePointer(window, doc.getElementById("board"), "pointermove", {clientX:target.x + 18, clientY:target.y + 18});
+    firePointer(window, doc.getElementById("board"), "pointerup", {clientX:target.x + 18, clientY:target.y + 18});
+    const moved = T.edgeLabelPoint(edge, ep);
+    assert(T.projectPointToPolyline(route.points, moved).distance < 1e-6,
+      "orthogonal label drag snaps exactly onto a Manhattan leg");
+    const storedPosition = edge.labelPosition;
+    edge.orthoX = route.bend.x + 140;
+    edge.orthoY = route.bend.y + 90;
+    T.render();
+    const reshapedRoute = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+    const reshapedLabel = T.edgeLabelPoint(edge, ep);
+    assert.strictEqual(edge.labelPosition, storedPosition, "reshaping an orthogonal link preserves label path position");
+    assert(T.projectPointToPolyline(reshapedRoute.points, reshapedLabel).distance < 1e-6,
+      "the preserved orthogonal label remains on the reshaped route");
+  }
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    T.setView({x:0, y:0, k:1});
+    const edge = T.state.edges.find(e => e.label === "drives");
+    T.render();
+    let labelHandle = doc.querySelector(`[data-edge-label-handle="${edge.id}"]`);
+    const point = T.edgeLabelPoint(edge, T.edgeEndpoints(edge));
+    firePointer(window, labelHandle, "pointerdown", {clientX:point.x, clientY:point.y});
+    firePointer(window, doc.getElementById("board"), "pointerup", {clientX:point.x, clientY:point.y});
+    labelHandle = doc.querySelector(`[data-edge-label-handle="${edge.id}"]`);
+    firePointer(window, labelHandle, "pointerdown", {clientX:point.x, clientY:point.y});
+    const editor = doc.querySelector(".inline-editor");
+    assert(editor, "double-press editing still opens from the draggable label");
+    assert(Math.abs(parseFloat(editor.style.left) - (point.x - 70)) < 1,
+      "the inline editor opens at the moved label path point");
+  }
+
   /* SCH-073 — draggable orthogonal waypoint with coordinate snapping */
   {
     const { window } = makeDom();
@@ -2382,7 +2534,10 @@ if (process.argv.includes("--api-surface")){
     T.render();
     const textNode = T.state.nodes.find(n => n.id === "txt");
     assert.strictEqual(T.textBoxShape(textNode), "none", "plain text defaults to no visible box");
-    assert(T.nodeRect(textNode).w < textNode.w, "short no-box text uses a tight hit and link boundary");
+    assert.strictEqual(T.nodeRect(textNode).w, 103,
+      "legacy no-box text keeps its established content-sized width");
+    assert.strictEqual(T.nodeRect(textNode).h, 39,
+      "legacy no-box text keeps its established automatic height");
     let textGroup = doc.querySelector('[data-text-box="txt"]');
     assert(textGroup, "plain text renders as its own canvas primitive");
     assert.strictEqual(textGroup.getAttribute("data-text-shape"), "none", "render records the no-box shape");
@@ -2476,6 +2631,180 @@ if (process.argv.includes("--api-surface")){
     firePointer(window, doc.getElementById("board"), "contextmenu", {clientX:1100, clientY:700});
     assert(doc.querySelector('#ctxMenu [data-ctx-action="add-text"]'),
       "canvas right-click menu exposes plain text creation");
+  }
+
+  /* SCH-099 — advanced plain-text wrapping, margins, and pixel geometry */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:5, nodes:[
+      {id:"txt", type:"text", x:20, y:30,
+       title:"A deliberately long plain-text phrase that wraps inside a narrow box",
+       shape:"process", color:"#cfe8ff", fontSize:20, w:180},
+      {id:"idea", type:"concept", x:540, y:80, title:"Linked idea", notes:"", color:"#FFE9A8"}
+    ], edges:[{id:"e1", from:"txt", to:"idea", kind:"link", label:"References"}]}));
+    const textNode = () => T.state.nodes.find(n => n.id === "txt");
+    T.selectNode("txt");
+
+    let advanced = doc.querySelector('[data-inspector-section="text:advanced"]');
+    assert(advanced, "plain-text inspector exposes an Advanced subsection");
+    assert.strictEqual(advanced.open, false, "Advanced subsection starts collapsed");
+    sameList([...advanced.querySelectorAll('input[aria-label]')].map(input => input.getAttribute("aria-label")),
+      ["Text box left", "Text box top", "Text box width", "Text box height",
+       "Top margin", "Right margin", "Bottom margin", "Left margin"],
+      "Advanced exposes every requested pixel field in a stable order");
+    const defaultWrap = doc.getElementById("textBoxWrap");
+    assert(defaultWrap && defaultWrap.getAttribute("aria-pressed") === "true",
+      "text wrapping is visibly enabled by default");
+    assert.strictEqual(T.textBoxWrapEnabled(textNode()), true, "legacy text boxes wrap by default");
+    assert(!Object.hasOwn(textNode(), "wrapText"), "default wrapping needs no stored opt-in flag");
+    assert(T.textBoxLayout(textNode()).lines.length > 1, "long text wraps automatically by default");
+
+    advanced.open = true;
+    advanced.dispatchEvent(new window.Event("toggle"));
+    const wrapUndoBefore = T.undoDepth;
+    defaultWrap.click();
+    assert.strictEqual(textNode().wrapText, false, "Wrap text control stores the explicit off state");
+    assert.strictEqual(T.textBoxLayout(textNode()).lines.length, 1,
+      "turning wrapping off keeps a long phrase on one line");
+    assert.strictEqual(T.undoDepth, wrapUndoBefore + 1, "wrapping change creates one undo step");
+    doc.getElementById("textBoxWrap").click();
+    assert(!Object.hasOwn(textNode(), "wrapText"), "turning wrapping back on restores the compact default state");
+
+    const setPixelField = (label, value) => {
+      const input = doc.querySelector(`input[aria-label="${label}"]`);
+      assert(input, `${label} precision input exists`);
+      input.value = String(value);
+      input.dispatchEvent(new window.Event("input", {bubbles:true}));
+      input.dispatchEvent(new window.Event("blur", {bubbles:false}));
+    };
+    const leftUndoBefore = T.undoDepth;
+    setPixelField("Text box left", 123);
+    assert.strictEqual(textNode().x, 123, "Left updates the exact canvas x coordinate");
+    assert.strictEqual(T.undoDepth, leftUndoBefore + 1, "a live pixel edit creates one undo step");
+    T.undo();
+    assert.strictEqual(textNode().x, 20, "undo restores the prior pixel coordinate");
+
+    T.selectNode("txt");
+    const endpointBefore = T.edgeEndpoints(T.state.edges[0]).pa;
+    setPixelField("Text box top", 87);
+    setPixelField("Text box left", 123);
+    setPixelField("Text box width", 333);
+    setPixelField("Text box height", 111);
+    setPixelField("Top margin", 20);
+    setPixelField("Right margin", 10);
+    setPixelField("Bottom margin", 5);
+    setPixelField("Left margin", 30);
+    assert.strictEqual(textNode().x, 123, "precision Left persists on the node");
+    assert.strictEqual(textNode().y, 87, "precision Top persists on the node");
+    assert.strictEqual(textNode().manualWidth, true, "precision Width opts into a forced width");
+    assert.strictEqual(textNode().w, 333, "precision Width stores the requested pixels");
+    assert.strictEqual(textNode().manualHeight, true, "precision Height opts into a forced height");
+    assert.strictEqual(textNode().h, 111, "precision Height stores the requested pixels");
+    sameList(T.textBoxMargins(textNode()), {top:20, right:10, bottom:5, left:30},
+      "four independent text margins are retained");
+    const exactRect = T.nodeRect(textNode());
+    assert.strictEqual(exactRect.x, 123, "node rectangle uses exact Left pixels");
+    assert.strictEqual(exactRect.y, 87, "node rectangle uses exact Top pixels");
+    assert.strictEqual(exactRect.w, 333, "node rectangle uses exact Width pixels");
+    assert.strictEqual(exactRect.h, 111, "node rectangle uses exact Height pixels");
+    const endpointAfter = T.edgeEndpoints(T.state.edges[0]).pa;
+    assert(endpointAfter.x !== endpointBefore.x || endpointAfter.y !== endpointBefore.y,
+      "connected links re-anchor after precision geometry changes");
+
+    const layout = T.textBoxLayout(textNode());
+    const noMargins = T.textBoxLayout({...textNode(), textMarginTop:0, textMarginRight:0,
+      textMarginBottom:0, textMarginLeft:0});
+    assert.strictEqual(layout.maxWidth, noMargins.maxWidth - 40,
+      "left and right margins reduce the available text width");
+    assert.strictEqual(layout.textX, noMargins.textX + 10,
+      "asymmetric horizontal margins move the text center");
+    assert.strictEqual(layout.centerY, noMargins.centerY + 7.5,
+      "asymmetric vertical margins move the text center");
+    const renderedLine = doc.querySelector('[data-text-box="txt"] [data-text-line="1"]');
+    assert.strictEqual(Number(renderedLine.getAttribute("x")), layout.textX,
+      "rendered text uses the margin-adjusted horizontal position");
+
+    textNode().title = "First explicit line\nSecond explicit line";
+    T.setTextBoxWrapping(textNode(), false);
+    T.render();
+    sameList(T.textBoxLayout(textNode()).lines, ["First explicit line", "Second explicit line"],
+      "no-wrap mode preserves explicit newlines without adding automatic wraps");
+    const saved = T.serializeDocument();
+    const savedText = JSON.parse(saved).nodes.find(n => n.id === "txt");
+    assert.strictEqual(savedText.wrapText, false, "disabled wrapping persists");
+    assert.deepStrictEqual(
+      [savedText.textMarginTop, savedText.textMarginRight, savedText.textMarginBottom, savedText.textMarginLeft],
+      [20, 10, 5, 30], "all margins persist");
+    assert.strictEqual(savedText.manualWidth, true, "forced width persists");
+    assert.strictEqual(savedText.w, 333, "exact width persists");
+    assert.strictEqual(savedText.manualHeight, true, "forced height persists");
+    assert.strictEqual(savedText.h, 111, "exact height persists");
+
+    T.duplicateSelection();
+    const copy = T.state.nodes.find(n => n.type === "text" && n.id !== "txt");
+    assert(copy && copy.wrapText === false && copy.manualHeight === true && copy.h === 111,
+      "duplicate preserves advanced text-box layout settings");
+    sameList(T.textBoxMargins(copy), {top:20, right:10, bottom:5, left:30},
+      "duplicate preserves all text margins");
+
+    T.importDocText(saved);
+    assert.strictEqual(T.nodeRect(textNode()).w, 333, "exact width survives reload");
+    assert.strictEqual(T.nodeRect(textNode()).h, 111, "exact height survives reload");
+    assert.strictEqual(T.textBoxWrapEnabled(textNode()), false, "no-wrap mode survives reload");
+
+    T.setSelection("node", "txt");
+    T.nodeMenu(textNode(), 20, 20);
+    const reset = doc.querySelector('[data-ctx-action="reset-size"]');
+    assert(reset && !reset.disabled, "Reset size enables for a precision-sized text box");
+    reset.click();
+    assert.strictEqual(textNode().manualWidth, undefined, "Reset size clears precision width");
+    assert.strictEqual(textNode().manualHeight, undefined, "Reset size clears precision height");
+    assert.strictEqual(textNode().h, undefined, "Reset size restores automatic text-box height");
+
+    T.selectNode("idea");
+    assert(!doc.querySelector('[data-inspector-section="text:advanced"]'),
+      "text-box Advanced controls do not leak into other node inspectors");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+      {id:"legacy", type:"text", x:0, y:0, title:"Legacy", color:"#CFE8FF", w:260},
+      {id:"invalid", type:"text", x:200, y:0, title:"Invalid", color:"#CFE8FF", w:260,
+       wrapText:"false", textMarginTop:-10, textMarginRight:999,
+       textMarginBottom:"bad", manualHeight:true, h:"bad"},
+      {id:"height-only", type:"text", x:400, y:0, title:"Height", color:"#CFE8FF", w:260,
+       manualHeight:true, h:140},
+      {id:"narrow", type:"text", x:700, y:0, title:"N", color:"#CFE8FF",
+       manualWidth:true, w:45}
+    ]}));
+    const legacy = T.state.nodes.find(n => n.id === "legacy");
+    const invalid = T.state.nodes.find(n => n.id === "invalid");
+    assert.strictEqual(T.textBoxWrapEnabled(legacy), true, "legacy documents retain default wrapping");
+    assert.strictEqual(T.textBoxWrapEnabled(invalid), true, "non-boolean no-wrap values are rejected");
+    sameList(T.textBoxMargins(invalid), {top:0, right:400, bottom:0, left:0},
+      "import clamps margins and removes invalid values");
+    assert.strictEqual(invalid.manualHeight, undefined, "invalid manual height is removed on import");
+    assert.strictEqual(invalid.h, undefined, "invalid height pixels are removed on import");
+    const narrow = T.state.nodes.find(n => n.id === "narrow");
+    assert.strictEqual(T.nodeRect(narrow).w, 45,
+      "plain-text precision width preserves values below the generic node-width floor");
+    assert.strictEqual(JSON.parse(T.serializeDocument()).nodes.find(n => n.id === "narrow").w, 45,
+      "narrow precision width survives serialization");
+    const compactLegacy = JSON.parse(T.serializeDocument()).nodes.find(n => n.id === "legacy");
+    for (const key of ["wrapText", "textMarginTop", "textMarginRight", "textMarginBottom",
+      "textMarginLeft", "manualHeight", "h"])
+      assert(!Object.hasOwn(compactLegacy, key), `legacy text omits default ${key} metadata`);
+
+    const heightOnly = T.state.nodes.find(n => n.id === "height-only");
+    assert.strictEqual(T.hasForcedNodeSize(heightOnly), true,
+      "height-only precision sizing counts as forced size");
+    T.setSelection("node", heightOnly.id);
+    assert.strictEqual(T.resetSelectionSizes(), 1, "Reset size handles height-only text boxes");
+    assert.strictEqual(heightOnly.manualHeight, undefined, "height-only Reset size clears the force flag");
+    assert.strictEqual(heightOnly.h, undefined, "height-only Reset size returns to automatic height");
   }
 
   /* SCH-079 — blank-canvas context menu */

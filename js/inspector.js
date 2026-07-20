@@ -464,10 +464,54 @@ function renderInspector(){
           return control;
         });
       });
-      inspectorSection("text:layout", "Layout", () => {
-        frow("Maximum width", () => sizeStepper(n.w || TEXT_W_DEFAULT, 80, 720, 20,
-          (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); },
-          {ariaLabel:"Maximum width"}));
+      inspectorSection("text:advanced", "Advanced", () => {
+        const precisionValue = value => Math.round(Number(value) * 100) / 100;
+        const update = (key, current, value, commit, apply) => {
+          if (Math.abs(Number(current) - Number(value)) < .000001){
+            if (commit) render();
+            return;
+          }
+          pushHistory(`${key}:${n.id}`);
+          apply(value);
+          commit ? render() : drawOnly();
+        };
+        const wrap = textBoxWrapEnabled(n);
+        frow("Wrap text", () => {
+          const button = mkFlag(wrap ? "On" : "Off", wrap, enabled => {
+            setTextBoxWrapping(n, enabled);
+            render();
+          });
+          button.id = "textBoxWrap";
+          button.setAttribute("aria-label", "Wrap text");
+          button.setAttribute("aria-pressed", String(wrap));
+          return button;
+        });
+        frow("Left", () => sizeStepper(precisionValue(n.x), -100000, 100000, 1,
+          (v, commit) => update("text-left", n.x, v, commit, next => { n.x = next; }),
+          {ariaLabel:"Text box left"}));
+        frow("Top", () => sizeStepper(precisionValue(n.y), -100000, 100000, 1,
+          (v, commit) => update("text-top", n.y, v, commit, next => { n.y = next; }),
+          {ariaLabel:"Text box top"}));
+        const rect = nodeRect(n);
+        frow("Width", () => sizeStepper(precisionValue(rect.w), TEXT_W_MIN, 4000, 1,
+          (v, commit) => update("text-width", manualNodeWidth(n) ?? rect.w, v, commit,
+            next => { setNodeWidth(n, next); }),
+          {ariaLabel:"Text box width"}));
+        frow("Height", () => sizeStepper(precisionValue(rect.h), TEXT_H_MIN, TEXT_H_MAX, 1,
+          (v, commit) => update("text-height", manualNodeHeight(n) ?? rect.h, v, commit,
+            next => { setTextBoxHeight(n, next); }),
+          {ariaLabel:"Text box height"}));
+        for (const [side, label] of [["top","Top margin"], ["right","Right margin"],
+          ["bottom","Bottom margin"], ["left","Left margin"]]){
+          frow(label, () => sizeStepper(textBoxMargin(n, side), 0, TEXT_MARGIN_MAX, 1,
+            (v, commit) => update(`text-margin-${side}`, textBoxMargin(n, side), v, commit,
+              next => { setTextBoxMargin(n, side, next); }),
+            {ariaLabel:label}));
+        }
+        const help = document.createElement("div");
+        help.className = "helper";
+        help.textContent = "Position and dimensions use canvas pixels. Margins inset the text inside its box.";
+        appendInspector(help);
       }, {open:false});
     } else if (n.type === "status"){
       inspectorSection("status:basics", "Basics", () => {
@@ -829,6 +873,8 @@ function renderMultiInspector(){
 
 /* swap an edge's direction, carrying row bindings and pinned anchor points */
 function swapEdgeDirection(e){
+  const hadLabelPosition = Object.hasOwn(e, "labelPosition");
+  const labelPosition = edgeLabelPosition(e);
   const t = e.from; e.from = e.to; e.to = t;
   const tf = e.fromField;
   if (e.toField !== undefined) e.fromField = e.toField; else delete e.fromField;
@@ -836,6 +882,7 @@ function swapEdgeDirection(e){
   const ta = e.fromAnchor;
   if (e.toAnchor !== undefined) e.fromAnchor = e.toAnchor; else delete e.fromAnchor;
   if (ta !== undefined) e.toAnchor = ta; else delete e.toAnchor;
+  if (hadLabelPosition) setEdgeLabelPosition(e, 1 - labelPosition);
 }
 /* pick one of the 9 attachment points for a whole-node edge end */
 function anchorRow(which, e, key){

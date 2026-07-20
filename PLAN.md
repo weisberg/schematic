@@ -91,6 +91,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "edges": [
     { "id": "n9", "from": "n5", "to": "n6", "kind": "1:N", "label": "",
       "labelTextColor": "#C20029", "labelBackgroundColor": "#FFFFFF",
+      "labelPosition": 0.64,
       "fromField": "f_cust_pk", "toField": "f_ord_cust",
       "pairs": [{ "fromField": "f_cust_pk", "toField": "f_ord_cust" }] }
   ]
@@ -104,13 +105,21 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - Rich-note nodes (v1.7): `{ "id":"n14", "type":"note", "x":0, "y":0,
   "title":"Decision context", "content":"## Evidence\n- **Strong** signal", "color":"#FFE9A8",
   "fontSize":13, "w":300 }` — `content` stores Markdown-style source; `w` is optional.
+- Plain-text nodes (v1.25): `{ "id":"n16", "type":"text", "x":120, "y":80,
+  "title":"Section heading", "shape":"process", "color":"#CFE8FF", "fontSize":24,
+  "w":320, "manualWidth":true, "h":96, "manualHeight":true, "wrapText":false,
+  "textMarginTop":12, "textMarginRight":16, "textMarginBottom":12,
+  "textMarginLeft":16 }`. Wrapping defaults on and therefore writes no key; only the explicit
+  off state writes `wrapText:false`. Margins are optional 0–400px text insets, with zero omitted.
+  `manualHeight:true` makes `h` the exact rendered height (20–4000px) and is valid only for text.
 - Status nodes (v1.17): `{ "id":"n15", "type":"status", "x":0, "y":0,
   "title":"Launch approval", "status":"In progress", "statusSide":"right",
   "color":"#CFE8FF", "fontSize":18, "w":320 }`. `statusSide` is `left|right`;
   `status` is one built-in label or a document-wide custom label.
 - Any node may include `manualWidth:true` with `w` (v1.16, additive) after a multi-selection
   width-matching action. Without the flag, each node type keeps its legacy auto/default sizing;
-  with the flag, `w` is the exact rendered width (clamped to 80–4000). Text, note, frame, and
+  with the flag, `w` is the exact rendered width (32–4000 for plain text; 80–4000 otherwise).
+  Text, note, frame, and
   swimlane nodes may also carry `widthBeforeMatch` so Reset size can restore their prior configured
   width; it is absent for content-sized concepts, tables, and to-dos.
 - Concept nodes may include optional `shape` ∈ `process|rectangle|decision|terminator|data|document|manualInput|triangle|circle|square`.
@@ -130,6 +139,9 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - `labelTextColor` and `labelBackgroundColor` are optional edge-label overrides. Absent
   text color inherits the live edge color; absent background color inherits the active
   theme label background, preserving the appearance of existing documents.
+- `labelPosition` (v1.26, additive) is an optional normalized cumulative-distance position
+  from 0 (start) to 1 (end) along the rendered edge path. Absent = 0.5, preserving the
+  legacy half-length label placement; dragging back to the midpoint removes the key.
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
 - Table nodes may include `collapsed`; collapsed tables render header + field count.
 - `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
@@ -154,7 +166,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 | Area | Functions |
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
-| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
+| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `textBoxLayout`, `textBoxMargins`, `manualNodeHeight`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
 | Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
@@ -221,6 +233,11 @@ Harness quirks you must respect:
 - Rich-note nodes: title plus safe Markdown-style multiline content (headings, lists,
   tasks, blockquotes, bold, italic, and inline code), folded-note canvas rendering,
   configurable width/color/type, palette search, Markdown export, and node-level links.
+- Plain-text nodes: text-only or standard flowchart-shape rendering, automatic wrapping by
+  default, explicit-newline support, and Advanced inspector controls for exact canvas-pixel
+  left/top/width/height, independent text margins, and an optional no-wrap mode. Exact sizing
+  participates in Reset size; links, hit testing, save/load, duplicate, and SVG export follow
+  the resulting geometry.
 - Status nodes: wrapped text plus a colored left/right status band; five built-in states,
   per-node selection, and a diagram-wide custom-label catalog edited in the inspector.
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
@@ -257,6 +274,10 @@ Harness quirks you must respect:
   and solid/dashed/dotted style through both the inspector and context menu. Existing
   links retain dashed defaults, relations retain solid defaults, and old documents gain
   no arrowheads. Styled lines and arrowheads remain portable in SVG/PNG exports.
+- Edge labels can be dragged directly along either curved or orthogonal paths. The label
+  continuously projects onto the visible line, remains attached when endpoints or an
+  orthogonal waypoint move, round-trips through JSON, and preserves its visual location
+  when link direction is swapped. An untouched label remains at the legacy midpoint.
 
 **To-do lists (v1.1)**
 - Third node type `todo`: titled list of checkable items with a `done/total` progress
@@ -1562,6 +1583,36 @@ key so legacy documents and new default nodes remain visually and structurally u
 AC: Rectangle is distinct from Process in SVG output, long titles wrap without clipping, standard
 rectangular hit testing and edge anchoring remain intact, selection surfaces expose the option, the
 explicit value round-trips through JSON, and automated plus browser interaction/visual QA pass.
+
+---
+
+**SCH-099 · Advanced plain-text layout controls · P1 · M · Done 2026-07-20**
+
+Add a collapsed Advanced subsection to the plain-text inspector with independent top, right, bottom,
+and left text margins; a wrapping toggle that defaults on; and exact canvas-pixel Left, Top, Width,
+and Height controls. Preserve the existing content-sized behavior until an exact dimension is edited.
+
+AC: the controls are scoped to plain-text nodes and use one-pixel steps; no-wrap mode preserves explicit
+newlines without adding automatic line breaks; margins inset and reposition the rendered text; exact
+coordinates and dimensions update hit geometry and connected-link anchors; optional fields round-trip
+through JSON and duplicate while legacy documents remain compact and unchanged; Reset size clears both
+forced width and forced height; inspector numeric steppers use a compact half-width treatment; live edits
+coalesce into one undo step; automated and browser visual/interaction QA pass.
+
+---
+
+**SCH-100 · Draggable path-constrained edge labels · P1 · M · Done 2026-07-20**
+
+Make every visible edge-label pill directly draggable. Project the pointer onto the rendered
+cubic Bézier or orthogonal polyline during movement and store an optional normalized cumulative
+path position, rather than free canvas coordinates, so the label can never detach from its link.
+
+AC: curved links, relationship curves, automatic orthogonal routes, and custom orthogonal routes
+all constrain labels to their visible line; endpoint and waypoint changes retain the normalized
+position; direction swap reverses it to preserve the visual location; untouched legacy labels keep
+their exact half-length placement; drag is one undo step; double-press editing still works at the
+moved location; invalid imports fall back safely; JSON, copy/paste, SVG/PNG, automated tests, and
+browser interaction/visual QA pass.
 
 ---
 
