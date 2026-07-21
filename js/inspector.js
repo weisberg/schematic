@@ -884,14 +884,14 @@ function swapEdgeDirection(e){
   if (ta !== undefined) e.toAnchor = ta; else delete e.toAnchor;
   if (hadLabelPosition) setEdgeLabelPosition(e, 1 - labelPosition);
 }
-/* pick one of the 9 attachment points for a whole-node edge end */
-function anchorRow(which, e, key){
+/* pick a whole-node attachment point; table ends also offer title left/right */
+function anchorRow(which, node, e, key){
   frow(which + " point", () => {
     const s = document.createElement("select");
     const o0 = document.createElement("option");
     o0.value = ""; o0.textContent = "(auto — nearest point)";
     s.appendChild(o0);
-    for (const k of NODE_ANCHORS){
+    for (const k of nodeAnchorKeys(node)){
       const o = document.createElement("option");
       o.value = k; o.textContent = ANCHOR_LABELS[k];
       if (e[key] === k) o.selected = true;
@@ -944,7 +944,7 @@ function renderEdgeEndControls(a, b, e){
     grid.appendChild(column);
     inspectorMount = column;
     attachRow(end.which, end.node, e, end.fieldKey);
-    if (!end.bound) anchorRow(end.which, e, end.anchorKey);
+    if (!end.bound) anchorRow(end.which, end.node, e, end.anchorKey);
   }
   inspectorMount = previous;
 }

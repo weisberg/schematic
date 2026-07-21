@@ -538,26 +538,24 @@ function containerContainedNodes(container){
 }
 function frameContainedNodes(frame){ return containerContainedNodes(frame); }
 
-/* point on rect boundary toward an external point */
-function anchorOnRect(r, px, py){
-  const dx = px - r.cx, dy = py - r.cy;
-  if (dx === 0 && dy === 0) return { x:r.cx, y:r.cy, side:"e" };
-  const sx = (r.w/2) / Math.abs(dx || 1e-9), sy = (r.h/2) / Math.abs(dy || 1e-9);
-  const s = Math.min(sx, sy);
-  const x = r.cx + dx*s, y = r.cy + dy*s;
-  let side;
-  if (s === sx) side = dx > 0 ? "e" : "w"; else side = dy > 0 ? "s" : "n";
-  return { x, y, side };
-}
-
 /* 9 node attachment points (3×3): top/middle/bottom × left/center/right.
    Whole-node edge ends snap to the nearest perimeter point automatically;
    an explicit point is stored on the edge as fromAnchor/toAnchor (additive, E8). */
 const NODE_ANCHORS = ["tl","tc","tr","ml","mc","mr","bl","bc","br"];
 const PERIMETER_ANCHORS = ["tl","tc","tr","ml","mr","bl","bc","br"];
+const TABLE_TITLE_ANCHORS = ["hl","hr"];
+const TABLE_NODE_ANCHORS = [...NODE_ANCHORS, ...TABLE_TITLE_ANCHORS];
+const TABLE_PERIMETER_ANCHORS = [...PERIMETER_ANCHORS, ...TABLE_TITLE_ANCHORS];
 const ANCHOR_LABELS = { tl:"Top left", tc:"Top center", tr:"Top right",
                         ml:"Middle left", mc:"Center", mr:"Middle right",
-                        bl:"Bottom left", bc:"Bottom center", br:"Bottom right" };
+                        bl:"Bottom left", bc:"Bottom center", br:"Bottom right",
+                        hl:"Title left", hr:"Title right" };
+function nodeAnchorKeys(n){
+  return n && n.type === "table" ? TABLE_NODE_ANCHORS : NODE_ANCHORS;
+}
+function dropAnchorKeys(n){
+  return n && n.type === "table" ? TABLE_PERIMETER_ANCHORS : PERIMETER_ANCHORS;
+}
 function anchorPointsForRect(r){
   return {
     tl:{x:r.x,     y:r.y},       tc:{x:r.cx, y:r.y},       tr:{x:r.x+r.w, y:r.y},
@@ -584,8 +582,7 @@ function rayPolygonBoundary(r, ref, points){
   return best ? {x:best.x, y:best.y} : {x:ref.x, y:ref.y};
 }
 /* Non-rectangular concept anchors sit on the rendered shape, not its bounding box. */
-function conceptBoundaryPoint(n, r, ref){
-  const shape = visualNodeShape(n);
+function conceptBoundaryPoint(n, r, ref, shape = visualNodeShape(n)){
   if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)) return { x:ref.x, y:ref.y };
   const dx = ref.x - r.cx, dy = ref.y - r.cy;
   if (!dx && !dy) return { x:r.cx, y:r.cy };
@@ -600,10 +597,15 @@ function conceptBoundaryPoint(n, r, ref){
   const scale = 1 / (Math.abs(dx) / (r.w/2) + Math.abs(dy) / (r.h/2));
   return { x:r.cx + dx * scale, y:r.cy + dy * scale };
 }
-function anchorPointsForNode(n, r = nodeRect(n)){
+function anchorPointsForNode(n, r = nodeRect(n), shape = visualNodeShape(n)){
   const pts = anchorPointsForRect(r);
-  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(visualNodeShape(n))) return pts;
-  for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key]);
+  if (n && n.type === "table"){
+    const titleY = r.y + tableMetrics(n).headerH/2;
+    pts.hl = {x:r.x, y:titleY};
+    pts.hr = {x:r.x+r.w, y:titleY};
+  }
+  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)) return pts;
+  for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key], shape);
   return pts;
 }
 /* outward side of an anchor point, for curve control points and crow's feet;
@@ -613,6 +615,8 @@ function anchorSideFor(key, p, ref){
   if (key === "bc") return "s";
   if (key === "ml") return "w";
   if (key === "mr") return "e";
+  if (key === "hl") return "w";
+  if (key === "hr") return "e";
   const horiz = Math.abs(ref.x - p.x) >= Math.abs(ref.y - p.y);
   if (key === "tl") return horiz ? "w" : "n";
   if (key === "tr") return horiz ? "e" : "n";
@@ -622,11 +626,12 @@ function anchorSideFor(key, p, ref){
 }
 function nodeAnchor(n, key, ref){
   const r = nodeRect(n);
-  const pts = anchorPointsForNode(n, r);
+  const shape = visualNodeShape(n);
+  const pts = anchorPointsForNode(n, r, shape);
   let k = key && pts[key] ? key : null;
   /* Unpinned non-rectangular concepts use their actual silhouette intersection. */
-  if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(visualNodeShape(n))){
-    const p = conceptBoundaryPoint(n, r, ref);
+  if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)){
+    const p = conceptBoundaryPoint(n, r, ref, shape);
     const dx = ref.x - r.cx, dy = ref.y - r.cy;
     const horiz = Math.abs(dx) / r.w >= Math.abs(dy) / r.h;
     return { x:p.x, y:p.y, side:horiz ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n"), key:null };
@@ -642,11 +647,11 @@ function nodeAnchor(n, key, ref){
   const p = pts[k];
   return { x:p.x, y:p.y, side:anchorSideFor(k, p, ref), key:k };
 }
-/* nearest perimeter point within tolerance — used to pin the drop end of a drag */
+/* nearest visible attachment point within tolerance — used to pin a drag's drop end */
 function nearestAnchorWithin(n, w, tol = 16){
   const pts = anchorPointsForNode(n);
   let best = null, bd = tol*tol;
-  for (const key of PERIMETER_ANCHORS){
+  for (const key of dropAnchorKeys(n)){
     const p = pts[key];
     const d = (p.x - w.x)**2 + (p.y - w.y)**2;
     if (d <= bd){ bd = d; best = { key, x:p.x, y:p.y }; }

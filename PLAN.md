@@ -132,8 +132,9 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - `fromField`/`toField` are optional row-id bindings (field- or item-level anchoring).
 - `fromAnchor`/`toAnchor` (v1.3, additive) optionally pin a whole-node edge end to one of
   the 9 attachment points ∈ `tl|tc|tr|ml|mc|mr|bl|bc|br` (3×3: top/middle/bottom ×
-  left/center/right). Absent = auto: the end snaps to the nearest perimeter point toward
-  the other end. Ignored when that end is row-bound.
+  left/center/right). Tables additionally accept `hl|hr` (v1.27) for the middle-left and
+  middle-right of the title header. Absent = auto: the end snaps to the nearest perimeter
+  point toward the other end. Ignored when that end is row-bound.
 - `pairs` is optional and supersedes `fromField`/`toField` for composite relations; for
   one-pair relations, both shapes may be written for backward compatibility.
 - `labelTextColor` and `labelBackgroundColor` are optional edge-label overrides. Absent
@@ -166,7 +167,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 | Area | Functions |
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
-| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `textBoxLayout`, `textBoxMargins`, `manualNodeHeight`, `fieldRowCenterY`, `fieldAnchor`, `anchorOnRect`, `clientToWorld`, `hitTest(worldPt)` |
+| Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `textBoxLayout`, `textBoxMargins`, `manualNodeHeight`, `fieldRowCenterY`, `fieldAnchor`, `nodeAnchor`, `clientToWorld`, `hitTest(worldPt)` |
 | Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
@@ -326,12 +327,16 @@ Harness quirks you must respect:
 - Every non-frame node exposes 9 attachment points (3×3 grid; corners, edge midpoints,
   center). Whole-node edge ends snap to the nearest perimeter point automatically and
   re-snap as nodes move.
+- Tables expose two additional title anchors at the middle-left and middle-right of the
+  header. They behave like the existing row handles but store whole-table `hl` / `hr`
+  bindings, remain available when a table is collapsed, and never masquerade as field rows.
 - Hovering a node reveals the point handles (the right-middle one stays visible as the
   primary connect affordance); dragging from a specific point pins that end
   (`fromAnchor`), and dropping within 16px of a target's point pins the other end
   (`toAnchor`) — pinned ends draw an anchor dot. Drops elsewhere stay on auto.
 - The edge inspector offers "From point"/"To point" selectors ((auto) + the 9 points,
-  center included) for ends without a row binding; Swap direction carries pinned points;
+  center included, plus title-left/title-right for table ends) for ends without a row binding;
+  Swap direction carries pinned points;
   copy/paste/duplicate preserve them; JSON round-trips them (`swapEdgeDirection`,
   `nodeAnchor`, `anchorPointsForRect`, `nearestAnchorWithin`).
 - Row-level (field/item) anchoring is unchanged and takes precedence over node points.
@@ -700,7 +705,7 @@ AC: seeded violations produce expected rule hits; clean seed produces zero error
 - Table `notes` (key exists) get the same textarea as concepts + dot indicator.
 - `collapsed: true` on a table renders header only (+ `n fields` count); toggle via
   context menu and a chevron in the header. Edges bound to fields of a collapsed table
-  anchor to the node boundary (fall through to `anchorOnRect` when collapsed —
+  anchor to the node boundary (fall through to `nodeAnchor` when collapsed —
   modify `edgeEndpoints` guard).
 
 AC: collapse hides rows, edges re-anchor, hitTest returns no field, expand restores;
@@ -964,7 +969,7 @@ sync, serializer round-trip.
   bindings stored in the existing `fromField`/`toField` keys; anchor dots on bound ends.
 - Inspector edge editor: attachment dropdowns for a todo end list its items ("whole list"
   + one entry per item text).
-- Collapsed todos: bound edges fall back to `anchorOnRect` (same guard as collapsed
+- Collapsed todos: bound edges fall back to `nodeAnchor` (same guard as collapsed
   tables in `edgeEndpoints`).
 - Deleting an item cleans its edge refs (`cleanFieldRefs`); deleting the node removes
   attached edges (existing behavior — verify).
@@ -1613,6 +1618,19 @@ position; direction swap reverses it to preserve the visual location; untouched 
 their exact half-length placement; drag is one undo step; double-press editing still works at the
 moved location; invalid imports fall back safely; JSON, copy/paste, SVG/PNG, automated tests, and
 browser interaction/visual QA pass.
+
+---
+
+**SCH-101 · Table-title left/right link anchors · P1 · S · Done 2026-07-21**
+
+Add dedicated link handles at the vertical center of both sides of every table title. These
+are additive whole-table anchor keys (`hl` / `hr`), not synthetic field ids, so row-level
+relations, SQL export, and existing `ml` / `mr` link positions remain unchanged.
+
+AC: expanded and collapsed tables render both title handles; links can start from or snap to
+either title handle; endpoints route from the exact header midpoint; the edge inspector exposes
+the two table-only positions; JSON, undo/redo, SVG/PNG handle stripping, legacy anchors,
+automated tests, and browser interaction/visual QA pass.
 
 ---
 

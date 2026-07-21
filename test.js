@@ -4489,6 +4489,85 @@ if (process.argv.includes("--api-surface")){
       "new-node creation focuses the revealed title input");
   }
 
+  /* SCH-101 — table titles expose dedicated left/right link anchors */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:10, edges:[], nodes:[
+      {id:"tbl", type:"table", x:100, y:100, title:"accounts", notes:"", color:"#007873", fields:[
+        {id:"acct_id", name:"account_id", type:"INT", pk:true, fk:false, nullable:false},
+        {id:"acct_name", name:"name", type:"VARCHAR(255)", pk:false, fk:false, nullable:false}
+      ]},
+      {id:"idea", type:"concept", x:520, y:100, title:"Account strategy", notes:"", color:"#CFE8FF"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    let table = T.state.nodes.find(n => n.id === "tbl");
+    const target = T.state.nodes.find(n => n.id === "idea");
+    const tableRect = T.nodeRect(table), targetRect = T.nodeRect(target);
+    const titleY = T.tableMetrics(table).headerH/2;
+    let tableGroup = doc.querySelector('[data-node="tbl"]');
+    const titleHandles = [...tableGroup.querySelectorAll("[data-table-title-anchor]")];
+    sameList(titleHandles.map(handle => handle.getAttribute("data-anchor")), ["hl","hr"],
+      "tables render left and right title anchors");
+    assert.strictEqual(Number(titleHandles[0].querySelectorAll("circle")[1].getAttribute("cy")), titleY,
+      "the title anchors sit at the vertical center of the table header");
+    assert.strictEqual(Number(titleHandles[0].querySelectorAll("circle")[1].getAttribute("cx")), 0,
+      "the left title anchor sits on the table's left edge");
+    assert.strictEqual(Number(titleHandles[1].querySelectorAll("circle")[1].getAttribute("cx")), tableRect.w,
+      "the right title anchor sits on the table's right edge");
+    assert.strictEqual(tableGroup.querySelectorAll("[data-fieldhandle]").length, table.fields.length * 2,
+      "dedicated title anchors do not replace or duplicate row-bound handles");
+    assert.strictEqual(doc.querySelector('[data-node="idea"] [data-table-title-anchor]'), null,
+      "non-table nodes do not gain table-title anchors");
+
+    table.collapsed = true;
+    T.render();
+    tableGroup = doc.querySelector('[data-node="tbl"]');
+    assert.strictEqual(tableGroup.querySelectorAll("[data-table-title-anchor]").length, 2,
+      "collapsed tables retain both title anchors");
+    table.collapsed = false;
+    T.render();
+
+    tableGroup = doc.querySelector('[data-node="tbl"]');
+    const rightTitleHandle = tableGroup.querySelector('[data-table-title-anchor="hr"]');
+    const historyBeforeConnect = T.undoDepth;
+    firePointer(window, rightTitleHandle, "pointerdown", {
+      clientX:tableRect.x + tableRect.w, clientY:tableRect.y + titleY
+    });
+    const board = doc.getElementById("board");
+    firePointer(window, board, "pointermove", {clientX:targetRect.x, clientY:targetRect.cy});
+    firePointer(window, board, "pointerup", {clientX:targetRect.x, clientY:targetRect.cy});
+    assert.strictEqual(T.state.edges.length, 1, "dragging a title anchor creates a link");
+    let edge = T.state.edges[0];
+    assert.strictEqual(edge.fromAnchor, "hr", "the source remains pinned to the right title anchor");
+    assert.strictEqual(edge.toAnchor, "ml", "the drop end pins to the target's nearest standard anchor");
+    assert(!edge.fromField, "a title-bound link is not misidentified as a field-row binding");
+    assert.strictEqual(T.undoDepth, historyBeforeConnect + 1, "creating a title-bound link is one undo step");
+    const endpoints = T.edgeEndpoints(edge);
+    closeEnough(endpoints.pa.x, tableRect.x + tableRect.w, "title-bound endpoint x");
+    closeEnough(endpoints.pa.y, tableRect.y + titleY, "title-bound endpoint y");
+    assert([...doc.querySelectorAll("#inspBody select option")].some(option => option.textContent === "Title left") &&
+           [...doc.querySelectorAll("#inspBody select option")].some(option => option.textContent === "Title right"),
+      "the edge inspector offers both table title anchors");
+
+    const saved = JSON.parse(T.serializeDocument());
+    assert.strictEqual(saved.edges[0].fromAnchor, "hr", "table-title bindings persist in document JSON");
+    assert(!T.serializedSvg(true).includes("data-table-title-anchor"),
+      "SVG export removes table-title editing handles");
+    T.undo();
+    assert.strictEqual(T.state.edges.length, 0, "undo removes the title-bound link");
+    T.redo();
+    edge = T.state.edges[0];
+    assert.strictEqual(edge.fromAnchor, "hr", "redo restores the title-bound endpoint");
+
+    saved.edges[0].fromAnchor = "mr";
+    T.importDocText(JSON.stringify(saved));
+    edge = T.state.edges[0];
+    assert.strictEqual(edge.fromAnchor, "mr", "legacy whole-node anchor keys remain unchanged");
+    assert.strictEqual(T.edgeEndpoints(edge).pa.y, T.nodeRect(T.state.nodes.find(n => n.id === "tbl")).cy,
+      "legacy middle-right links keep their historical table midpoint");
+  }
+
   /* scheme theme overrides follow light/dark toggling */
   {
     const { window } = makeDom();

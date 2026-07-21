@@ -48,14 +48,17 @@ function render(){
   draftLayer.innerHTML = "";
   const hidden = collapsedFrameHiddenNodeIds();
   const proxies = collapsedFrameProxyMap(hidden);
-  for (const n of state.nodes) if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
+  let frames = 0, lanes = 0;
+  for (const n of state.nodes){
+    if (n.type === "frame") frames++;
+    else if (n.type === "swimlane") lanes++;
+    if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
+  }
   for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
   for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
   for (const n of state.nodes)
     if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
-  const frames = state.nodes.filter(n => n.type === "frame").length;
-  const lanes = state.nodes.filter(n => n.type === "swimlane").length;
   const nodes = state.nodes.length - frames - lanes;
   const structural = [frames ? `${frames} frame${frames === 1 ? "" : "s"}` : "",
                       lanes ? `${lanes} lane${lanes === 1 ? "" : "s"}` : ""].filter(Boolean);
@@ -287,9 +290,6 @@ function curveEdgePointAt(pa, pb, position){
     remaining -= segment.length;
   }
   return {x:pb.x, y:pb.y};
-}
-function curveEdgeMidpoint(pa, pb){
-  return curveEdgePointAt(pa, pb, .5);
 }
 function curveEdgeCommand(pa, pb){
   const {c1, c2} = curveEdgeControlPoints(pa, pb);
@@ -1021,20 +1021,23 @@ function drawNode(n){
     }
   }
 
-  /* 9 attachment points (3×3): drag from a point to pin the connection to it.
-     mr stays always-visible as the primary connect affordance; the rest reveal
-     on hover (anchorhandle class — stripped from PNG/SVG via [data-handle]). */
+  /* Standard attachment points plus table-only title-left/title-right anchors.
+     mr stays always-visible as the primary whole-node affordance. Table title
+     anchors reveal like row handles and bind to the title, never to a field. */
   const anchorPts = anchorPointsForNode(n, { x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
-  for (const key of NODE_ANCHORS){
+  const cleanText = n.type === "text" && textBoxShape(n) === "none";
+  for (const key of nodeAnchorKeys(n)){
     const p = anchorPts[key];
-    const cleanText = n.type === "text" && textBoxShape(n) === "none";
+    const tableTitle = key === "hl" || key === "hr";
     const primaryVisible = key === "mr" && (!cleanText || selected);
-    const hg = el("g", {class: primaryVisible ? "" : "anchorhandle",
-                        "data-handle": n.id, "data-anchor": key, cursor:"crosshair"}, g);
-    el("circle", {cx:p.x, cy:p.y, r: key === "mc" ? 8 : 12, fill:"transparent"}, hg);
-    el("circle", {cx:p.x, cy:p.y, r: key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
-                  stroke: selected ? t.accent : t.ink, "stroke-width":1.4,
-                  opacity: selected ? 1 : .55}, hg);
+    const attrs = {class: tableTitle ? "fieldhandle tabletitlehandle" : primaryVisible ? "" : "anchorhandle",
+                   "data-handle": n.id, "data-anchor": key, cursor:"crosshair"};
+    if (tableTitle) attrs["data-table-title-anchor"] = key;
+    const hg = el("g", attrs, g);
+    el("circle", {cx:p.x, cy:p.y, r: tableTitle || key !== "mc" ? 12 : 8, fill:"transparent"}, hg);
+    el("circle", {cx:p.x, cy:p.y, r: !tableTitle && key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
+                  stroke: tableTitle || selected ? t.accent : t.ink, "stroke-width":1.4,
+                  opacity: tableTitle || selected ? 1 : .55}, hg);
   }
 }
 /* per-row connect handles (left + right of each row) — tables and todos */

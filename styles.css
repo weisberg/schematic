@@ -170,8 +170,7 @@
   .inspector-actions{position:sticky;bottom:0;z-index:2;display:flex;flex-direction:column;gap:7px;margin-top:auto;
                      padding:8px 14px 9px;border-top:1px solid var(--line);background:var(--panel);
                      box-shadow:0 -8px 18px rgba(10,20,30,.04)}
-  .inspector-actions .rowbtns button{flex:1}
-  .inspector-actions .rowbtns button{min-width:0;padding-left:7px;padding-right:7px;white-space:nowrap}
+  .inspector-actions .rowbtns button{flex:1;min-width:0;padding-left:7px;padding-right:7px;white-space:nowrap}
   .inspector-actions>.dangerbtn{width:100%}
   .frow{display:flex;flex-direction:column;gap:5px}
   .frow label{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--muted)}
@@ -199,8 +198,8 @@
   .color-current-preview{width:30px;height:30px;border:1px solid rgba(22,35,47,.22);border-radius:7px;
                          box-shadow:inset 0 0 0 1px rgba(255,255,255,.55)}
   .color-current-copy{display:grid;min-width:0;grid-template-columns:max-content minmax(0,1fr);column-gap:7px;row-gap:1px}
-  .color-current-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--ink)}
-  .color-current-name{grid-column:1 / -1}
+  .color-current-name{grid-column:1 / -1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                      font-size:12.5px;color:var(--ink)}
   .color-current-hex{font-family:var(--mono);font-size:10.5px;letter-spacing:.035em;color:var(--muted)}
   .color-current-transparency{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10.5px;color:var(--muted)}
   .color-picker-panel{display:flex;flex-direction:column;gap:0;background:var(--panel)}
