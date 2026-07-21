@@ -627,14 +627,24 @@ function drawFrame(n){
   const selected = isSelected("node", n.id);
   const t = themeColors();
   const color = n.color || frameColorDefault();
+  const borderEnabled = frameBorderEnabled(n);
+  const borderWidth = frameBorderWidth(n);
   const collapsed = n.collapsed === true;
   const layer = collapsed ? nodeLayer : frameLayer;
   const g = el("g", {"data-node":n.id, "data-frame":n.id,
                       "data-frame-collapsed":collapsed ? "true" : "false",
                       transform:`translate(${r.x},${r.y})`, cursor:"grab"}, layer);
   el("rect", {width:r.w, height:r.h, rx:collapsed ? 9 : 14, fill:collapsed ? t.panel : color,
-              opacity:collapsed ? 1 : .10, stroke:selected ? t.accent : color,
-              "stroke-width":selected ? 2.2 : 1.4, "data-frame-surface":"1"}, g);
+              "fill-opacity":collapsed ? 1 : .10,
+              stroke:borderEnabled ? frameBorderColor(n) : "none",
+              "stroke-width":borderEnabled ? borderWidth : 0,
+              "data-frame-surface":"1", "data-frame-border":borderEnabled ? "true" : "false"}, g);
+  if (selected){
+    const offset = borderEnabled ? borderWidth / 2 + 2 : 2;
+    el("rect", {x:-offset, y:-offset, width:r.w + offset*2, height:r.h + offset*2,
+                rx:(collapsed ? 9 : 14) + offset, fill:"none", stroke:t.accent,
+                "stroke-width":2, "pointer-events":"none", "data-frame-selection":"1"}, g);
+  }
   if (collapsed){
     el("path", {d:`M 9 0 H 7 Q 0 0 0 9 V ${r.h-9} Q 0 ${r.h} 9 ${r.h} H 7 Z`,
                 fill:color, "data-frame-accent":"1"}, g);

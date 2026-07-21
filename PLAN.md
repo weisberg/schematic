@@ -116,6 +116,11 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "title":"Launch approval", "status":"In progress", "statusSide":"right",
   "color":"#CFE8FF", "fontSize":18, "w":320 }`. `statusSide` is `left|right`;
   `status` is one built-in label or a document-wide custom label.
+- Frame nodes (v1.28): `{ "id":"n17", "type":"frame", "x":0, "y":0,
+  "title":"Subject area", "color":"#007873", "w":500, "h":425,
+  "borderEnabled":true, "borderWidth":3, "borderColor":"#C20029" }`.
+  All three border fields are optional: absent `borderEnabled` means no border, width
+  defaults to 2px and clamps to 1–16px, and absent `borderColor` follows the frame color.
 - Any node may include `manualWidth:true` with `w` (v1.16, additive) after a multi-selection
   width-matching action. Without the flag, each node type keeps its legacy auto/default sizing;
   with the flag, `w` is the exact rendered width (32–4000 for plain text; 80–4000 otherwise).
@@ -251,6 +256,8 @@ Harness quirks you must respect:
   tables retain relation anchoring through node-boundary fallback.
 - Frame nodes: labeled subject-area rectangles drawn behind nodes; drag a frame to move
   nodes contained by center point; resize via corner handle; frames are not edge targets.
+  Borders are optional and independently configurable in the inspector by visibility,
+  1–16px width, and color (including the shared transparency control).
 - Add via toolbar, keyboard (`C`/`S`/`N`/`T`), double-click empty canvas, command palette, or
   context menu ("here").
 - Duplicate (Ctrl+D, remaps node/field ids and internal edges), copy/cut/paste
@@ -1631,6 +1638,22 @@ AC: expanded and collapsed tables render both title handles; links can start fro
 either title handle; endpoints route from the exact header midpoint; the edge inspector exposes
 the two table-only positions; JSON, undo/redo, SVG/PNG handle stripping, legacy anchors,
 automated tests, and browser interaction/visual QA pass.
+
+---
+
+**SCH-102 · Optional configurable frame borders · P1 · S · Done 2026-07-21**
+
+Give frames an optional border controlled from the inspector, independently from the
+existing low-opacity frame fill. Border visibility defaults off for legacy and newly
+created frames; enabled borders support 1–16px widths and any shared-palette or custom
+color, including transparent stored colors composited over white on the canvas.
+
+AC: borderless frames paint no saved outline while selection remains visible through a
+separate non-exported affordance; inspector changes have clear undo boundaries; expanded
+and collapsed frames render the same configured border; optional values round-trip through
+JSON, duplicate, SVG, and PNG; malformed imports normalize safely; the starter feature tour
+demonstrates the feature; legacy documents remain unchanged; automated and browser
+interaction/visual QA pass.
 
 ---
 

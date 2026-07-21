@@ -46,7 +46,8 @@ function seed(){
      edge order remain stable; render() still paints containers behind content. */
   N({type:"text", x:38, y:12, title:"Loyalty program system map", fontSize:30,
      fontColor:"#16232F", color:"#CFE8FF", w:520});
-  N({type:"frame", x:30, y:75, title:"Strategy & experiments", color:"#007873", w:500, h:425});
+  N({type:"frame", x:30, y:75, title:"Strategy & experiments", color:"#007873", w:500, h:425,
+     borderEnabled:true, borderWidth:2, borderColor:"#007873"});
   N({type:"swimlane", orientation:"horizontal", x:560, y:30, title:"Data model",
      color:"#E7F4F3", titleColor:"#007873", w:690, h:490});
   N({type:"swimlane", orientation:"vertical", x:1280, y:30, title:"Delivery & evidence",
@@ -268,6 +269,11 @@ window.__T = {
   tableColors,
   fontColors,
   frameColorDefault,
+  frameBorderEnabled,
+  frameBorderWidth,
+  frameBorderColor,
+  setFrameBorderEnabled,
+  setFrameBorderWidth,
   todoColorDefault,
   themeColors,
   autoInk,
