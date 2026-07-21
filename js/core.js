@@ -89,6 +89,9 @@ const STATUS_BUILTINS = [
 const STATUS_DEFAULT = STATUS_BUILTINS[0][0];
 const STATUS_CUSTOM_COLOR = "#8A3FA8";
 const FRAME_DEFAULT = { color:"#2456E6", w:360, h:240 };
+const FRAME_BORDER_DEFAULT_WIDTH = 2;
+const FRAME_BORDER_MIN_WIDTH = 1;
+const FRAME_BORDER_MAX_WIDTH = 16;
 const FRAME_COLLAPSED = { w:220, h:48 };
 const SWIMLANE_DEFAULT = {
   bodyColor:"#DCEAFE", titleColor:"#2456E6",
@@ -96,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.27.0";
+const APP_VERSION = "v1.28.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -177,6 +180,28 @@ function tableColors(){ return (colorScheme && colorScheme.table) || TABLE_COLOR
 function fontColors(){ return (colorScheme && colorScheme.font) || FONT_COLORS; }
 function frameColorDefault(){ return (colorScheme && colorScheme.frame) || FRAME_DEFAULT.color; }
 function todoColorDefault(){ return (colorScheme && colorScheme.todo) || TODO_COLOR_DEFAULT; }
+function frameBorderEnabled(n){ return !!n && n.type === "frame" && n.borderEnabled === true; }
+function frameBorderWidth(n){
+  const width = n ? Number(n.borderWidth) : NaN;
+  return Number.isFinite(width)
+    ? clampSize(width, FRAME_BORDER_MIN_WIDTH, FRAME_BORDER_MAX_WIDTH)
+    : FRAME_BORDER_DEFAULT_WIDTH;
+}
+function frameBorderColor(n){
+  return normalizeColorValue(n && n.borderColor) ||
+    normalizeColorValue(n && n.color) || frameColorDefault();
+}
+function setFrameBorderEnabled(n, enabled){
+  if (!n || n.type !== "frame") return false;
+  if (enabled === true) n.borderEnabled = true; else delete n.borderEnabled;
+  return true;
+}
+function setFrameBorderWidth(n, width){
+  if (!n || n.type !== "frame") return false;
+  const next = clampSize(width, FRAME_BORDER_MIN_WIDTH, FRAME_BORDER_MAX_WIDTH);
+  if (next === FRAME_BORDER_DEFAULT_WIDTH) delete n.borderWidth; else n.borderWidth = next;
+  return true;
+}
 function isStructuralNode(n){ return !!n && (n.type === "frame" || n.type === "swimlane"); }
 function manualNodeWidth(n){
   const width = n ? parseFloat(n.w) : NaN;
@@ -796,6 +821,12 @@ function cleanNodeForDocument(n){
     out.w = clampSize(Number(out.w) || FRAME_DEFAULT.w, 120, 4000);
     out.h = clampSize(Number(out.h) || FRAME_DEFAULT.h, 90, 4000);
     if (out.collapsed !== true) delete out.collapsed;
+    if (out.borderEnabled !== true) delete out.borderEnabled;
+    const borderWidth = frameBorderWidth(out);
+    if (borderWidth === FRAME_BORDER_DEFAULT_WIDTH) delete out.borderWidth;
+    else out.borderWidth = borderWidth;
+    const borderColor = normalizeColorValue(out.borderColor);
+    if (borderColor) out.borderColor = borderColor; else delete out.borderColor;
   }
   if (out.type === "text"){
     const shape = textBoxShape(out);
@@ -902,6 +933,10 @@ function applyDocument(d, opts = {}){
       n.w = clampSize(Number(n.w) || FRAME_DEFAULT.w, 120, 4000);
       n.h = clampSize(Number(n.h) || FRAME_DEFAULT.h, 90, 4000);
       if (n.collapsed !== true) delete n.collapsed;
+      if (n.borderEnabled !== true) delete n.borderEnabled;
+      setFrameBorderWidth(n, frameBorderWidth(n));
+      const borderColor = normalizeColorValue(n.borderColor);
+      if (borderColor) n.borderColor = borderColor; else delete n.borderColor;
     } else if (n.type === "text"){
       n.title = typeof n.title === "string" && n.title.trim() ? n.title : "Text";
       setTextBoxShape(n, n.shape);

@@ -185,6 +185,8 @@ if (process.argv.includes("--api-surface")){
       "starter plain text remains an unboxed text primitive");
 
     const frame = T.state.nodes.find(n => n.type === "frame");
+    assert(T.frameBorderEnabled(frame) && T.frameBorderWidth(frame) === 2,
+      "starter frame demonstrates the optional border feature");
     const horizontal = lanes.find(n => T.swimlaneOrientation(n) === "horizontal");
     const vertical = lanes.find(n => T.swimlaneOrientation(n) === "vertical");
     assert(T.containerContainedNodes(frame).filter(n => n.type === "concept").length >= 4,
@@ -2253,6 +2255,94 @@ if (process.argv.includes("--api-surface")){
     assert(parsed.nodes.some(n => n.type === "frame" && n.w && n.h), "frame JSON round-trips dimensions");
     T.importDocText(JSON.stringify(parsed));
     assert(T.state.nodes.some(n => n.type === "frame" && n.title === "Area"), "frame imports from JSON");
+  }
+
+  /* SCH-102 — optional configurable frame borders */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const row = label => [...doc.querySelectorAll("#inspBody .frow")]
+      .find(item => item.querySelector("label")?.textContent === label);
+    T.importDocText(JSON.stringify({version:1, nextId:2, nodes:[
+      {id:"f1", type:"frame", x:20, y:30, title:"Legacy frame", color:"#2456E6", w:320, h:210}
+    ], edges:[]}));
+    T.setView({x:0, y:0, k:1});
+    T.render();
+
+    let frame = T.state.nodes[0];
+    let surface = doc.querySelector('[data-frame="f1"] [data-frame-surface]');
+    assert.strictEqual(T.frameBorderEnabled(frame), false, "legacy frames load with the optional border off");
+    assert.strictEqual(surface.getAttribute("stroke"), "none", "an unselected borderless frame paints no outline");
+    let saved = JSON.parse(T.serializeDocument()).nodes[0];
+    assert(!Object.hasOwn(saved, "borderEnabled") && !Object.hasOwn(saved, "borderWidth") &&
+      !Object.hasOwn(saved, "borderColor"), "legacy frame JSON stays compact and unchanged");
+
+    T.selectNode("f1");
+    assert(doc.querySelector('[data-frame="f1"] [data-frame-selection]'),
+      "a borderless selected frame retains a separate selection outline");
+    assert.strictEqual(doc.querySelector('[data-frame="f1"] [data-frame-surface]').getAttribute("stroke"), "none",
+      "selection does not mutate or impersonate the saved frame border");
+    assert.strictEqual(row("Border").querySelector("button").textContent, "Off",
+      "frame inspector identifies the disabled border state");
+    assert.strictEqual(row("Border width"), undefined, "border details stay hidden until the border is enabled");
+
+    const enableDepth = T.undoDepth;
+    row("Border").querySelector("button").click();
+    frame = T.state.nodes[0];
+    assert(T.frameBorderEnabled(frame), "inspector enables the frame border");
+    assert.strictEqual(T.undoDepth, enableDepth + 1, "enabling a border creates one undo entry");
+    surface = doc.querySelector('[data-frame="f1"] [data-frame-surface]');
+    assert.strictEqual(surface.getAttribute("stroke"), "#2456e6", "border color initially follows the frame color");
+    assert.strictEqual(surface.getAttribute("stroke-width"), "2", "border starts at the two-pixel default");
+    assert(row("Border width") && row("Border color"), "enabled border reveals width and color controls");
+
+    T.undo();
+    assert.strictEqual(T.frameBorderEnabled(T.state.nodes[0]), false, "undo disables the border in one step");
+    T.redo();
+    assert(T.frameBorderEnabled(T.state.nodes[0]), "redo restores the border");
+
+    const widthInput = row("Border width").querySelector(".sizeval");
+    widthInput.value = "7";
+    widthInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    widthInput.dispatchEvent(new window.Event("blur", {bubbles:true}));
+    frame = T.state.nodes[0];
+    assert.strictEqual(T.frameBorderWidth(frame), 7, "inspector accepts an exact frame border width");
+    assert.strictEqual(doc.querySelector('[data-frame="f1"] [data-frame-surface]').getAttribute("stroke-width"), "7",
+      "configured width reaches the canvas artwork");
+
+    doc.querySelector('#frameBorderColor [data-color="#c20029"]').click();
+    frame = T.state.nodes[0];
+    assert.strictEqual(T.normalizeColorValue(frame.borderColor), "#c20029", "inspector sets an independent border color");
+    surface = doc.querySelector('[data-frame="f1"] [data-frame-surface]');
+    assert.strictEqual(surface.getAttribute("stroke"), "#c20029", "configured border color reaches the canvas");
+
+    frame.borderColor = "#c2002980";
+    frame.collapsed = true;
+    T.render();
+    surface = doc.querySelector('#nodeLayer [data-frame="f1"] [data-frame-surface]');
+    assert.strictEqual(surface.getAttribute("stroke"), T.normalizeHex("#c2002980"),
+      "transparent border colors render as the expected opaque white blend on collapsed frames");
+    assert.strictEqual(surface.getAttribute("stroke-width"), "7", "collapsed frames preserve the configured border width");
+
+    saved = JSON.parse(T.serializeDocument()).nodes[0];
+    assert.strictEqual(saved.borderEnabled, true, "border visibility round-trips through JSON");
+    assert.strictEqual(saved.borderWidth, 7, "border width round-trips through JSON");
+    assert.strictEqual(saved.borderColor, "#c2002980", "border color and transparency round-trip through JSON");
+    const svg = T.serializedSvg(true);
+    assert(svg.includes('data-frame-border="true"'), "SVG export preserves the configured frame border");
+    assert(!svg.includes("data-frame-selection"), "SVG export strips the temporary frame selection outline");
+
+    T.importDocText(JSON.stringify(saved ? {version:1, nextId:2, nodes:[saved], edges:[]} : {}));
+    assert(T.frameBorderEnabled(T.state.nodes[0]) && T.frameBorderWidth(T.state.nodes[0]) === 7,
+      "saved frame border settings reload without loss");
+    T.importDocText(JSON.stringify({version:1, nextId:2, nodes:[
+      {id:"f2", type:"frame", x:0, y:0, title:"Malformed", color:"#2456E6", w:300, h:200,
+       borderEnabled:"yes", borderWidth:99, borderColor:"not-a-color"}
+    ], edges:[]}));
+    frame = T.state.nodes[0];
+    assert.strictEqual(T.frameBorderEnabled(frame), false, "only a literal true enables an imported border");
+    assert.strictEqual(T.frameBorderWidth(frame), 16, "imported border widths clamp to the supported range");
+    assert.strictEqual(frame.borderColor, undefined, "invalid imported border colors are removed");
   }
 
   /* SCH-094 — collapsible frames preserve and restore their contents */

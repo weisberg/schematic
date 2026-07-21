@@ -3,7 +3,8 @@
 const EDITING_ARTIFACT_SELECTOR = [
   "[data-handle]", "[data-fieldhandle]", "[data-frame-resize]", "[data-edgegrip]",
   "[data-edgebend]", "[data-ortho-snap-x]", "[data-ortho-snap-y]",
-  "[data-align-guide-x]", "[data-align-guide-y]", "[data-text-selection]"
+  "[data-align-guide-x]", "[data-align-guide-y]", "[data-text-selection]",
+  "[data-frame-selection]"
 ].join(", ");
 function removeEditingArtifacts(root){
   root.querySelectorAll(EDITING_ARTIFACT_SELECTOR).forEach(element => element.remove());

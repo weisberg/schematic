@@ -392,6 +392,28 @@ function renderInspector(){
       inspectorSection("frame:appearance", "Appearance", () => {
         frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
           (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+        const enabled = frameBorderEnabled(n);
+        frow("Border", () => mkFlag(enabled ? "On" : "Off", enabled, on => {
+          setFrameBorderEnabled(n, on);
+          render();
+        }));
+        if (enabled){
+          frow("Border width", () => sizeStepper(frameBorderWidth(n), FRAME_BORDER_MIN_WIDTH,
+            FRAME_BORDER_MAX_WIDTH, 1, (v, commit) => {
+              pushHistory("frame-border-width:"+n.id);
+              setFrameBorderWidth(n, v);
+              commit ? render() : drawOnly();
+            }, {ariaLabel:"Frame border width"}));
+          frow("Border color", () => {
+            const control = swatches(tableColors(), frameBorderColor(n), (c, commit) => {
+              pushHistory("frame-border-color:"+n.id);
+              n.borderColor = c;
+              commit ? render() : drawOnly();
+            }, {key:"frame-border-color:"+n.id});
+            control.id = "frameBorderColor";
+            return control;
+          });
+        }
       });
       inspectorSection("frame:size", "Size", () => {
         frow(n.collapsed === true ? "Expanded width" : "Width", () => sizeStepper(n.w || FRAME_DEFAULT.w, 120, 4000, 20,
@@ -1217,7 +1239,7 @@ function documentColors(exclude = []){
   const blocked = new Set(uniqueColors(exclude).map(color => color.toLowerCase()));
   const candidates = [];
   for (const n of state.nodes || []){
-    for (const key of ["color", "fontColor", "titleColor"]){
+    for (const key of ["color", "fontColor", "titleColor", "borderColor"]){
       const color = normalizeColorValue(n && n[key]);
       if (color) candidates.push(color);
     }
