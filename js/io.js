@@ -1,5 +1,14 @@
 "use strict";
 
+const EDITING_ARTIFACT_SELECTOR = [
+  "[data-handle]", "[data-fieldhandle]", "[data-frame-resize]", "[data-edgegrip]",
+  "[data-edgebend]", "[data-ortho-snap-x]", "[data-ortho-snap-y]",
+  "[data-align-guide-x]", "[data-align-guide-y]", "[data-text-selection]"
+].join(", ");
+function removeEditingArtifacts(root){
+  root.querySelectorAll(EDITING_ARTIFACT_SELECTOR).forEach(element => element.remove());
+}
+
 /* --------------------------- File I/O ----------------------------- */
 function download(name, text, mime){
   const a = document.createElement("a");
@@ -640,7 +649,7 @@ function serializedSvg(asShown = true){
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
   if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-align-guide-x], [data-align-guide-y], [data-text-selection]").forEach(h => h.remove());
+  removeEditingArtifacts(clone);
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";
   clone.insertBefore(style, clone.firstChild);
@@ -784,7 +793,7 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
   const bg = g.querySelector("[data-bg]");
   const bgColor = pngAsShown ? themeColors(png.themeName).paper : "#FFFFFF";
   if (bg) bg.setAttribute("fill", bgColor);
-  clone.querySelectorAll("[data-handle], [data-fieldhandle], [data-frame-resize], [data-edgegrip], [data-edgebend], [data-ortho-snap-x], [data-ortho-snap-y], [data-align-guide-x], [data-align-guide-y], [data-text-selection]").forEach(h => h.remove());
+  removeEditingArtifacts(clone);
   const xml = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   const url = URL.createObjectURL(new Blob([xml], {type:"image/svg+xml;charset=utf-8"}));
