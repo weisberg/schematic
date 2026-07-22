@@ -427,8 +427,10 @@ function rectFromPoints(a, b){
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
   return { x, y, w:Math.abs(a.x - b.x), h:Math.abs(a.y - b.y) };
 }
-function rectsIntersect(a, b){
-  return a.x <= b.x + b.w && a.x + a.w >= b.x && a.y <= b.y + b.h && a.y + a.h >= b.y;
+function rectFullyContains(outer, inner){
+  return outer.x <= inner.x && outer.y <= inner.y &&
+         outer.x + outer.w >= inner.x + inner.w &&
+         outer.y + outer.h >= inner.y + inner.h;
 }
 function rectsOverlap(a, b){
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;

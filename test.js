@@ -734,25 +734,81 @@ if (process.argv.includes("--api-surface")){
     firePointer(window, board, "pointerdown", { clientX:40, clientY:80 });
     firePointer(window, board, "pointermove", { clientX:520, clientY:280 });
     firePointer(window, board, "pointerup", { clientX:520, clientY:280 });
-    assert(T.selection.ids.includes(first.id), "marquee selects intersecting first node");
-    assert(T.selection.ids.includes(second.id), "marquee selects intersecting second node");
+    assert(T.selection.ids.includes(first.id), "marquee selects fully enclosed first node");
+    assert(T.selection.ids.includes(second.id), "marquee selects fully enclosed second node");
 
-    T.setSelection("node", [first.id, second.id]);
+    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+      {id:"exact", type:"text", x:100, y:100, title:"Fully enclosed", color:"#CFE8FF",
+       fontSize:18, w:100, manualWidth:true, h:60, manualHeight:true},
+      {id:"partial", type:"text", x:240, y:100, title:"Partially enclosed", color:"#D8F3DC",
+       fontSize:18, w:100, manualWidth:true, h:60, manualHeight:true},
+      {id:"outside", type:"text", x:380, y:100, title:"Outside", color:"#FFE9A8",
+       fontSize:18, w:100, manualWidth:true, h:60, manualHeight:true}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    assert(T.rectFullyContains({x:90, y:90, w:110, h:70}, T.nodeRect(T.state.nodes[0])),
+      "full containment includes an object whose far edges exactly match the marquee");
+    assert(!T.rectFullyContains({x:90, y:90, w:150, h:70}, T.nodeRect(T.state.nodes[1])),
+      "touching only an object's near edge is not full containment");
+    const exactBoard = window.document.getElementById("board");
+    firePointer(window, exactBoard, "pointerdown", {clientX:90, clientY:90});
+    firePointer(window, exactBoard, "pointermove", {clientX:290, clientY:170});
+    firePointer(window, exactBoard, "pointerup", {clientX:290, clientY:170});
+    sameList(T.selection.ids, ["exact"],
+      "marquee selects the fully enclosed object but excludes a substantially intersected object");
+
+    firePointer(window, exactBoard, "pointerdown", {clientX:240, clientY:170});
+    firePointer(window, exactBoard, "pointermove", {clientX:90, clientY:90});
+    firePointer(window, exactBoard, "pointerup", {clientX:90, clientY:90});
+    sameList(T.selection.ids, ["exact"],
+      "marquee excludes an object that is only touched by the selection boundary");
+
+    T.importDocText(JSON.stringify({version:1, nextId:3, edges:[], nodes:[
+      {id:"frame", type:"frame", x:100, y:100, title:"Enclosed frame", color:"#007873", w:120, h:100},
+      {id:"lane", type:"swimlane", orientation:"horizontal", x:260, y:100, title:"Partial lane",
+       color:"#E7F4F3", titleColor:"#007873", w:260, h:100}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    assert(T.rectFullyContains({x:90, y:90, w:310, h:120}, T.nodeRect(T.state.nodes[0])),
+      "structural frame bounds fit completely inside the marquee fixture");
+    firePointer(window, exactBoard, "pointerdown", {clientX:400, clientY:210});
+    firePointer(window, exactBoard, "pointermove", {clientX:90, clientY:90});
+    firePointer(window, exactBoard, "pointerup", {clientX:90, clientY:90});
+    sameList(T.selection.ids, ["frame"],
+      "marquee applies full containment to structural objects as well as ordinary nodes");
+
+    T.importDocText(JSON.stringify({version:1, nextId:3, edges:[], nodes:[
+      {id:"collapsed", type:"frame", x:100, y:260, title:"Collapsed frame", color:"#2456E6",
+       w:300, h:200, collapsed:true},
+      {id:"hidden", type:"concept", x:140, y:320, title:"Hidden child", color:"#FFE9A8"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    firePointer(window, exactBoard, "pointerdown", {clientX:330, clientY:320});
+    firePointer(window, exactBoard, "pointermove", {clientX:90, clientY:250});
+    firePointer(window, exactBoard, "pointerup", {clientX:90, clientY:250});
+    sameList(T.selection.ids, ["collapsed"],
+      "marquee selects a fully enclosed collapsed frame without selecting its hidden contents");
+
+    T.importDocText(JSON.stringify({version:1, nextId:3, edges:[], nodes:[first, second]}));
+    T.setView({x:0, y:0, k:1});
+    const importedFirst = T.state.nodes.find(n => n.id === first.id);
+    const importedSecond = T.state.nodes.find(n => n.id === second.id);
+    T.setSelection("node", [importedFirst.id, importedSecond.id]);
     T.render();
     const beforeUndo = T.undoDepth;
-    const x1 = first.x, x2 = second.x;
-    g = window.document.querySelector(`[data-node="${first.id}"]`);
-    firePointer(window, g, "pointerdown", { clientX:first.x + 10, clientY:first.y + 10 });
-    firePointer(window, board, "pointermove", { clientX:first.x + 90, clientY:first.y + 10 });
-    firePointer(window, board, "pointerup", { clientX:first.x + 90, clientY:first.y + 10 });
+    const x1 = importedFirst.x, x2 = importedSecond.x;
+    g = window.document.querySelector(`[data-node="${importedFirst.id}"]`);
+    firePointer(window, g, "pointerdown", { clientX:importedFirst.x + 10, clientY:importedFirst.y + 10 });
+    firePointer(window, board, "pointermove", { clientX:importedFirst.x + 90, clientY:importedFirst.y + 10 });
+    firePointer(window, board, "pointerup", { clientX:importedFirst.x + 90, clientY:importedFirst.y + 10 });
     assert.strictEqual(T.undoDepth, beforeUndo + 1, "group drag creates one history entry");
-    assert(first.x > x1 && second.x > x2, "group drag moves all selected nodes");
+    assert(importedFirst.x > x1 && importedSecond.x > x2, "group drag moves all selected nodes");
     T.undo();
-    assert.strictEqual(T.state.nodes.find(n => n.id === first.id).x, x1, "undo restores first node after group drag");
-    assert.strictEqual(T.state.nodes.find(n => n.id === second.id).x, x2, "undo restores second node after group drag");
+    assert.strictEqual(T.state.nodes.find(n => n.id === importedFirst.id).x, x1, "undo restores first node after group drag");
+    assert.strictEqual(T.state.nodes.find(n => n.id === importedSecond.id).x, x2, "undo restores second node after group drag");
 
     const beforeCount = T.state.nodes.length;
-    T.setSelection("node", [first.id, second.id]);
+    T.setSelection("node", [importedFirst.id, importedSecond.id]);
     T.duplicateSelection();
     assert.strictEqual(T.state.nodes.length, beforeCount + 2, "duplicate operates on all selected nodes");
     assert.strictEqual(T.selection.ids.length, 2, "duplicate selects the duplicated node set");
@@ -830,6 +886,143 @@ if (process.argv.includes("--api-surface")){
       {x:107, y:320, w:100, h:40, cx:157, cy:340},
       [{x:100, y:100, w:120, h:80, cx:160, cy:140}], 2);
     assert.strictEqual(free.xMatch, null, "coordinates outside the threshold stay unsnapped");
+  }
+
+  /* SCH-104 — equal edge gaps snap a dragged middle object and expose paired guides. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const rect = (x, y, w, h) => ({x, y, w, h, cx:x + w / 2, cy:y + h / 2});
+    const left = rect(100, 200, 100, 50);
+    const right = rect(500, 200, 100, 50);
+    const moving = rect(294, 204, 100, 50);
+    const horizontal = T.smartDistributionSnap(moving, [left, right], 6);
+    assert(horizontal.xMatch, "a near-centered object detects equal horizontal gaps");
+    assert.strictEqual(horizontal.xMatch.delta, 6, "horizontal distribution captures the exact equal-gap x");
+    assert.strictEqual(horizontal.xMatch.crossDelta, -4, "horizontal distribution also captures the shared row");
+    assert.strictEqual(horizontal.xMatch.gap, 100, "horizontal guide records the common edge gap");
+    assert.strictEqual(horizontal.xMatch.alignmentKey, "top", "the shared row alignment is explicit");
+
+    const top = rect(120, 40, 80, 60);
+    const bottom = rect(120, 400, 80, 60);
+    const verticalMoving = rect(116, 196, 80, 100);
+    const vertical = T.smartDistributionSnap(verticalMoving, [top, bottom], 6);
+    assert(vertical.yMatch, "a near-centered object detects equal vertical gaps");
+    assert.strictEqual(vertical.yMatch.delta, 4, "vertical distribution captures the exact equal-gap y");
+    assert.strictEqual(vertical.yMatch.crossDelta, 4, "vertical distribution captures the shared column");
+    assert.strictEqual(vertical.yMatch.gap, 100, "vertical guide records the common edge gap");
+
+    const misaligned = T.smartDistributionSnap(moving,
+      [left, rect(500, 220, 100, 50)], 6);
+    assert.strictEqual(misaligned.xMatch, null,
+      "distribution is not suggested when the outside objects are not in one row");
+    const tooFar = T.smartDistributionSnap(rect(275, 200, 100, 50), [left, right], 6);
+    assert.strictEqual(tooFar.xMatch, null, "distribution remains inactive outside the snap threshold");
+
+    const differentSizes = T.smartDistributionSnap(rect(294, 200, 100, 50), [
+      rect(100, 200, 100, 50), rect(500, 175, 100, 100)
+    ], 6);
+    assert(differentSizes.xMatch, "objects with different heights can distribute on a shared middle");
+    assert.strictEqual(differentSizes.xMatch.alignmentKey, "middle",
+      "distribution finds a shared center when top and bottom differ");
+
+    const combined = T.smartObjectSnap(moving, [left, right], 6);
+    assert.strictEqual(combined.dx, 6, "object snap applies the horizontal distribution correction");
+    assert.strictEqual(combined.dy, -4, "object snap applies the companion row correction");
+    assert(combined.xSnapped && combined.ySnapped, "distribution captures both axes as one semantic snap");
+    assert(combined.distributeX, "object snap retains distribution geometry for rendering");
+    const withIncidentalAlignment = T.smartObjectSnap(moving, [left, right,
+      rect(1000, 204, 50, 50)], 6);
+    assert(withIncidentalAlignment.distributeX,
+      "a valid three-object spacing snap outranks an unrelated exact one-axis alignment");
+    assert.strictEqual(withIncidentalAlignment.dy, -4,
+      "distribution keeps the shared outer row despite an incidental alignment elsewhere");
+    const geometry = T.alignmentGuideGeometry(combined, rect(300, 200, 100, 50), 24);
+    assert.strictEqual(geometry.distributeX.before.from, 200,
+      "the first guide begins at the left object's trailing edge");
+    assert.strictEqual(geometry.distributeX.before.to, 300,
+      "the first guide ends at the moving object's leading edge");
+    assert.strictEqual(geometry.distributeX.after.from, 400,
+      "the second guide begins at the moving object's trailing edge");
+    assert.strictEqual(geometry.distributeX.after.to, 500,
+      "the second guide ends at the right object's leading edge");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    const concept = (id, x, y) => ({id, type:"concept", x, y, title:id,
+      notes:"", color:"#CFE4FA", w:100, manualWidth:true});
+    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+      concept("left", 100, 200), concept("moving", 294, 204), concept("right", 500, 200)
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    T.setSelection("node", "moving");
+    T.render();
+    let movingNode = T.state.nodes.find(node => node.id === "moving");
+    let group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:299, clientY:209});
+    firePointer(window, board, "pointermove", {clientX:299, clientY:209});
+    assert.strictEqual(movingNode.x, 300, "drag snaps the middle node to equal horizontal gaps");
+    assert.strictEqual(movingNode.y, 200, "drag aligns the middle node to the outside row");
+    assert(doc.querySelector("[data-distribute-guide-x]"),
+      "paired horizontal distribution guides appear during the drag");
+    assert.strictEqual(doc.querySelectorAll("[data-distribute-guide-x] > line").length, 10,
+      "the distribution guide draws two measured segments with equal-length notches");
+    assert(!T.serializedSvg(true).includes("data-distribute-guide"),
+      "SVG export excludes temporary distribution guides");
+    firePointer(window, board, "pointermove", {clientX:339, clientY:209});
+    assert(!doc.querySelector("[data-distribute-guide-x], [data-distribute-guide-y]"),
+      "distribution guides clear as soon as the drag moves away");
+    firePointer(window, board, "pointermove", {clientX:299, clientY:209});
+    firePointer(window, board, "pointerup", {clientX:299, clientY:209});
+    assert.strictEqual(movingNode.x, 300, "drop preserves the exact equal-gap position");
+    assert(!doc.querySelector("[data-distribute-guide-x], [data-distribute-guide-y]"),
+      "distribution guides clear after drop");
+
+    T.undo();
+    movingNode = T.state.nodes.find(node => node.id === "moving");
+    T.setSelection("node", "moving");
+    T.render();
+    group = doc.querySelector('[data-node="moving"]');
+    firePointer(window, group, "pointerdown", {clientX:299, clientY:209, shiftKey:true});
+    firePointer(window, board, "pointermove", {clientX:299, clientY:209, shiftKey:true});
+    assert.strictEqual(movingNode.x % 24, 0, "Shift grid snapping still takes precedence over distribution");
+    assert(!doc.querySelector("[data-distribute-guide-x], [data-distribute-guide-y]"),
+      "grid snapping suppresses equal-spacing guides");
+    firePointer(window, board, "pointerup", {clientX:299, clientY:209, shiftKey:true});
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document, board = doc.getElementById("board");
+    const concept = (id, x, y) => ({id, type:"concept", x, y, title:id,
+      notes:"", color:"#D8F3DC", w:80, manualWidth:true});
+    T.importDocText(JSON.stringify({version:1, nextId:4, edges:[], nodes:[
+      concept("top", 120, 40), concept("moving", 116, 0), concept("bottom", 120, 400)
+    ]}));
+    T.setView({x:0, y:0, k:1});
+    const movingNode = T.state.nodes.find(node => node.id === "moving");
+    const topRect = T.nodeRect(T.state.nodes.find(node => node.id === "top"));
+    const bottomRect = T.nodeRect(T.state.nodes.find(node => node.id === "bottom"));
+    const movingRect = T.nodeRect(movingNode);
+    const desiredY = (topRect.y + topRect.h + bottomRect.y - movingRect.h) / 2;
+    movingNode.y = desiredY - 4;
+    T.setSelection("node", "moving");
+    T.render();
+    const group = doc.querySelector('[data-node="moving"]');
+    const clientX = movingNode.x + 5, clientY = movingNode.y + 5;
+    firePointer(window, group, "pointerdown", {clientX, clientY});
+    firePointer(window, board, "pointermove", {clientX, clientY});
+    assert.strictEqual(movingNode.x, 120, "vertical distribution aligns the middle node to the shared column");
+    assert.strictEqual(movingNode.y, desiredY, "vertical distribution snaps to equal top and bottom gaps");
+    assert(doc.querySelector("[data-distribute-guide-y]"),
+      "paired vertical distribution guides appear during the drag");
+    assert.strictEqual(doc.querySelectorAll("[data-distribute-guide-y] > line").length, 10,
+      "the vertical guide uses the same two measured segments and matching notches");
+    firePointer(window, board, "pointercancel", {clientX, clientY});
+    assert(!doc.querySelector("[data-distribute-guide-x], [data-distribute-guide-y]"),
+      "cancelled distribution drags leave no guides");
   }
 
   {
