@@ -203,8 +203,96 @@ function smartAlignmentSnap(movingRect, targetRects, threshold){
   }
   return {dx:xMatch ? xMatch.delta : 0, dy:yMatch ? yMatch.delta : 0, xMatch, yMatch};
 }
+/* Detect equal edge-to-edge gaps around the moving object. Distribution only
+   applies when the two outside objects already share the same cross-axis bound;
+   the moving object can then capture both that alignment and the equal gap. */
+function smartDistributionSnap(movingRect, targetRects, threshold){
+  const moving = alignmentCoordinates(movingRect);
+  const targets = targetRects.map(rect => ({rect, coordinates:alignmentCoordinates(rect)}));
+  const epsilon = .5;
+  let xMatch = null, yMatch = null;
+  const better = (candidate, current) => !current || candidate.score < current.score - 1e-9;
+
+  for (let keyIndex = 0; keyIndex < moving.y.length; keyIndex++){
+    const movingCross = moving.y[keyIndex];
+    const candidates = targets.filter(target =>
+      Math.abs(target.coordinates.y[keyIndex].value - movingCross.value) <= threshold);
+    for (let i = 0; i < candidates.length; i++) for (let j = i + 1; j < candidates.length; j++){
+      const a = candidates[i], b = candidates[j];
+      const aCross = a.coordinates.y[keyIndex].value;
+      const bCross = b.coordinates.y[keyIndex].value;
+      if (Math.abs(aCross - bCross) > epsilon) continue;
+      const crossCoordinate = (aCross + bCross) / 2;
+      const crossDelta = crossCoordinate - movingCross.value;
+      if (Math.abs(crossDelta) > threshold) continue;
+      const beforeRect = a.rect.x <= b.rect.x ? a.rect : b.rect;
+      const afterRect = beforeRect === a.rect ? b.rect : a.rect;
+      const available = afterRect.x - (beforeRect.x + beforeRect.w) - movingRect.w;
+      if (available < -epsilon) continue;
+      const gap = Math.max(0, available / 2);
+      const desired = beforeRect.x + beforeRect.w + gap;
+      const delta = desired - movingRect.x;
+      if (Math.abs(delta) > threshold) continue;
+      const candidate = {delta, crossDelta, crossCoordinate, gap,
+        alignmentKey:movingCross.key, beforeRect, afterRect,
+        score:Math.max(Math.abs(delta), Math.abs(crossDelta))};
+      if (better(candidate, xMatch)) xMatch = candidate;
+    }
+  }
+
+  for (let keyIndex = 0; keyIndex < moving.x.length; keyIndex++){
+    const movingCross = moving.x[keyIndex];
+    const candidates = targets.filter(target =>
+      Math.abs(target.coordinates.x[keyIndex].value - movingCross.value) <= threshold);
+    for (let i = 0; i < candidates.length; i++) for (let j = i + 1; j < candidates.length; j++){
+      const a = candidates[i], b = candidates[j];
+      const aCross = a.coordinates.x[keyIndex].value;
+      const bCross = b.coordinates.x[keyIndex].value;
+      if (Math.abs(aCross - bCross) > epsilon) continue;
+      const crossCoordinate = (aCross + bCross) / 2;
+      const crossDelta = crossCoordinate - movingCross.value;
+      if (Math.abs(crossDelta) > threshold) continue;
+      const beforeRect = a.rect.y <= b.rect.y ? a.rect : b.rect;
+      const afterRect = beforeRect === a.rect ? b.rect : a.rect;
+      const available = afterRect.y - (beforeRect.y + beforeRect.h) - movingRect.h;
+      if (available < -epsilon) continue;
+      const gap = Math.max(0, available / 2);
+      const desired = beforeRect.y + beforeRect.h + gap;
+      const delta = desired - movingRect.y;
+      if (Math.abs(delta) > threshold) continue;
+      const candidate = {delta, crossDelta, crossCoordinate, gap,
+        alignmentKey:movingCross.key, beforeRect, afterRect,
+        score:Math.max(Math.abs(delta), Math.abs(crossDelta))};
+      if (better(candidate, yMatch)) yMatch = candidate;
+    }
+  }
+  return {xMatch, yMatch};
+}
+function smartObjectSnap(movingRect, targetRects, threshold){
+  const alignment = smartAlignmentSnap(movingRect, targetRects, threshold);
+  const distribution = smartDistributionSnap(movingRect, targetRects, threshold);
+  let distributeX = distribution.xMatch, distributeY = distribution.yMatch;
+  /* A valid three-object relationship is more informative than an incidental
+     one-axis match elsewhere on a busy canvas. If both distribution axes are
+     simultaneously available, use the closer complete relationship. */
+  if (distributeX && distributeY){
+    if (distributeX.score <= distributeY.score) distributeY = null;
+    else distributeX = null;
+  }
+  const xMatch = distributeX || distributeY ? null : alignment.xMatch;
+  const yMatch = distributeX || distributeY ? null : alignment.yMatch;
+  const dx = distributeX ? distributeX.delta
+           : distributeY ? distributeY.crossDelta
+           : xMatch ? xMatch.delta : 0;
+  const dy = distributeY ? distributeY.delta
+           : distributeX ? distributeX.crossDelta
+           : yMatch ? yMatch.delta : 0;
+  return {dx, dy, xMatch, yMatch, distributeX, distributeY,
+          xSnapped:!!(xMatch || distributeX || distributeY),
+          ySnapped:!!(yMatch || distributeY || distributeX)};
+}
 function alignmentGuideGeometry(snap, alignedRect, overshoot){
-  if (!snap || (!snap.xMatch && !snap.yMatch)) return null;
+  if (!snap || (!snap.xMatch && !snap.yMatch && !snap.distributeX && !snap.distributeY)) return null;
   const geometry = {};
   if (snap.xMatch){
     const target = snap.xMatch.targetRect;
@@ -218,10 +306,25 @@ function alignmentGuideGeometry(snap, alignedRect, overshoot){
       from:Math.min(alignedRect.x, target.x) - overshoot,
       to:Math.max(alignedRect.x + alignedRect.w, target.x + target.w) + overshoot};
   }
+  if (snap.distributeX){
+    const match = snap.distributeX;
+    const cross = alignmentCoordinates(alignedRect).y.find(point => point.key === match.alignmentKey);
+    geometry.distributeX = {coordinate:cross.value, gap:match.gap,
+      before:{from:match.beforeRect.x + match.beforeRect.w, to:alignedRect.x},
+      after:{from:alignedRect.x + alignedRect.w, to:match.afterRect.x}};
+  }
+  if (snap.distributeY){
+    const match = snap.distributeY;
+    const cross = alignmentCoordinates(alignedRect).x.find(point => point.key === match.alignmentKey);
+    geometry.distributeY = {coordinate:cross.value, gap:match.gap,
+      before:{from:match.beforeRect.y + match.beforeRect.h, to:alignedRect.y},
+      after:{from:alignedRect.y + alignedRect.h, to:match.afterRect.y}};
+  }
   return geometry;
 }
 function drawAlignmentGuides(guides){
-  draftLayer.querySelectorAll("[data-align-guide-x], [data-align-guide-y]").forEach(guide => guide.remove());
+  draftLayer.querySelectorAll("[data-align-guide-x], [data-align-guide-y], [data-distribute-guide-x], [data-distribute-guide-y]")
+    .forEach(guide => guide.remove());
   if (!guides) return;
   const t = themeColors();
   if (guides.x) el("line", {x1:guides.x.coordinate, y1:guides.x.from,
@@ -232,6 +335,41 @@ function drawAlignmentGuides(guides){
     x2:guides.y.to, y2:guides.y.coordinate, stroke:t.accent, "stroke-width":1.25,
     "stroke-dasharray":"4 3", "vector-effect":"non-scaling-stroke", opacity:.9,
     "pointer-events":"none", "data-align-guide-y":"1"}, draftLayer);
+  const tick = 5 / view.k, notch = 2 / view.k;
+  if (guides.distributeX){
+    const guide = guides.distributeX;
+    const group = el("g", {"data-distribute-guide-x":"1", "pointer-events":"none"}, draftLayer);
+    for (const segment of [guide.before, guide.after]){
+      el("line", {x1:segment.from, y1:guide.coordinate, x2:segment.to, y2:guide.coordinate,
+        stroke:t.accent, "stroke-width":1.5, "vector-effect":"non-scaling-stroke", opacity:.95}, group);
+      for (const x of [segment.from, segment.to]) el("line", {
+        x1:x, y1:guide.coordinate - tick, x2:x, y2:guide.coordinate + tick,
+        stroke:t.accent, "stroke-width":1.25, "vector-effect":"non-scaling-stroke", opacity:.95
+      }, group);
+      const middle = (segment.from + segment.to) / 2;
+      for (const x of [middle - notch, middle + notch]) el("line", {
+        x1:x, y1:guide.coordinate - tick, x2:x, y2:guide.coordinate + tick,
+        stroke:t.accent, "stroke-width":1.5, "vector-effect":"non-scaling-stroke", opacity:.95
+      }, group);
+    }
+  }
+  if (guides.distributeY){
+    const guide = guides.distributeY;
+    const group = el("g", {"data-distribute-guide-y":"1", "pointer-events":"none"}, draftLayer);
+    for (const segment of [guide.before, guide.after]){
+      el("line", {x1:guide.coordinate, y1:segment.from, x2:guide.coordinate, y2:segment.to,
+        stroke:t.accent, "stroke-width":1.5, "vector-effect":"non-scaling-stroke", opacity:.95}, group);
+      for (const y of [segment.from, segment.to]) el("line", {
+        x1:guide.coordinate - tick, y1:y, x2:guide.coordinate + tick, y2:y,
+        stroke:t.accent, "stroke-width":1.25, "vector-effect":"non-scaling-stroke", opacity:.95
+      }, group);
+      const middle = (segment.from + segment.to) / 2;
+      for (const y of [middle - notch, middle + notch]) el("line", {
+        x1:guide.coordinate - tick, y1:y, x2:guide.coordinate + tick, y2:y,
+        stroke:t.accent, "stroke-width":1.5, "vector-effect":"non-scaling-stroke", opacity:.95
+      }, group);
+    }
+  }
 }
 function updateSnapControl(){
   const b = document.getElementById("btnSnap");
@@ -495,7 +633,7 @@ board.addEventListener("pointermove", ev => {
     }
     const dx = w.x - drag.start.x, dy = w.y - drag.start.y;
     const useGrid = snapToGrid || ev.shiftKey;
-    const alignment = useGrid ? null : smartAlignmentSnap(
+    const alignment = useGrid ? null : smartObjectSnap(
       offsetRect(drag.primaryRect, dx, dy), drag.targetRects,
       ALIGN_GUIDE_SCREEN_THRESHOLD / view.k);
     const alignedDx = dx + (alignment ? alignment.dx : 0);
@@ -503,8 +641,8 @@ board.addEventListener("pointermove", ev => {
     for (const start of drag.starts){
       const n = nodeById(start.id);
       if (!n) continue;
-      n.x = alignment && alignment.xMatch ? start.x + alignedDx : dragSnap(start.x + dx, ev.shiftKey);
-      n.y = alignment && alignment.yMatch ? start.y + alignedDy : dragSnap(start.y + dy, ev.shiftKey);
+      n.x = alignment && alignment.xSnapped ? start.x + alignedDx : dragSnap(start.x + dx, ev.shiftKey);
+      n.y = alignment && alignment.ySnapped ? start.y + alignedDy : dragSnap(start.y + dy, ev.shiftKey);
     }
     const primaryStart = drag.starts.find(start => start.id === drag.id);
     const primaryNode = primaryStart && nodeById(drag.id);
@@ -620,7 +758,7 @@ board.addEventListener("pointerup", ev => {
     draftLayer.innerHTML = "";
     if (drag.moved){
       const r = rectFromPoints(drag.start, drag.current);
-      const ids = visibleCanvasNodes().filter(n => rectsIntersect(r, nodeRect(n))).map(n => n.id);
+      const ids = visibleCanvasNodes().filter(n => rectFullyContains(r, nodeRect(n))).map(n => n.id);
       setSelection("node", ids);
     } else {
       clearSelection();

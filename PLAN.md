@@ -228,6 +228,8 @@ Harness quirks you must respect:
   Fit view (`F`), 4px grid snap on
   node drag, arrow-key nudge (Shift = 24px), Esc deselect, no text-selection during drags.
 - Selection model: single node/edge plus multi-node selection; selection drives inspector.
+  Empty-canvas marquee selection includes only visible node-like objects whose complete
+  rendered bounds are enclosed; partial overlaps and boundary-only touches are excluded.
 - Auto-layout tools: concept-tree layout from the selected/root concept and layered schema
   layout for table relations; each layout is one undo step.
 - Minimap overlay with viewport rectangle and click/drag panning, skipped automatically
@@ -363,6 +365,10 @@ Harness quirks you must respect:
   delete actions remain immediately available; canvas actions are grouped under Create.
 - Multi-node context menu alignment/distribution tools: left/right/top/bottom, center
   horizontally/vertically, distribute horizontally/vertically.
+- Object drags show zoom-stable edge/center alignment guides and paired equal-gap guides.
+  Equal-gap capture positions the moving object between two already aligned objects using
+  the same edge-to-edge spacing semantics as the distribution commands; Shift/grid snapping
+  retains precedence.
 - Inline title editor on canvas for nodes; inline label editor for edges.
 - Quick-jump / command palette (`Ctrl/Cmd+K`) for nodes, fields, and `>` commands.
 - Shortcut cheat sheet modal (`?`) generated from the shortcut registry.
@@ -531,14 +537,15 @@ Status: implemented and tested on 2026-07-08.
   `selExtra:Set` — choose the first; update every `sel` consumer (search for `sel.` —
   ~20 sites). Shift-click toggles membership; drag on empty canvas with Shift (or a new
   marquee when not panning: mousedown empty + drag draws a rubber-band rect in
-  `draftLayer`; on up, select intersecting nodes).
+  `draftLayer`; on up, select fully enclosed nodes).
 - Group drag: dragging any selected node moves all selected nodes (store per-node offsets
   at dragstart; one `pushHistory()` total).
 - Delete/duplicate operate on the whole selection. Inspector: multi-select shows count +
   bulk color/text-size controls only.
 
-AC: marquee selects; shift-click toggles; group drag is one undo step; delete removes all
-selected + attached edges. Tests: simulate pointer sequence for marquee; assert set
+AC: marquee selects only fully enclosed nodes; partial overlaps and boundary-only touches
+are excluded; shift-click toggles; group drag is one undo step; delete removes all selected
+objects and their attached edges. Tests: simulate pointer sequence for marquee; assert set
 contents; assert single history entry per group drag.
 
 Pitfalls: keep single-selection fast paths (double-click edit, Tab child uses first/only
@@ -1654,6 +1661,38 @@ and collapsed frames render the same configured border; optional values round-tr
 JSON, duplicate, SVG, and PNG; malformed imports normalize safely; the starter feature tour
 demonstrates the feature; legacy documents remain unchanged; automated and browser
 interaction/visual QA pass.
+
+---
+
+**SCH-103 · Full-containment marquee selection · P1 · S · Done 2026-07-22**
+
+Change empty-canvas marquee selection from any-overlap matching to strict full containment.
+Every edge of a visible node-like object's bounds must fall inside the normalized selection
+rectangle; merely crossing or touching the marquee boundary must not select the object.
+
+AC: forward and reverse drag directions behave identically; exact enclosure is inclusive;
+partial overlaps and edge-only contact are excluded; fully enclosed ordinary nodes, frames,
+swimlanes, and collapsed-frame proxies remain eligible while hidden collapsed contents remain
+excluded; click and Shift-click selection, group drag, duplicate/delete, undo, and saved-document
+behavior remain unchanged; automated tests and browser interaction/visual QA pass.
+
+---
+
+**SCH-104 · Equal-spacing drag guides · P1 · M · Done 2026-07-22**
+
+Extend smart object dragging so a node between two stationary objects can capture the exact
+position where its two edge-to-edge gaps are equal. Horizontal distribution requires the
+outside objects to share a top, middle, or bottom row; vertical distribution requires a shared
+left, center, or right column. Snap the moving object to that shared cross-axis alignment at the
+same time and draw paired measured segments with matching notches to communicate equal spacing.
+
+AC: horizontal and vertical equal-gap positions use the same rectangle-edge semantics as the
+existing Distribute commands; outside objects must already be aligned; capture and guide geometry
+remain zoom-stable; paired guides clear on drop, cancel, or moving away and are excluded from SVG
+and PNG exports; multi-selection movement and connected custom orthogonal bends keep one shared
+delta; Shift and persistent grid snapping take precedence; ordinary alignment guides, undo/redo,
+large-canvas fast rendering, and saved-document compatibility remain unchanged; automated and
+browser interaction/visual QA pass.
 
 ---
 
