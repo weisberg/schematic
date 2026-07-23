@@ -227,15 +227,17 @@ function edgeEndpoints(e, hidden = null, proxies = null){
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
-  const fromAnchor = e.fromAnchor || (nodePortsEnabled(a) ? "mr" : null);
-  const toAnchor = e.toAnchor || (nodePortsEnabled(b) ? "ml" : null);
+  const fromPort = !proxyA && ia < 0 && !e.fromAnchor && nodePortsEnabled(a)
+    ? nodePortAnchor(a, "output", e.fromPort || nodeOutputPorts(a)[0]?.id) : null;
+  const toPort = !proxyB && ib < 0 && !e.toAnchor && nodePortsEnabled(b)
+    ? nodePortAnchor(b, "input", e.toPort || nodeInputPorts(b)[0]?.id) : null;
   const pa = proxyA ? collapsedFrameCenterAnchor(proxyA, refB)
-    : ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, fromAnchor, refB);
+    : ia >= 0 ? fieldAnchor(a, ia, refB.x) : fromPort || nodeAnchor(a, e.fromAnchor, refB);
   const pb = proxyB ? collapsedFrameCenterAnchor(proxyB, refA)
-    : ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, toAnchor, refA);
+    : ib >= 0 ? fieldAnchor(b, ib, refA.x) : toPort || nodeAnchor(b, e.toAnchor, refA);
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
-           pinnedA: !proxyA && ia < 0 && !!e.fromAnchor,
-           pinnedB: !proxyB && ib < 0 && !!e.toAnchor,
+           pinnedA: !proxyA && ia < 0 && (!!e.fromAnchor || !!e.fromPort),
+           pinnedB: !proxyB && ib < 0 && (!!e.toAnchor || !!e.toPort),
            proxyA:proxyAId || null, proxyB:proxyBId || null };
 }
 function curveEdgeControlPoints(pa, pb){
@@ -372,17 +374,19 @@ function roundedPolylinePath(points, radius = 10){
   return d;
 }
 function hasCustomOrthoBend(e){
-  return !!e && (Number.isFinite(e.orthoX) || Number.isFinite(e.orthoY));
+  return !!e && ["orthoX","orthoY","orthoFromStub","orthoToStub"]
+    .some(key => Number.isFinite(e[key]));
 }
 function orthoEdgeRoute(e, pa, pb){
-  const stub = 12;
-  const out = p => {
+  const stubDistance = key => Number.isFinite(e && e[key]) ? Math.max(0, e[key]) : 12;
+  const out = (p, stub) => {
     if (p.side === "e") return { x:p.x + stub, y:p.y };
     if (p.side === "w") return { x:p.x - stub, y:p.y };
     if (p.side === "s") return { x:p.x, y:p.y + stub };
     return { x:p.x, y:p.y - stub };
   };
-  const a = out(pa), b = out(pb);
+  const a = out(pa, stubDistance("orthoFromStub"));
+  const b = out(pb, stubDistance("orthoToStub"));
   const horizontal = pa.side === "e" || pa.side === "w" || pb.side === "e" || pb.side === "w";
   if (horizontal){
     const mx = (a.x + b.x) / 2;
@@ -410,6 +414,58 @@ function orthoEdgeRoute(e, pa, pb){
   const d = orthoCornerStyle(e) === "square"
     ? squarePolylinePath(points) : roundedPolylinePath(points);
   return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
+}
+function orthoRouteCornerHandles(route){
+  if (!route) return [];
+  const points = compactPolylinePoints(route.points);
+  const corners = [];
+  for (let i = 1; i < points.length - 1; i++){
+    const previous = points[i - 1], point = points[i], next = points[i + 1];
+    const cross = (point.x - previous.x) * (next.y - point.y) -
+      (point.y - previous.y) * (next.x - point.x);
+    if (Math.abs(cross) < .000001) continue;
+    const isFromStub = point.x === route.a.x && point.y === route.a.y;
+    const isToStub = point.x === route.b.x && point.y === route.b.y;
+    const isBend = point.x === route.bend.x && point.y === route.bend.y;
+    let key = `corner-${corners.length}`, axes = ["x","y"];
+    if (isFromStub){
+      key = "from-stub";
+      axes = [route.pa.side === "e" || route.pa.side === "w" ? "x" : "y"];
+    } else if (isToStub){
+      key = "to-stub";
+      axes = [route.pb.side === "e" || route.pb.side === "w" ? "x" : "y"];
+    } else if (isBend){
+      key = "bend";
+    } else if (route.horizontal && point.x === route.bend.x){
+      key = "entry";
+      axes = ["x"];
+    } else if (route.horizontal && point.y === route.bend.y){
+      key = "exit";
+      axes = ["y"];
+    } else if (!route.horizontal && point.y === route.bend.y){
+      key = "entry";
+      axes = ["y"];
+    } else if (!route.horizontal && point.x === route.bend.x){
+      key = "exit";
+      axes = ["x"];
+    }
+    corners.push({key, axes, point:{x:point.x, y:point.y}});
+  }
+  return corners;
+}
+function setOrthoCornerPosition(e, route, corner, point){
+  if (!e || !route || !corner || !point) return;
+  if (corner.key === "from-stub" || corner.key === "to-stub"){
+    const from = corner.key === "from-stub";
+    const endpoint = from ? route.pa : route.pb;
+    const axis = endpoint.side === "e" || endpoint.side === "w" ? "x" : "y";
+    const sign = endpoint.side === "e" || endpoint.side === "s" ? 1 : -1;
+    e[from ? "orthoFromStub" : "orthoToStub"] =
+      Math.max(0, sign * (point[axis] - endpoint[axis]));
+    return;
+  }
+  if (corner.axes.includes("x")) e.orthoX = point.x;
+  if (corner.axes.includes("y")) e.orthoY = point.y;
 }
 function orthoEdgePath(pa, pb, e = null){
   return orthoEdgeRoute(e, pa, pb).d;
@@ -524,7 +580,13 @@ function nearestSnap(value, candidates, threshold){
   }
   return best;
 }
-function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k){
+function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k, gridSnap = false){
+  if (gridSnap){
+    const step = GRID_SNAP / 2;
+    const x = Math.round(point.x / step) * step;
+    const y = Math.round(point.y / step) * step;
+    return {x, y, snapX:x, snapY:y, xCandidates:[], yCandidates:[], grid:true, gridStep:step};
+  }
   if (!ep) return { x:point.x, y:point.y, snapX:null, snapY:null };
   const route = orthoEdgeRoute(null, ep.pa, ep.pb);
   const xs = [...new Set([route.pa.x, route.a.x, route.auto.x, route.b.x, route.pb.x])];
@@ -543,8 +605,7 @@ function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k)
 function resetOrthoBend(e){
   if (!hasCustomOrthoBend(e)) return false;
   pushHistory();
-  delete e.orthoX;
-  delete e.orthoY;
+  for (const key of ["orthoX","orthoY","orthoFromStub","orthoToStub"]) delete e[key];
   render();
   return true;
 }
@@ -993,19 +1054,24 @@ function drawConceptPorts(parent, n, r, layout, ink){
   const ports = nodePortPoints(n, {x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2});
   if (!ports) return;
   const middleGap = 16;
-  const inputMax = Math.max(18, r.w/2 - ports.input.x - middleGap);
-  const outputMax = Math.max(18, ports.output.x - r.w/2 - middleGap);
   const attrs = {
-    y:layout.portY + layout.portFs*.36, fill:ink, opacity:.78,
-    "pointer-events":"none", "font-family":"'IBM Plex Mono', monospace",
+    fill:ink, opacity:.78, "pointer-events":"none", "font-family":"'IBM Plex Mono', monospace",
     "font-size":layout.portFs, "font-weight":600
   };
-  const input = el("text", {...attrs, x:ports.input.x+12, "text-anchor":"start",
-    "data-node-input-label":"1"}, parent);
-  input.textContent = truncate(layout.inputLabel, inputMax, layout.portFont);
-  const output = el("text", {...attrs, x:ports.output.x-12, "text-anchor":"end",
-    "data-node-output-label":"1"}, parent);
-  output.textContent = truncate(layout.outputLabel, outputMax, layout.portFont);
+  for (const port of ports.inputs){
+    const maxWidth = Math.max(18, r.w/2 - port.x - middleGap);
+    const text = el("text", {...attrs, x:port.x+12, y:port.y+layout.portFs*.36,
+      "text-anchor":"start", "data-node-input-label":"1",
+      "data-port-label-id":port.id, "data-port-label-side":"input"}, parent);
+    text.textContent = truncate(port.label, maxWidth, layout.portFont);
+  }
+  for (const port of ports.outputs){
+    const maxWidth = Math.max(18, port.x - r.w/2 - middleGap);
+    const text = el("text", {...attrs, x:port.x-12, y:port.y+layout.portFs*.36,
+      "text-anchor":"end", "data-node-output-label":"1",
+      "data-port-label-id":port.id, "data-port-label-side":"output"}, parent);
+    text.textContent = truncate(port.label, maxWidth, layout.portFont);
+  }
 }
 function drawNode(n){
   const r = nodeRect(n);
@@ -1202,19 +1268,29 @@ function drawNode(n){
   const anchorPts = anchorPointsForNode(n, { x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
   const cleanText = n.type === "text" && textBoxShape(n) === "none";
   for (const key of nodeAnchorKeys(n)){
+    if (nodePortsEnabled(n) && (key === "ml" || key === "mr")) continue;
     const p = anchorPts[key];
     const tableTitle = key === "hl" || key === "hr";
-    const portSide = nodePortsEnabled(n) && (key === "ml" || key === "mr");
-    const primaryVisible = portSide || (key === "mr" && (!cleanText || selected));
+    const primaryVisible = key === "mr" && (!cleanText || selected);
     const attrs = {class: tableTitle ? "fieldhandle tabletitlehandle" : primaryVisible ? "" : "anchorhandle",
                    "data-handle": n.id, "data-anchor": key, cursor:"crosshair"};
     if (tableTitle) attrs["data-table-title-anchor"] = key;
-    if (portSide) attrs["data-node-port"] = key === "ml" ? "input" : "output";
     const hg = el("g", attrs, g);
     el("circle", {cx:p.x, cy:p.y, r: tableTitle || key !== "mc" ? 12 : 8, fill:"transparent"}, hg);
-    el("circle", {cx:p.x, cy:p.y, r: !tableTitle && (key === "mr" || portSide) ? 5.5 : 3.6, fill:t.tableFill,
+    el("circle", {cx:p.x, cy:p.y, r: !tableTitle && key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
                   stroke: tableTitle || selected ? t.accent : t.ink, "stroke-width":1.4,
-                  opacity: tableTitle || selected || portSide ? 1 : .55}, hg);
+                  opacity: tableTitle || selected ? 1 : .55}, hg);
+  }
+  const ports = nodePortPoints(n, {x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2});
+  if (ports){
+    for (const port of ports.inputs.concat(ports.outputs)){
+      const hg = el("g", {"data-handle":n.id, "data-anchor":port.key,
+                          "data-node-port":port.portSide, "data-node-port-id":port.id,
+                          cursor:"crosshair"}, g);
+      el("circle", {cx:port.x, cy:port.y, r:12, fill:"transparent"}, hg);
+      el("circle", {cx:port.x, cy:port.y, r:5.5, fill:t.tableFill, stroke:t.ink,
+                    "stroke-width":1.4}, hg);
+    }
   }
 }
 /* per-row connect handles (left + right of each row) — tables and todos */

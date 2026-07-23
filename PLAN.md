@@ -137,13 +137,19 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   optional leading/stacked `icon`. Icons use a portable token: `emoji:<text>`,
   `lucide:<catalog-name>`, or `fa:<catalog-name>`. Invalid tokens and decoration keys on
   unsupported node types are removed during import. Absent keys preserve the exact legacy layout.
-- Concept nodes may include additive `portsEnabled:true` plus optional `inputLabel` and
-  `outputLabel` captions (single-line, up to 80 characters). Defaults are `Input` and `Output`.
-  Enabled nodes reserve a caption row and move their `ml` / `mr` handles to the visible port
-  positions. Automatic outgoing ends use Output and incoming ends use Input; explicit other
-  anchors and all row bindings retain precedence. Absent `portsEnabled` preserves legacy geometry.
+- Concept nodes may include additive `portsEnabled:true` plus optional `inputPorts` and
+  `outputPorts` arrays of stable `{id,label}` entries (up to 16 per side; labels are single-line
+  and up to 80 characters). Legacy `inputLabel` / `outputLabel` captions remain the compact,
+  compatible one-port representation, with defaults of `Input` and `Output`. Enabled nodes reserve
+  one row per port and place each side handle on its visible named port. Edges may bind explicitly
+  through additive `fromPort` / `toPort` ids; unbound outgoing ends use the first Output and
+  unbound incoming ends use the first Input. Explicit other anchors and all row bindings retain
+  precedence. Absent `portsEnabled` preserves legacy geometry.
 - Orthogonal edges use rounded corners by default. The optional `orthoCorner:"square"`
   override restores sharp Manhattan bends; it is omitted for rounded or non-orthogonal edges.
+  Optional absolute `orthoX` / `orthoY` coordinates shape the central dogleg, while endpoint-relative
+  `orthoFromStub` / `orthoToStub` distances preserve moved attachment-side corners. All four fields
+  are omitted for an untouched automatic route.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
   kinds are table↔table only; edges touching a to-do list, rich note, plain text, or status node
   are always `link`.
@@ -340,7 +346,9 @@ Harness quirks you must respect:
 **Canvas & workflow (v1.2.0, issues #40/#41/#43/#46/#47)**
 - Snap to grid: a "Snap" toolbar toggle makes drags snap to the 24px dot grid (off =
   fine 4px grid as before); holding Shift during a drag temporarily uses the same 24px
-  grid without changing the toggle; "Clean Up" snaps every node to the dot grid in one undo step.
+  grid without changing the toggle. For finer link routing, Shift snaps a dragged orthogonal-link
+  waypoint's x and y coordinates to 12px half-grid resolution, including both visible grid points
+  and their midpoints; "Clean Up" snaps every node to the dot grid in one undo step.
 - Space+drag pans the canvas regardless of what is under the cursor (space is ignored
   while typing; listed in the shortcut cheat sheet).
 - Auto-save: a status-bar toggle debounce-saves every change (including undo/redo, via
@@ -1251,23 +1259,29 @@ triangle anchors and hit targets follow their visible boundaries; automated and 
 
 ---
 
-**SCH-073 · Draggable orthogonal link waypoint · P1 · M · Done 2026-07-13**
+**SCH-073 · Draggable orthogonal link corners · P1 · M · Done 2026-07-23**
 
-Selecting an orthogonal edge exposes a square waypoint handle on the canvas. Dragging it stores
-optional world-space `orthoX` and `orthoY` coordinates and expands the existing Manhattan route
-through that point without introducing diagonal or curved legs. Untouched edges retain the exact
-automatic midpoint route used by earlier documents.
+Selecting an orthogonal edge exposes a square handle at every visible corner. Central entry, bend,
+and exit handles shape the dogleg through optional world-space `orthoX` and `orthoY` coordinates.
+When attachment sides introduce a visible endpoint-stub corner, its handle moves along the
+attachment's outward axis and stores an endpoint-relative `orthoFromStub` or `orthoToStub` distance.
+Every interaction preserves Manhattan legs. Untouched edges retain the exact automatic midpoint
+route used by earlier documents.
 
-Waypoint x and y snap independently, at a zoom-adjusted screen threshold, to significant endpoint,
-outward-stub, and automatic-midpoint coordinates used by the same edge. Temporary horizontal and
-vertical guides make active snaps visible. Arrow keys nudge the focused handle; Shift uses the full
-grid interval. The inspector and edge context menu explain the interaction and reset custom routing.
+Corner x and y coordinates snap independently, at a zoom-adjusted screen threshold, to significant endpoint,
+outward-stub, and automatic-midpoint coordinates used by the same edge. Holding Shift during pointer
+dragging instead snaps each movable coordinate at 12px half-grid resolution, allowing either visible
+24px grid points or the midpoints between them. Temporary horizontal and vertical guides make active
+snaps visible. Arrow keys nudge the focused handle along its supported axes; Shift uses the full grid
+interval. The inspector and edge context menu explain the interaction and reset all custom corners.
 
-Custom coordinates serialize additively, sanitize on import, follow copied nodes by the paste offset,
-and are excluded with all other editing grips from SVG and PNG exports. A drag is one undo step.
+Absolute dogleg coordinates serialize additively and follow copied nodes by the paste offset;
+endpoint-relative stub distances remain unchanged when copied. All custom fields sanitize on import,
+and editing grips are excluded from SVG and PNG exports. Each corner drag is one undo step.
 
 AC: legacy routes remain byte-for-byte unchanged until moved; custom paths remain M/L/H/V-only;
-both axes snap independently; drag, keyboard, reset, undo, JSON, copy/paste, and export behavior are
+every visible bend has a handle; constrained endpoint handles cannot introduce diagonals; supported
+axes snap independently; drag, keyboard, reset-all, undo, JSON, copy/paste, and export behavior are
 tested; full automated and browser interaction QA pass.
 
 ---
@@ -1757,6 +1771,59 @@ actual boundary; disabling restores legacy geometry; optional values round-trip 
 duplicate, malformed or unsupported values normalize safely, and SVG/PNG retain captions while
 removing editing handles; the starter tour demonstrates the feature; undo, automated tests, and
 browser interaction/visual/console QA pass.
+
+---
+
+**SCH-108 · Multiple named concept-node ports · P1 · M · Done 2026-07-23**
+
+Expand optional concept-node link ports from one caption on each side to ordered, independently
+named Input and Output lists. Every visible port has a stable id so multiple links between the same
+nodes can remain bound to distinct interfaces.
+
+AC: the inspector adds, renames, and removes up to 16 ports per side while retaining at least one;
+each port gets its own boundary handle and connection target; dragging Output to Input stores exact
+`fromPort` / `toPort` bindings; reverse dragging normalizes edge direction; edge endpoint controls
+list named ports; removing a bound port falls back safely to the side's first port; multiple rows
+grow standard and constrained concept geometry without overlapping title content; legacy
+`inputLabel` / `outputLabel` documents keep their compact one-port representation and exact
+behavior; optional arrays and edge bindings round-trip through JSON and duplicate; malformed ids,
+duplicates, and dangling bindings normalize safely; SVG/PNG retain all captions while stripping
+editing handles; the starter tour demonstrates multiple ports; undo, automated tests, and browser
+interaction/visual/console QA pass.
+
+---
+
+**SCH-109 · Shift-grid snapping for orthogonal corners · P1 · S · Done 2026-07-23**
+
+Extend the canvas Shift-drag grid behavior to every movable corner on selected orthogonal links.
+While Shift is held, each supported world-space coordinate snaps at 12px half-grid
+resolution, allowing both the visible 24px dot-grid coordinates and their midpoints. Releasing Shift
+during the drag immediately restores the existing edge-coordinate snapping. Node Shift-dragging
+continues to use the full 24px grid.
+
+AC: Shift may be pressed before or during corner dragging; supported coordinates land on the visible
+grid or a half-grid midpoint; releasing and re-pressing Shift changes modes immediately; grid guides
+remain visible while captured and clear on drop/cancel; rounded and square orthogonal routes remain
+axis aligned; each drag creates one undo entry; serialized custom coordinates preserve the snapped
+location; legacy automatic routes, normal endpoint/stub/midpoint snapping, full-grid node dragging,
+export stripping, automated tests, and browser interaction/visual/console QA pass.
+
+---
+
+**SCH-110 · Independent handles for every orthogonal corner · P1 · M · Done 2026-07-23**
+
+Render and operate a square editing handle at every visible bend of a selected orthogonal link.
+The central handle moves in both axes; entry and exit dogleg handles move the corresponding vertical
+or horizontal leg; attachment-stub corners move only along the endpoint's outward axis. Moving one
+corner preserves the other independent route coordinate, and a single reset returns every corner to
+the automatic route.
+
+AC: automatic and shaped routes expose exactly one handle per rendered corner; all corner roles are
+pointer- and keyboard-movable on their supported axes; no drag introduces diagonal legs; half-grid
+Shift snapping and significant-coordinate snapping remain available; stub distances are
+endpoint-relative through node movement and copy/paste; all custom fields serialize, import, undo,
+reset, and export safely; rounded and square paths, labels, endpoint reattachment, legacy documents,
+automated tests, and browser interaction/visual/console QA pass.
 
 ---
 

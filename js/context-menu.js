@@ -466,7 +466,8 @@ function buildEdgeSelectionDropdown(panel, edge){
         }, {pressed:orthoCornerStyle(edge) === style, action:"ortho-corners-" + style});
       if (hasCustomOrthoBend(edge)){
         menuSeparator(body);
-        menuCommand(body, "Reset waypoint to automatic", () => resetOrthoBend(edge), {action:"reset-waypoint"});
+        menuCommand(body, "Reset all corners to automatic", () => resetOrthoBend(edge),
+          {action:"reset-waypoint"});
       }
     }
   });
@@ -858,12 +859,13 @@ function edgeMenu(e, x, y){
           cornerRow.appendChild(button);
         }
         panel.appendChild(cornerRow);
-        ctxLabel(panel, "Waypoint");
+        ctxLabel(panel, "Corner handles");
         const note = document.createElement("div");
         note.className = "ctxhint";
-        note.textContent = "Drag the square handle on the canvas; each axis snaps independently.";
+        note.textContent = "Drag any square corner handle; end handles stay orthogonal.";
         panel.appendChild(note);
-        if (hasCustomOrthoBend(e)) ctxItem(panel, "Reset to automatic", () => resetOrthoBend(e));
+        if (hasCustomOrthoBend(e))
+          ctxItem(panel, "Reset all to automatic", () => resetOrthoBend(e));
       }
     });
     ctxGroup(m, "edge:actions", "Actions", panel => {

@@ -379,9 +379,13 @@ function conceptPortLayout(n, base){
   const fs = conceptFont(n);
   const portFs = Math.max(10, Math.round(fs * .72));
   const portFont = `600 ${portFs}px 'IBM Plex Mono', monospace`;
-  const footerH = Math.max(30, Math.ceil(portFs * 1.75));
-  const inputLabel = nodeInputLabel(n), outputLabel = nodeOutputLabel(n);
-  const desiredW = Math.ceil(textW(inputLabel, portFont) + textW(outputLabel, portFont) + 84);
+  const portRowH = Math.max(24, Math.ceil(portFs * 1.65));
+  const inputPorts = nodeInputPorts(n), outputPorts = nodeOutputPorts(n);
+  const portCount = Math.max(inputPorts.length, outputPorts.length, 1);
+  const portAreaH = portCount * portRowH + 8;
+  const widestInput = Math.max(0, ...inputPorts.map(port => textW(port.label, portFont)));
+  const widestOutput = Math.max(0, ...outputPorts.map(port => textW(port.label, portFont)));
+  const desiredW = Math.ceil(widestInput + widestOutput + 84);
   const fixedWidth = manualNodeWidth(n);
   let layout = base;
 
@@ -398,20 +402,20 @@ function conceptPortLayout(n, base){
        sized shapes more room in both dimensions, then lift their content into
        the upper visual region instead of appending a rectangular footer. */
     if (fixedWidth == null){
-      const growth = shape === "triangle" ? Math.ceil(footerH / .43) : footerH * 2;
+      const growth = shape === "triangle" ? Math.ceil(portAreaH / .43) : portAreaH * 2;
       const targetW = Math.max(desiredW + 28, layout.w + growth);
       layout = baseConceptWrappedLayout({...n, manualWidth:true, w:targetW});
     }
-    layout = shiftConceptContent(layout, -footerH * .42);
+    layout = shiftConceptContent(layout, -portAreaH * .42);
   } else {
-    layout = {...layout, h:layout.h + footerH + (shape === "document" ? 10 : 0)};
+    layout = {...layout, h:layout.h + portAreaH + (shape === "document" ? 10 : 0)};
   }
 
-  const portY = constrained
-    ? layout.h * (shape === "triangle" ? .78 : shape === "decision" ? .68 : .72)
-    : layout.h - footerH/2 - (shape === "document" ? 10 : 0);
-  return {...layout, ports:true, portFs, portFont, portY, footerH,
-          inputLabel, outputLabel};
+  const portCenterY = constrained
+    ? layout.h * (shape === "triangle" ? .77 : shape === "decision" ? .69 : .72)
+    : layout.h - portAreaH/2 - (shape === "document" ? 10 : 0);
+  return {...layout, ports:true, portFs, portFont, portRowH, portAreaH,
+          portCenterY, footerH:portAreaH, inputPorts, outputPorts};
 }
 function conceptWrappedLayout(n){
   const base = baseConceptWrappedLayout(n);
@@ -845,12 +849,31 @@ function conceptHorizontalBoundsAtY(n, r, y){
 function nodePortPoints(n, r = nodeRect(n)){
   if (!nodePortsEnabled(n)) return null;
   const layout = conceptWrappedLayout(n);
-  const y = r.y + layout.portY;
-  const bounds = conceptHorizontalBoundsAtY(n, r, y);
-  return {
-    input:{x:bounds.left, y, side:"w", key:"ml"},
-    output:{x:bounds.right, y, side:"e", key:"mr"}
+  const portCount = Math.max(layout.inputPorts.length, layout.outputPorts.length, 1);
+  const sidePoints = (ports, side) => {
+    const top = layout.portCenterY - portCount * layout.portRowH/2
+      + (portCount - ports.length) * layout.portRowH/2;
+    return ports.map((port, index) => {
+      const y = r.y + top + layout.portRowH * (index + .5);
+      const bounds = conceptHorizontalBoundsAtY(n, r, y);
+      return {...port, x:side === "input" ? bounds.left : bounds.right, y,
+              side:side === "input" ? "w" : "e", key:side === "input" ? "ml" : "mr",
+              portSide:side};
+    });
   };
+  const inputs = sidePoints(layout.inputPorts, "input");
+  const outputs = sidePoints(layout.outputPorts, "output");
+  return {inputs, outputs, input:inputs[0], output:outputs[0]};
+}
+function nodePortAnchor(n, preferredSide, portId, r = nodeRect(n)){
+  const points = nodePortPoints(n, r);
+  if (!points) return null;
+  const binding = nodePortBinding(n, portId, preferredSide);
+  const side = binding ? binding.side : preferredSide;
+  const candidates = side === "input" ? points.inputs : side === "output" ? points.outputs
+    : points.inputs.concat(points.outputs);
+  const point = candidates.find(candidate => candidate.id === portId) || candidates[0];
+  return point ? {...point} : null;
 }
 function anchorPointsForNode(n, r = nodeRect(n), shape = visualNodeShape(n)){
   const pts = anchorPointsForRect(r);
@@ -911,7 +934,18 @@ function nodeAnchor(n, key, ref){
 function nearestAnchorWithin(n, w, tol = 16){
   const pts = anchorPointsForNode(n);
   let best = null, bd = tol*tol;
+  const ports = nodePortPoints(n);
+  if (ports){
+    for (const p of ports.inputs.concat(ports.outputs)){
+      const d = (p.x - w.x)**2 + (p.y - w.y)**2;
+      if (d <= bd){
+        bd = d;
+        best = {key:p.key, x:p.x, y:p.y, portId:p.id, portSide:p.portSide};
+      }
+    }
+  }
   for (const key of dropAnchorKeys(n)){
+    if (ports && (key === "ml" || key === "mr")) continue;
     const p = pts[key];
     const d = (p.x - w.x)**2 + (p.y - w.y)**2;
     if (d <= bd){ bd = d; best = { key, x:p.x, y:p.y }; }

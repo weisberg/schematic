@@ -2296,19 +2296,32 @@ if (process.argv.includes("--api-surface")){
       {x:Math.max(...snapped.xCandidates) + 30.4, y:Math.max(...snapped.yCandidates) + 30.4}, ep, 6);
     assert.strictEqual(free.snapX, null, "waypoint x stays free outside the snap threshold");
     assert.strictEqual(free.snapY, null, "waypoint y stays free outside the snap threshold");
+    const gridSnapped = T.snapOrthoBend(edge,
+      {x:35, y:59}, ep, 6, true);
+    assert.strictEqual(gridSnapped.x, 36, "Shift-mode waypoint x can snap between canvas grid points");
+    assert.strictEqual(gridSnapped.y, 60, "Shift-mode waypoint y can snap between canvas grid points");
+    assert.strictEqual(gridSnapped.x % 12, 0, "Shift-mode waypoint x uses half-grid resolution");
+    assert.strictEqual(gridSnapped.y % 12, 0, "Shift-mode waypoint y uses half-grid resolution");
+    assert.strictEqual(gridSnapped.x % 24, 12, "Shift-mode waypoint x exposes a horizontal midpoint");
+    assert.strictEqual(gridSnapped.y % 24, 12, "Shift-mode waypoint y exposes a vertical midpoint");
+    assert.strictEqual(gridSnapped.gridStep, 12, "waypoint grid results expose the half-grid step");
+    assert.strictEqual(gridSnapped.grid, true, "grid-snapped waypoint result identifies its snap mode");
 
     T.setSelection("edge", edge.id);
     T.render();
-    let handle = window.document.querySelector(`[data-edgebend="${edge.id}"]`);
-    assert(handle, "selected orthogonal edge exposes a canvas waypoint handle");
-    assert.strictEqual(window.document.querySelectorAll("[data-edgebend]").length, 1,
-      "only the selected orthogonal edge exposes a waypoint handle");
+    let handle = window.document.querySelector(
+      `[data-edgebend="${edge.id}"][data-edgecorner="bend"]`);
+    assert(handle, "selected orthogonal edge exposes its central corner handle");
+    const automaticCorners = T.orthoRouteCornerHandles(automatic);
+    assert(automaticCorners.length >= 2, "automatic orthogonal routes expose every visible corner");
+    assert.strictEqual(window.document.querySelectorAll("[data-edgebend]").length,
+      automaticCorners.length, "every visible orthogonal corner gets one canvas handle");
     const beforeUndo = T.undoDepth;
     firePointer(window, handle, "pointerdown", {clientX:automatic.bend.x, clientY:automatic.bend.y});
     firePointer(window, window.document.getElementById("board"), "pointermove",
-      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+      {clientX:automatic.a.x + 3, clientY:automatic.b.y - 3});
     assert.strictEqual(edge.orthoX, automatic.a.x, "pointer drag snaps waypoint x");
-    assert.strictEqual(edge.orthoY, automatic.a.y, "pointer drag snaps waypoint y");
+    assert.strictEqual(edge.orthoY, automatic.b.y, "pointer drag snaps waypoint y");
     const draggedLabel = T.edgeLabelPoint(edge, ep);
     const labelText = window.document.querySelector(`[data-edge="${edge.id}"] [data-edge-label]`);
     assert.strictEqual(Number(labelText.getAttribute("x")), draggedLabel.x,
@@ -2319,31 +2332,148 @@ if (process.argv.includes("--api-surface")){
     assert(window.document.querySelector("[data-ortho-snap-x]"), "x snap draws an alignment guide");
     assert(window.document.querySelector("[data-ortho-snap-y]"), "y snap draws an alignment guide");
     firePointer(window, window.document.getElementById("board"), "pointermove",
-      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+      {clientX:automatic.a.x + 3, clientY:automatic.b.y - 3});
     assert.strictEqual(T.undoDepth, beforeUndo + 1, "continued waypoint movement stays in one undo step");
     firePointer(window, window.document.getElementById("board"), "pointerup",
-      {clientX:automatic.a.x + 3, clientY:automatic.a.y - 3});
+      {clientX:automatic.a.x + 3, clientY:automatic.b.y - 3});
     assert(!window.document.querySelector("[data-ortho-snap-x], [data-ortho-snap-y]"),
       "snap guides clear when the drag ends");
+
+    handle = window.document.querySelector(
+      `[data-edgebend="${edge.id}"][data-edgecorner="bend"]`);
+    const shiftStart = T.orthoEdgeRoute(edge, ep.pa, ep.pb).bend;
+    const shiftTarget = {
+      x:Math.floor(shiftStart.x / 24) * 24 + 36,
+      y:Math.floor(shiftStart.y / 24) * 24 + 36
+    };
+    const expectedGrid = T.snapOrthoBend(edge, shiftTarget, ep, 6, true);
+    const expectedNormal = T.snapOrthoBend(edge, shiftTarget, ep);
+    assert(expectedGrid.x !== expectedNormal.x || expectedGrid.y !== expectedNormal.y,
+      "test target distinguishes grid snapping from normal coordinate snapping");
+    const beforeShiftUndo = T.undoDepth;
+    firePointer(window, handle, "pointerdown",
+      {clientX:shiftStart.x, clientY:shiftStart.y, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:shiftTarget.x, clientY:shiftTarget.y, shiftKey:true});
+    assert.strictEqual(edge.orthoX, expectedGrid.x,
+      "holding Shift while dragging snaps the orthogonal waypoint x to the half-grid");
+    assert.strictEqual(edge.orthoY, expectedGrid.y,
+      "holding Shift while dragging snaps the orthogonal waypoint y to the half-grid");
+    assert(window.document.querySelector("[data-ortho-snap-x]") &&
+      window.document.querySelector("[data-ortho-snap-y]"),
+      "Shift grid snapping shows both waypoint guides");
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:shiftTarget.x, clientY:shiftTarget.y});
+    assert.strictEqual(edge.orthoX, expectedNormal.x,
+      "releasing Shift during the same drag immediately restores normal x snapping");
+    assert.strictEqual(edge.orthoY, expectedNormal.y,
+      "releasing Shift during the same drag immediately restores normal y snapping");
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:shiftTarget.x, clientY:shiftTarget.y, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      {clientX:shiftTarget.x, clientY:shiftTarget.y, shiftKey:true});
+    assert.strictEqual(T.undoDepth, beforeShiftUndo + 1,
+      "a Shift-grid waypoint drag remains one undo step");
+    assert.strictEqual(edge.orthoX % 12, 0,
+      "the dropped orthogonal waypoint x remains half-grid aligned");
+    assert.strictEqual(edge.orthoY % 12, 0,
+      "the dropped orthogonal waypoint y remains half-grid aligned");
+    assert.strictEqual(edge.orthoX % 24, 12,
+      "the pointer drag can drop x midway between visible grid points");
+    assert.strictEqual(edge.orthoY % 24, 12,
+      "the pointer drag can drop y midway between visible grid points");
     const customPath = T.edgePath(edge, ep.pa, ep.pb);
     assert(!customPath.includes("C") && customPath.includes(" Q "),
       "custom waypoint route keeps rounded orthogonal corners");
     assert(T.orthoEdgeRoute(edge, ep.pa, ep.pb).points
       .some(point => point.x === edge.orthoX && point.y === edge.orthoY),
       "custom route passes through the moved waypoint coordinates");
+    let customRoute = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+    let customCorners = T.orthoRouteCornerHandles(customRoute);
+    for (const key of ["entry","bend","exit"])
+      assert(customCorners.some(corner => corner.key === key),
+        `a shaped orthogonal route exposes its ${key} corner`);
+    sameList([...window.document.querySelectorAll(`[data-edgebend="${edge.id}"]`)]
+      .map(corner => corner.getAttribute("data-edgecorner")),
+      customCorners.map(corner => corner.key),
+      "the canvas renders an independent handle at every shaped-route corner");
+
+    const beforeEntryY = edge.orthoY;
+    const entryCorner = customCorners.find(corner => corner.key === "entry");
+    const entryHandle = window.document.querySelector(
+      `[data-edgebend="${edge.id}"][data-edgecorner="entry"]`);
+    firePointer(window, entryHandle, "pointerdown",
+      {clientX:entryCorner.point.x, clientY:entryCorner.point.y, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:entryCorner.point.x + 12, clientY:entryCorner.point.y, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      {clientX:entryCorner.point.x + 12, clientY:entryCorner.point.y, shiftKey:true});
+    assert.strictEqual(edge.orthoX, entryCorner.point.x + 12,
+      "dragging the entry corner moves its vertical route leg");
+    assert.strictEqual(edge.orthoY, beforeEntryY,
+      "dragging the entry corner preserves the independent exit leg");
+
+    customRoute = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+    customCorners = T.orthoRouteCornerHandles(customRoute);
+    const beforeExitX = edge.orthoX;
+    const exitCorner = customCorners.find(corner => corner.key === "exit");
+    const exitHandle = window.document.querySelector(
+      `[data-edgebend="${edge.id}"][data-edgecorner="exit"]`);
+    firePointer(window, exitHandle, "pointerdown",
+      {clientX:exitCorner.point.x, clientY:exitCorner.point.y, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointermove",
+      {clientX:exitCorner.point.x, clientY:exitCorner.point.y + 12, shiftKey:true});
+    firePointer(window, window.document.getElementById("board"), "pointerup",
+      {clientX:exitCorner.point.x, clientY:exitCorner.point.y + 12, shiftKey:true});
+    assert.strictEqual(edge.orthoY, exitCorner.point.y + 12,
+      "dragging the exit corner moves its horizontal route leg");
+    assert.strictEqual(edge.orthoX, beforeExitX,
+      "dragging the exit corner preserves the independent entry leg");
+
+    for (const key of ["from-stub","to-stub"]){
+      customRoute = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+      customCorners = T.orthoRouteCornerHandles(customRoute);
+      const stubCorner = customCorners.find(corner => corner.key === key);
+      if (!stubCorner) continue;
+      const axis = stubCorner.axes[0];
+      const endpoint = key === "from-stub" ? customRoute.pa : customRoute.pb;
+      const sign = endpoint.side === "e" || endpoint.side === "s" ? 1 : -1;
+      const target = {...stubCorner.point,
+        [axis]:stubCorner.point[axis] + sign*37};
+      const expected = T.snapOrthoBend(edge, target, ep);
+      const stubHandle = window.document.querySelector(
+        `[data-edgebend="${edge.id}"][data-edgecorner="${key}"]`);
+      firePointer(window, stubHandle, "pointerdown",
+        {clientX:stubCorner.point.x, clientY:stubCorner.point.y});
+      firePointer(window, window.document.getElementById("board"), "pointermove",
+        {clientX:target.x, clientY:target.y});
+      firePointer(window, window.document.getElementById("board"), "pointerup",
+        {clientX:target.x, clientY:target.y});
+      const movedRoute = T.orthoEdgeRoute(edge, ep.pa, ep.pb);
+      const movedPoint = key === "from-stub" ? movedRoute.a : movedRoute.b;
+      assert.strictEqual(movedPoint[axis], expected[axis],
+        `dragging the ${key} corner moves its endpoint stub`);
+    }
 
     const parsed = JSON.parse(T.serializeDocument());
     const saved = parsed.edges.find(e => e.id === edge.id);
     assert.strictEqual(saved.orthoX, edge.orthoX, "waypoint x serializes");
     assert.strictEqual(saved.orthoY, edge.orthoY, "waypoint y serializes");
+    for (const key of ["orthoFromStub","orthoToStub"])
+      assert.strictEqual(saved[key], edge[key], `${key} serializes when its corner is moved`);
     const { window:importWindow } = makeDom();
     importWindow.__T.importDocText(JSON.stringify(parsed));
     const imported = importWindow.__T.state.edges.find(e => e.id === edge.id);
     assert.strictEqual(imported.orthoX, edge.orthoX, "waypoint x imports");
     assert.strictEqual(imported.orthoY, edge.orthoY, "waypoint y imports");
+    for (const key of ["orthoFromStub","orthoToStub"])
+      assert.strictEqual(imported[key], edge[key], `${key} imports when its corner is moved`);
     const copied = T.remapPayload(T.cloneSelectionPayload([edge.from, edge.to]), 36);
     assert.strictEqual(copied.edges[0].orthoX, edge.orthoX + 36, "copied waypoint x follows copied nodes");
     assert.strictEqual(copied.edges[0].orthoY, edge.orthoY + 36, "copied waypoint y follows copied nodes");
+    for (const key of ["orthoFromStub","orthoToStub"])
+      assert.strictEqual(copied.edges[0][key], edge[key],
+        `${key} remains endpoint-relative when copied`);
     assert(!T.serializedSvg(true).includes("data-edgebend"), "SVG export excludes the editing waypoint");
     const savedBend = {x:edge.orthoX, y:edge.orthoY};
     edge.orthoX = 2400;
@@ -2360,13 +2490,16 @@ if (process.argv.includes("--api-surface")){
     reset.click();
     assert.strictEqual(edge.orthoX, undefined, "inspector reset clears waypoint x");
     assert.strictEqual(edge.orthoY, undefined, "inspector reset clears waypoint y");
+    assert.strictEqual(edge.orthoFromStub, undefined, "inspector reset clears the start stub corner");
+    assert.strictEqual(edge.orthoToStub, undefined, "inspector reset clears the end stub corner");
     assert.strictEqual(T.edgePath(edge, ep.pa, ep.pb), automatic.d,
       "reset restores the automatic orthogonal route");
     const resetLabel = T.edgeLabelPoint(edge, ep);
     assert.strictEqual(resetLabel.x, automaticLabel.x, "reset restores the automatic label x");
     assert.strictEqual(resetLabel.y, automaticLabel.y, "reset restores the automatic label y");
 
-    handle = window.document.querySelector(`[data-edgebend="${edge.id}"]`);
+    handle = window.document.querySelector(
+      `[data-edgebend="${edge.id}"][data-edgecorner="bend"]`);
     const keyboardStart = T.orthoEdgeRoute(edge, ep.pa, ep.pb).bend.x;
     handle.dispatchEvent(new window.KeyboardEvent("keydown", {key:"ArrowRight", bubbles:true, cancelable:true}));
     assert.strictEqual(edge.orthoX, keyboardStart + 4, "keyboard can nudge the waypoint");
@@ -2391,11 +2524,13 @@ if (process.argv.includes("--api-surface")){
     T.render();
     T.edgeMenu(edge, 20, 20);
     const contextReset = [...window.document.querySelectorAll("#ctxMenu .ctxitem")]
-      .find(button => button.textContent.includes("Reset to automatic"));
-    assert(contextReset, "edge context menu offers waypoint reset");
+      .find(button => button.textContent.includes("Reset all to automatic"));
+    assert(contextReset, "edge context menu offers reset for every moved corner");
     contextReset.click();
     assert.strictEqual(edge.orthoX, undefined, "context-menu reset clears waypoint x");
     assert.strictEqual(edge.orthoY, undefined, "context-menu reset clears waypoint y");
+    assert.strictEqual(edge.orthoFromStub, undefined, "context-menu reset clears the start stub corner");
+    assert.strictEqual(edge.orthoToStub, undefined, "context-menu reset clears the end stub corner");
   }
 
   /* SCH-043 — minimap */
@@ -4448,6 +4583,127 @@ if (process.argv.includes("--api-surface")){
       "disabling ports removes dormant custom captions");
     assert.strictEqual(doc.querySelector('[data-node="source"] [data-node-input-label]'), null,
       "disabling ports restores the label-free canvas presentation");
+  }
+
+  /* SCH-108 — multiple stable, named Input / Output ports */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:20, nodes:[
+      {id:"source", type:"concept", x:80, y:100, title:"Transform", color:"#CFE8FF",
+       portsEnabled:true,
+       inputPorts:[{id:"payload", label:"Payload"}, {id:"config", label:"Config"}],
+       outputPorts:[{id:"result", label:"Result"}, {id:"audit", label:"Audit"}]},
+      {id:"target", type:"concept", x:520, y:120, title:"Destination", color:"#D8F3DC",
+       portsEnabled:true,
+       inputPorts:[{id:"primary", label:"Primary"}, {id:"fallback", label:"Fallback"}],
+       outputPorts:[{id:"accepted", label:"Accepted"}]}
+    ], edges:[
+      {id:"bound", from:"source", to:"target", kind:"link", label:"Produces",
+       fromPort:"audit", toPort:"fallback"}
+    ]}));
+    T.setView({x:0, y:0, k:1});
+
+    const source = T.state.nodes.find(n => n.id === "source");
+    const target = T.state.nodes.find(n => n.id === "target");
+    sameList(T.nodeInputPorts(source).map(port => port.label), ["Payload", "Config"],
+      "multiple named inputs restore in their saved order");
+    sameList(T.nodeOutputPorts(source).map(port => port.label), ["Result", "Audit"],
+      "multiple named outputs restore in their saved order");
+    const sourcePoints = T.nodePortPoints(source);
+    assert.strictEqual(sourcePoints.inputs.length, 2, "each named input gets an attachment point");
+    assert.strictEqual(sourcePoints.outputs.length, 2, "each named output gets an attachment point");
+    assert.notStrictEqual(sourcePoints.inputs[0].y, sourcePoints.inputs[1].y,
+      "input ports occupy distinct rows");
+    assert.strictEqual(doc.querySelectorAll('[data-node="source"] [data-node-port]').length, 4,
+      "every named port renders a connectable handle");
+    sameList([...doc.querySelectorAll('[data-node="source"] [data-node-input-label]')]
+      .map(label => label.textContent), ["Payload", "Config"],
+      "every input caption renders inside the node");
+
+    const bound = T.state.edges[0];
+    const boundEndpoints = T.edgeEndpoints(bound);
+    const auditPoint = T.nodePortAnchor(source, "output", "audit");
+    const fallbackPoint = T.nodePortAnchor(target, "input", "fallback");
+    closeEnough(boundEndpoints.pa.x, auditPoint.x, "saved edge starts at its exact named output x");
+    closeEnough(boundEndpoints.pa.y, auditPoint.y, "saved edge starts at its exact named output y");
+    closeEnough(boundEndpoints.pb.x, fallbackPoint.x, "saved edge ends at its exact named input x");
+    closeEnough(boundEndpoints.pb.y, fallbackPoint.y, "saved edge ends at its exact named input y");
+
+    T.selectNode(source.id);
+    const configInput = doc.querySelector('[data-port-input="config"]');
+    configInput.focus();
+    configInput.value = "Options";
+    configInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(T.nodePortById(source, "input", "config").label, "Options",
+      "each saved port can be renamed independently");
+    const addInput = doc.querySelector('[aria-label="Add input"]');
+    addInput.click();
+    assert.strictEqual(T.nodeInputPorts(source).length, 3, "inspector can append a named input");
+    assert(T.nodeInputPorts(source).some(port => port.id === "in1"),
+      "new ports receive stable side-specific ids");
+
+    const removeAudit = doc.querySelector('[aria-label="Remove Audit"]');
+    removeAudit.click();
+    assert.strictEqual(T.nodePortById(source, "output", "audit"), null,
+      "inspector can remove one named output");
+    assert.strictEqual(Object.hasOwn(bound, "fromPort"), false,
+      "removing a bound port safely returns its edge to automatic first-port routing");
+    closeEnough(T.edgeEndpoints(bound).pa.y, T.nodePortPoints(source).outputs[0].y,
+      "an edge whose port was removed falls back to the first output");
+
+    const resultHandle = doc.querySelector(
+      '[data-node="source"] [data-node-port-id="result"]');
+    const primaryHandle = doc.querySelector(
+      '[data-node="target"] [data-node-port-id="primary"]');
+    const resultPoint = T.nodePortAnchor(source, "output", "result");
+    const primaryPoint = T.nodePortAnchor(target, "input", "primary");
+    const beforeDrag = T.state.edges.length;
+    firePointer(window, resultHandle, "pointerdown",
+      {clientX:resultPoint.x, clientY:resultPoint.y});
+    firePointer(window, doc.getElementById("board"), "pointermove",
+      {clientX:primaryPoint.x, clientY:primaryPoint.y});
+    firePointer(window, doc.getElementById("board"), "pointerup",
+      {clientX:primaryPoint.x, clientY:primaryPoint.y});
+    assert.strictEqual(T.state.edges.length, beforeDrag + 1,
+      "dragging between two named ports creates a separate edge");
+    const dragged = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(dragged.fromPort, "result", "created edge stores the exact output id");
+    assert.strictEqual(dragged.toPort, "primary", "created edge stores the exact input id");
+
+    T.addEdge(
+      {id:"target", portId:"fallback", portSide:"input", anchor:"ml"},
+      {id:"source", portId:"result", portSide:"output", anchor:"mr"}
+    );
+    const reverseDragged = T.state.edges[T.state.edges.length - 1];
+    assert.strictEqual(reverseDragged.from, "source",
+      "dragging Input to Output normalizes the edge's stored direction");
+    assert.strictEqual(reverseDragged.to, "target",
+      "reverse port drags still point toward the Input node");
+    assert.strictEqual(reverseDragged.fromPort, "result",
+      "reverse port drags preserve the exact named output");
+    assert.strictEqual(reverseDragged.toPort, "fallback",
+      "reverse port drags preserve the exact named input");
+
+    const saved = JSON.parse(T.serializeDocument());
+    const savedSource = saved.nodes.find(n => n.id === "source");
+    assert.strictEqual(savedSource.inputPorts.length, 3, "port arrays round-trip through JSON");
+    assert.strictEqual(savedSource.outputPorts.length, 1, "removed ports stay removed in JSON");
+    const savedDragged = saved.edges.find(edge => edge.id === dragged.id);
+    assert.strictEqual(savedDragged.fromPort, "result", "output binding round-trips through JSON");
+    assert.strictEqual(savedDragged.toPort, "primary", "input binding round-trips through JSON");
+
+    savedSource.inputPorts = [
+      {id:"duplicate", label:"One"}, {id:"duplicate", label:"Two"}, null
+    ];
+    savedDragged.fromPort = "missing";
+    T.importDocText(JSON.stringify(saved));
+    const importedSource = T.state.nodes.find(n => n.id === "source");
+    const importedIds = T.nodeInputPorts(importedSource).map(port => port.id);
+    assert.strictEqual(new Set(importedIds).size, importedIds.length,
+      "duplicate and malformed imported port ids normalize safely");
+    assert.strictEqual(Object.hasOwn(T.state.edges.find(edge => edge.id === dragged.id), "fromPort"), false,
+      "dangling saved port bindings are removed on import");
   }
 
   /* ---- SCH-064: custom color schemes in document JSON ---- */

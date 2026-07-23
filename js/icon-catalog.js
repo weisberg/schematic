@@ -12,6 +12,7 @@ const NODE_ICON_LIBRARIES = [
   ["fa", "Font Awesome"]
 ];
 const NODE_PORT_LABEL_MAX = 80;
+const NODE_PORT_MAX = 16;
 
 const LUCIDE_NODE_ICONS = {
   activity: {label:"Activity", elements:[
@@ -164,8 +165,9 @@ function normalizeNodeDecoration(n){
   setNodeSubtitle(n, n.subtitle);
 }
 
-/* Optional concept-node link ports. The defaults stay implicit so enabling the
-   feature adds only one document key until a label is actually customized. */
+/* Optional concept-node link ports. Legacy single-caption fields remain a
+   compact implicit one-port model; arrays are materialized only when a node
+   needs multiple stable, edge-bindable ports. */
 function nodeSupportsLinkPorts(n){
   return !!n && n.type === "concept";
 }
@@ -177,11 +179,76 @@ function cleanNodePortLabel(value, fallback){
 function nodePortsEnabled(n){
   return nodeSupportsLinkPorts(n) && n.portsEnabled === true;
 }
+function nodePortConfig(side){
+  if (side === "input")
+    return {key:"inputPorts", legacyKey:"inputLabel", fallback:"Input", id:"input", prefix:"in"};
+  if (side === "output")
+    return {key:"outputPorts", legacyKey:"outputLabel", fallback:"Output", id:"output", prefix:"out"};
+  return null;
+}
+function cleanNodePortId(value){
+  return String(value == null ? "" : value).trim()
+    .replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+}
+function normalizedNodePortList(raw, side){
+  const config = nodePortConfig(side);
+  if (!config || !Array.isArray(raw)) return [];
+  const result = [], used = new Set();
+  for (const candidate of raw.slice(0, NODE_PORT_MAX)){
+    if (!candidate || typeof candidate !== "object") continue;
+    let id = cleanNodePortId(candidate.id);
+    if (!id || used.has(id)){
+      let index = result.length + 1;
+      do { id = `${config.prefix}${index++}`; } while (used.has(id));
+    }
+    used.add(id);
+    const fallback = raw.length > 1 ? `${config.fallback} ${result.length + 1}` : config.fallback;
+    result.push({id, label:cleanNodePortLabel(candidate.label, fallback)});
+  }
+  return result;
+}
+function nodePortsForSide(n, side){
+  const config = nodePortConfig(side);
+  if (!config || !nodePortsEnabled(n)) return [];
+  const stored = normalizedNodePortList(n[config.key], side);
+  if (stored.length) return stored;
+  return [{id:config.id, label:cleanNodePortLabel(n[config.legacyKey], config.fallback)}];
+}
+function nodeInputPorts(n){ return nodePortsForSide(n, "input"); }
+function nodeOutputPorts(n){ return nodePortsForSide(n, "output"); }
 function nodeInputLabel(n){
-  return cleanNodePortLabel(n && n.inputLabel, "Input");
+  return nodeInputPorts(n)[0]?.label || "Input";
 }
 function nodeOutputLabel(n){
-  return cleanNodePortLabel(n && n.outputLabel, "Output");
+  return nodeOutputPorts(n)[0]?.label || "Output";
+}
+function materializeNodePorts(n, side){
+  const config = nodePortConfig(side);
+  if (!config || !nodeSupportsLinkPorts(n)) return [];
+  const current = nodePortsForSide(n, side);
+  n[config.key] = current.map(port => ({...port}));
+  delete n[config.legacyKey];
+  return n[config.key];
+}
+function nextNodePortId(n, side){
+  const config = nodePortConfig(side);
+  if (!config) return "";
+  const used = new Set(nodePortsForSide(n, side).map(port => port.id));
+  let index = 1, id;
+  do { id = `${config.prefix}${index++}`; } while (used.has(id));
+  return id;
+}
+function nodePortById(n, side, id){
+  return nodePortsForSide(n, side).find(port => port.id === id) || null;
+}
+function nodePortBinding(n, id, preferredSide){
+  if (!nodePortsEnabled(n) || !id) return null;
+  const sides = preferredSide === "input" ? ["input","output"] : ["output","input"];
+  for (const side of sides){
+    const port = nodePortById(n, side, id);
+    if (port) return {side, port};
+  }
+  return null;
 }
 function setNodePortsEnabled(n, enabled){
   if (!nodeSupportsLinkPorts(n)) return false;
@@ -190,16 +257,54 @@ function setNodePortsEnabled(n, enabled){
     delete n.portsEnabled;
     delete n.inputLabel;
     delete n.outputLabel;
+    delete n.inputPorts;
+    delete n.outputPorts;
+    for (const edge of state.edges || []){
+      if (edge.from === n.id) delete edge.fromPort;
+      if (edge.to === n.id) delete edge.toPort;
+    }
   }
   return true;
 }
-function setNodePortLabel(n, side, value){
-  if (!nodeSupportsLinkPorts(n) || (side !== "input" && side !== "output")) return false;
-  const key = side === "input" ? "inputLabel" : "outputLabel";
-  const fallback = side === "input" ? "Input" : "Output";
-  const label = cleanNodePortLabel(value, fallback);
-  if (label === fallback) delete n[key];
-  else n[key] = label;
+function setNodePortLabel(n, side, value, portId = null){
+  const config = nodePortConfig(side);
+  if (!nodeSupportsLinkPorts(n) || !config) return false;
+  const ports = Array.isArray(n[config.key]) || (portId && portId !== config.id)
+    ? materializeNodePorts(n, side) : null;
+  if (ports){
+    const port = ports.find(item => item.id === (portId || ports[0]?.id));
+    if (!port) return false;
+    port.label = cleanNodePortLabel(value, config.fallback);
+    return true;
+  }
+  const label = cleanNodePortLabel(value, config.fallback);
+  if (label === config.fallback) delete n[config.legacyKey];
+  else n[config.legacyKey] = label;
+  return true;
+}
+function addNodePort(n, side, value){
+  const config = nodePortConfig(side);
+  if (!nodeSupportsLinkPorts(n) || !config) return null;
+  setNodePortsEnabled(n, true);
+  const ports = materializeNodePorts(n, side);
+  if (ports.length >= NODE_PORT_MAX) return null;
+  const port = {id:nextNodePortId(n, side),
+    label:cleanNodePortLabel(value, `${config.fallback} ${ports.length + 1}`)};
+  ports.push(port);
+  return port;
+}
+function removeNodePort(n, side, portId){
+  const config = nodePortConfig(side);
+  if (!nodeSupportsLinkPorts(n) || !config) return false;
+  const ports = materializeNodePorts(n, side);
+  if (ports.length <= 1) return false;
+  const index = ports.findIndex(port => port.id === portId);
+  if (index < 0) return false;
+  ports.splice(index, 1);
+  for (const edge of state.edges || []){
+    if (edge.from === n.id && edge.fromPort === portId) delete edge.fromPort;
+    if (edge.to === n.id && edge.toPort === portId) delete edge.toPort;
+  }
   return true;
 }
 function normalizeNodePorts(n){
@@ -207,15 +312,46 @@ function normalizeNodePorts(n){
     delete n.portsEnabled;
     delete n.inputLabel;
     delete n.outputLabel;
+    delete n.inputPorts;
+    delete n.outputPorts;
     return;
   }
   if (n.portsEnabled !== true){
     delete n.portsEnabled;
     delete n.inputLabel;
     delete n.outputLabel;
+    delete n.inputPorts;
+    delete n.outputPorts;
     return;
   }
   n.portsEnabled = true;
-  setNodePortLabel(n, "input", n.inputLabel);
-  setNodePortLabel(n, "output", n.outputLabel);
+  for (const side of ["input","output"]){
+    const config = nodePortConfig(side);
+    const ports = normalizedNodePortList(n[config.key], side);
+    if (ports.length){
+      n[config.key] = ports;
+      delete n[config.legacyKey];
+    } else {
+      delete n[config.key];
+      const label = cleanNodePortLabel(n[config.legacyKey], config.fallback);
+      if (label === config.fallback) delete n[config.legacyKey];
+      else n[config.legacyKey] = label;
+    }
+  }
+}
+function normalizeEdgePortBindings(e){
+  if (!e || typeof e !== "object") return;
+  for (const [nodeKey, fieldKey, anchorKey, portKey, preferredSide] of [
+    ["from", "fromField", "fromAnchor", "fromPort", "output"],
+    ["to", "toField", "toAnchor", "toPort", "input"]
+  ]){
+    const id = cleanNodePortId(e[portKey]);
+    const node = nodeById(e[nodeKey]);
+    if (!id || e[fieldKey] || !nodePortBinding(node, id, preferredSide)){
+      delete e[portKey];
+      continue;
+    }
+    e[portKey] = id;
+    delete e[anchorKey];
+  }
 }
