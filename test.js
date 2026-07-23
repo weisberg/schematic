@@ -143,8 +143,8 @@ if (process.argv.includes("--api-surface")){
 
 (async () => {
   sameList(scriptSources, [
-    "js/core.js", "js/geometry.js", "js/render.js", "js/model.js", "js/interactions.js",
-    "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
+    "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
+    "js/interactions.js", "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -152,6 +152,8 @@ if (process.argv.includes("--api-surface")){
   assert(html.includes("<!-- deployment"), "deployment comment is present");
   assert(html.includes("<noscript>"), "noscript warning is present");
   assert(html.includes(".schematic"), "fallback file input accepts .schematic files");
+  assert(styles.includes(".banner[hidden]{display:none!important}"),
+    "hidden recovery/capability banners cannot be repainted by a later display rule");
 
   {
     const { window, downloads } = makeDom();
@@ -174,6 +176,8 @@ if (process.argv.includes("--api-surface")){
     const nodeTypes = new Set(T.state.nodes.map(n => n.type));
     for (const type of ["concept", "text", "status", "note", "todo", "table", "frame", "swimlane"])
       assert(nodeTypes.has(type), `starter document includes the ${type} node type`);
+    assert(T.state.nodes.some(n => n.type === "concept" && T.nodePortsEnabled(n)),
+      "starter document demonstrates labeled Input / Output link ports");
 
     const lanes = T.state.nodes.filter(n => n.type === "swimlane");
     sameList(lanes.map(T.swimlaneOrientation).sort(), ["horizontal", "vertical"],
@@ -1982,7 +1986,7 @@ if (process.argv.includes("--api-surface")){
     assertNoOverlaps(cyclicRects, "cyclic schema layout tables have no overlaps");
   }
 
-  /* SCH-042 — orthogonal edge routing */
+  /* SCH-042/SCH-106 — orthogonal edge routing and corner styles */
   {
     const { window } = makeDom();
     const T = window.__T;
@@ -1992,13 +1996,46 @@ if (process.argv.includes("--api-surface")){
     const ep = T.edgeEndpoints(edge);
     const d = T.edgePath(edge, ep.pa, ep.pb);
     assert(!d.includes("C"), "orthogonal edge path does not use cubic curves");
-    assert(/^[MLHV0-9 .-]+$/.test(d), "orthogonal edge path uses only M/L/H/V commands and numbers");
+    assert(d.includes(" Q "), "orthogonal links use rounded quadratic corners by default");
+    assert.strictEqual(T.orthoCornerStyle(edge), "rounded", "missing corner metadata defaults to rounded");
     const edgeGroup = window.document.querySelector(`[data-edge="${edge.id}"]`);
     assert(edgeGroup.querySelectorAll("line").length > 0, "orthogonal relation still renders notation");
     const parsed = JSON.parse(T.serializeDocument());
     assert.strictEqual(parsed.edges.find(e => e.id === edge.id).routing, "ortho", "routing key serializes");
+    assert.strictEqual(Object.hasOwn(parsed.edges.find(e => e.id === edge.id), "orthoCorner"), false,
+      "default rounded corners do not add document metadata");
+
+    T.setOrthoCornerStyle(edge, "square");
+    const square = T.edgePath(edge, ep.pa, ep.pb);
+    assert(!square.includes(" Q "), "square orthogonal corners use straight path commands");
+    assert(/^[MLHV0-9 .-]+$/.test(square),
+      "square orthogonal path uses only M/L/H/V commands and numbers");
+    const squareParsed = JSON.parse(T.serializeDocument());
+    assert.strictEqual(squareParsed.edges.find(e => e.id === edge.id).orthoCorner, "square",
+      "square corner override serializes");
+    T.setSelection("edge", edge.id);
+    T.render();
+    const cornerSelect = window.document.getElementById("edgeOrthoCorners");
+    assert(cornerSelect, "orthogonal inspector exposes a corner-style selector");
+    assert.strictEqual(cornerSelect.value, "square", "corner selector reflects the saved override");
+    cornerSelect.value = "rounded";
+    cornerSelect.dispatchEvent(new window.Event("change"));
+    assert.strictEqual(T.orthoCornerStyle(edge), "rounded", "inspector can restore rounded corners");
+    T.edgeMenu(edge, 20, 20);
+    const routingGroup = window.document.querySelector('[data-ctx-group="edge:routing"]');
+    assert(routingGroup && routingGroup.textContent.includes("Rounded") &&
+      routingGroup.textContent.includes("Square"),
+      "right-click Routing group exposes both orthogonal corner styles");
+    const selectionRouting = window.document.querySelector(
+      '#selectionMenuPanel [data-menu-submenu="selection-routing"]');
+    assert(selectionRouting && selectionRouting.textContent.includes("Rounded") &&
+      selectionRouting.textContent.includes("Square"),
+      "Selection Routing submenu exposes both orthogonal corner styles");
+
     T.importDocText(JSON.stringify(parsed));
     assert.strictEqual(T.state.edges.find(e => e.id === edge.id).routing, "ortho", "routing key imports");
+    assert.strictEqual(T.orthoCornerStyle(T.state.edges.find(e => e.id === edge.id)), "rounded",
+      "legacy orthogonal links import with rounded corners");
   }
 
   /* SCH-074/SCH-075 — curved cardinality paths meet glyphs on straight stubs */
@@ -2289,10 +2326,11 @@ if (process.argv.includes("--api-surface")){
     assert(!window.document.querySelector("[data-ortho-snap-x], [data-ortho-snap-y]"),
       "snap guides clear when the drag ends");
     const customPath = T.edgePath(edge, ep.pa, ep.pb);
-    assert(!customPath.includes("C") && /^[MLHV0-9 .-]+$/.test(customPath),
-      "custom waypoint route remains purely orthogonal");
-    assert(customPath.includes(`H ${edge.orthoX}`) && customPath.includes(`V ${edge.orthoY}`),
-      "custom route passes through both waypoint coordinates");
+    assert(!customPath.includes("C") && customPath.includes(" Q "),
+      "custom waypoint route keeps rounded orthogonal corners");
+    assert(T.orthoEdgeRoute(edge, ep.pa, ep.pb).points
+      .some(point => point.x === edge.orthoX && point.y === edge.orthoY),
+      "custom route passes through the moved waypoint coordinates");
 
     const parsed = JSON.parse(T.serializeDocument());
     const saved = parsed.edges.find(e => e.id === edge.id);
@@ -4204,6 +4242,214 @@ if (process.argv.includes("--api-surface")){
       "structural table nodes do not expose concept flowchart shapes");
   }
 
+  /* SCH-105 — node icons, emoji, and subtitles */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const concept = T.state.nodes.find(n => n.type === "concept");
+    assert.strictEqual(T.nodeIcon(concept), null, "legacy concept nodes start without an icon");
+    assert.strictEqual(T.nodeSubtitle(concept), "", "legacy concept nodes start without a subtitle");
+
+    T.selectNode(concept.id);
+    let subtitleInput = window.document.getElementById("nodeSubtitleInput");
+    let iconSource = window.document.getElementById("nodeIconSource");
+    assert(subtitleInput && iconSource, "concept inspector exposes subtitle and icon controls");
+    sameList([...iconSource.options].map(option => option.textContent),
+      ["No icon","Emoji","Lucide","Font Awesome"],
+      "icon source picker offers emoji and two popular offline icon libraries");
+
+    subtitleInput.focus();
+    subtitleInput.value = "Supporting detail that wraps independently";
+    subtitleInput.dispatchEvent(new window.Event("input", {bubbles:true}));
+    subtitleInput.blur();
+    assert.strictEqual(concept.subtitle, "Supporting detail that wraps independently",
+      "subtitle editor writes optional supporting text");
+
+    iconSource = window.document.getElementById("nodeIconSource");
+    iconSource.value = "lucide";
+    iconSource.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(concept.icon, "lucide:rocket", "choosing Lucide creates a useful default icon");
+    let iconName = window.document.getElementById("nodeIconName");
+    assert(iconName && iconName.options.length >= 8, "Lucide picker exposes a curated icon catalog");
+    iconName.value = "database";
+    iconName.dispatchEvent(new window.Event("change", {bubbles:true}));
+    assert.strictEqual(concept.icon, "lucide:database", "library icon choice updates the node");
+
+    let renderedIcon = window.document.querySelector(
+      `[data-node="${concept.id}"] [data-node-icon="lucide:database"]`);
+    assert(renderedIcon, "Lucide icon renders as part of the node");
+    assert(renderedIcon.querySelector('[data-node-vector-icon="lucide"]'),
+      "Lucide icon uses embedded SVG vectors rather than a network image");
+    const title = window.document.querySelector(`[data-node="${concept.id}"] [data-concept-wrapped]`);
+    const subtitle = window.document.querySelector(`[data-node="${concept.id}"] [data-concept-subtitle]`);
+    assert(title && subtitle, "node renders separate title and subtitle text elements");
+    assert(Number(subtitle.getAttribute("font-size")) < Number(title.getAttribute("font-size")),
+      "subtitle uses visibly smaller typography");
+    const layout = T.conceptWrappedLayout(concept);
+    assert(layout.textX > layout.iconX + layout.decoration.iconSize,
+      "card-like nodes reserve a leading component area for the icon");
+
+    T.setNodeIcon(concept, "fa:building");
+    T.render();
+    renderedIcon = window.document.querySelector(
+      `[data-node="${concept.id}"] [data-node-icon="fa:building"]`);
+    assert(renderedIcon && renderedIcon.querySelector('[data-node-vector-icon="font-awesome"]'),
+      "Font Awesome selection renders from the embedded vector catalog");
+
+    T.setNodeIcon(concept, "emoji:🚀");
+    T.render();
+    renderedIcon = window.document.querySelector(
+      `[data-node="${concept.id}"] [data-node-icon="emoji:🚀"]`);
+    assert(renderedIcon && renderedIcon.querySelector("[data-node-emoji]"),
+      "arbitrary emoji renders in the same leading icon component");
+
+    const status = T.state.nodes.find(n => n.type === "status");
+    T.setNodeSubtitle(status, "Shared rollout state");
+    T.setNodeIcon(status, "lucide:workflow");
+    T.render();
+    assert(window.document.querySelector(
+      `[data-node="${status.id}"] [data-node-icon="lucide:workflow"]`),
+      "status nodes support the same icon component");
+    assert(window.document.querySelector(
+      `[data-node="${status.id}"] [data-status-subtitle]`),
+      "status nodes render their subtitle separately from the status indicator");
+
+    const parsed = JSON.parse(T.serializeDocument());
+    const savedConcept = parsed.nodes.find(n => n.id === concept.id);
+    assert.strictEqual(savedConcept.icon, "emoji:🚀", "node icon serializes as an additive token");
+    assert.strictEqual(savedConcept.subtitle, "Supporting detail that wraps independently",
+      "node subtitle serializes");
+    const table = parsed.nodes.find(n => n.type === "table");
+    table.icon = "lucide:database";
+    table.subtitle = "Unsupported decoration";
+    savedConcept.icon = "lucide:not-a-real-icon";
+    T.importDocText(JSON.stringify(parsed));
+    assert.strictEqual(T.nodeIcon(T.state.nodes.find(n => n.id === concept.id)), null,
+      "invalid library icon tokens are discarded safely during import");
+    const importedTable = T.state.nodes.find(n => n.id === table.id);
+    assert.strictEqual(Object.hasOwn(importedTable, "icon"), false,
+      "node types without card decoration discard stray icon data");
+    assert.strictEqual(Object.hasOwn(importedTable, "subtitle"), false,
+      "node types without card decoration discard stray subtitle data");
+  }
+
+  /* SCH-107 — optional Input / Output link ports on concept nodes */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1, nextId:10, nodes:[
+      {id:"source", type:"concept", x:80, y:100, title:"Transform", color:"#CFE8FF",
+       portsEnabled:true, inputLabel:"Source data", outputLabel:"Result"},
+      {id:"target", type:"concept", x:520, y:150, title:"Destination", color:"#D8F3DC",
+       portsEnabled:true},
+      {id:"legacy", type:"concept", x:300, y:360, title:"Legacy node", color:"#FFE9A8"},
+      {id:"tbl", type:"table", x:700, y:360, title:"records", color:"#16232F",
+       portsEnabled:true, inputLabel:"bad", outputLabel:"bad", fields:[]}
+    ], edges:[
+      {id:"flow", from:"source", to:"target", kind:"link", label:"Produces"}
+    ]}));
+
+    const source = T.state.nodes.find(n => n.id === "source");
+    const target = T.state.nodes.find(n => n.id === "target");
+    const legacy = T.state.nodes.find(n => n.id === "legacy");
+    const table = T.state.nodes.find(n => n.id === "tbl");
+    assert(T.nodePortsEnabled(source) && T.nodePortsEnabled(target),
+      "saved concept nodes restore their Input / Output port mode");
+    assert.strictEqual(T.nodeInputLabel(source), "Source data", "custom input label restores");
+    assert.strictEqual(T.nodeOutputLabel(source), "Result", "custom output label restores");
+    assert.strictEqual(T.nodeInputLabel(target), "Input", "input label has a useful implicit default");
+    assert.strictEqual(T.nodeOutputLabel(target), "Output", "output label has a useful implicit default");
+    assert.strictEqual(T.nodePortsEnabled(table), false, "specialized table nodes reject stray port settings");
+    assert.strictEqual(Object.hasOwn(table, "inputLabel"), false,
+      "unsupported port captions are removed during import");
+
+    const legacyPeer = {...legacy, id:"legacy-peer", title:"Transform"};
+    assert(T.conceptWrappedLayout(source).h > T.conceptWrappedLayout(legacyPeer).h,
+      "a card node reserves a distinct row for enabled port labels");
+    const sourceGroup = doc.querySelector('[data-node="source"]');
+    assert.strictEqual(sourceGroup.querySelector("[data-node-input-label]").textContent, "Source data",
+      "input caption renders inside the node");
+    assert.strictEqual(sourceGroup.querySelector("[data-node-output-label]").textContent, "Result",
+      "output caption renders inside the node");
+    assert.strictEqual(sourceGroup.querySelectorAll("[data-node-port]").length, 2,
+      "both labeled ports remain visibly connectable");
+    assert.strictEqual(doc.querySelector('[data-node="legacy"] [data-node-input-label]'), null,
+      "legacy nodes retain their original label-free rendering");
+
+    const sourcePorts = T.nodePortPoints(source);
+    const targetPorts = T.nodePortPoints(target);
+    const endpoints = T.edgeEndpoints(T.state.edges[0]);
+    closeEnough(endpoints.pa.x, sourcePorts.output.x, "outgoing edge starts at the Output port x");
+    closeEnough(endpoints.pa.y, sourcePorts.output.y, "outgoing edge starts at the Output port y");
+    closeEnough(endpoints.pb.x, targetPorts.input.x, "incoming edge ends at the Input port x");
+    closeEnough(endpoints.pb.y, targetPorts.input.y, "incoming edge ends at the Input port y");
+
+    const explicitTop = T.edgeEndpoints({
+      id:"explicit", from:"source", to:"target", kind:"link", label:"",
+      fromAnchor:"tc", toAnchor:"bc"
+    });
+    closeEnough(explicitTop.pa.y, T.nodeRect(source).y,
+      "an explicit top anchor still overrides the automatic Output port");
+    closeEnough(explicitTop.pb.y, T.nodeRect(target).y + T.nodeRect(target).h,
+      "an explicit bottom anchor still overrides the automatic Input port");
+
+    T.selectNode(source.id);
+    assert(doc.getElementById("nodePortsEnabled"), "concept inspector exposes the port-mode toggle");
+    assert(doc.getElementById("nodeInputLabel") && doc.getElementById("nodeOutputLabel"),
+      "enabled mode exposes independent Input and Output caption editors");
+    const inputEditor = doc.getElementById("nodeInputLabel");
+    const outputEditor = doc.getElementById("nodeOutputLabel");
+    inputEditor.focus();
+    inputEditor.value = "Payload";
+    inputEditor.dispatchEvent(new window.Event("input", {bubbles:true}));
+    inputEditor.blur();
+    assert.strictEqual(doc.getElementById("nodeOutputLabel"), outputEditor,
+      "leaving Input does not rebuild the inspector or swallow the next Output edit");
+    outputEditor.focus();
+    outputEditor.value = "Metrics";
+    outputEditor.dispatchEvent(new window.Event("input", {bubbles:true}));
+    assert.strictEqual(source.inputLabel, "Payload", "input caption edits update the node");
+    assert.strictEqual(source.outputLabel, "Metrics", "output caption edits update the node");
+    assert.strictEqual(doc.querySelector('[data-node="source"] [data-node-input-label]').textContent, "Payload",
+      "edited input caption updates the canvas");
+    assert.strictEqual(doc.querySelector('[data-node="source"] [data-node-output-label]').textContent, "Metrics",
+      "edited output caption updates the canvas");
+
+    const saved = JSON.parse(T.serializeDocument());
+    const savedSource = saved.nodes.find(n => n.id === "source");
+    assert.strictEqual(savedSource.portsEnabled, true, "port mode round-trips through document JSON");
+    assert.strictEqual(savedSource.inputLabel, "Payload", "custom input caption round-trips");
+    assert.strictEqual(savedSource.outputLabel, "Metrics", "custom output caption round-trips");
+    const savedTarget = saved.nodes.find(n => n.id === "target");
+    assert.strictEqual(Object.hasOwn(savedTarget, "inputLabel"), false,
+      "default Input caption remains implicit in saved documents");
+    assert.strictEqual(Object.hasOwn(savedTarget, "outputLabel"), false,
+      "default Output caption remains implicit in saved documents");
+    const exported = T.serializedSvg(true);
+    assert(exported.includes("data-node-input-label") && exported.includes("Payload"),
+      "SVG export retains the visible port captions");
+    assert(!exported.includes("data-node-port"),
+      "SVG export removes the interactive port handles");
+
+    T.setConceptShape(source, "circle");
+    T.render();
+    const circleRect = T.nodeRect(source);
+    const circlePorts = T.nodePortPoints(source);
+    for (const point of [circlePorts.input, circlePorts.output]){
+      const radius = ((point.x-circleRect.cx)/(circleRect.w/2))**2 +
+        ((point.y-circleRect.cy)/(circleRect.h/2))**2;
+      assert(Math.abs(radius-1) < .001, "port handle stays on the visible circle boundary");
+    }
+
+    T.setNodePortsEnabled(source, false);
+    T.render();
+    assert.strictEqual(T.nodePortsEnabled(source), false, "port mode can be disabled");
+    assert.strictEqual(Object.hasOwn(source, "inputLabel"), false,
+      "disabling ports removes dormant custom captions");
+    assert.strictEqual(doc.querySelector('[data-node="source"] [data-node-input-label]'), null,
+      "disabling ports restores the label-free canvas presentation");
+  }
+
   /* ---- SCH-064: custom color schemes in document JSON ---- */
   {
     const { window } = makeDom();
@@ -4604,10 +4850,11 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(doc.querySelector("#inspTitle .inspector-name").textContent, "Tiered rewards",
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
-    sameList(sections.map(s => s.querySelector("summary span").textContent), ["Basics","Appearance","Notes"],
+    sameList(sections.map(s => s.querySelector("summary span").textContent),
+      ["Basics","Link ports","Appearance","Notes"],
       "concept inspector groups controls by task");
-    assert(sections[0].open && sections[1].open && !sections[2].open,
-      "primary inspector sections start open while secondary notes stay compact");
+    assert(sections[0].open && !sections[1].open && sections[2].open && !sections[3].open,
+      "primary inspector sections start open while optional link ports and notes stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
     appearance.dispatchEvent(new window.Event("toggle"));

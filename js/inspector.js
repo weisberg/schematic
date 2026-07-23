@@ -313,6 +313,123 @@ function renderNodeTitleField(n){
     return i;
   });
 }
+function renderNodeDecorationFields(n){
+  frow("Subtitle", () => {
+    const input = document.createElement("textarea");
+    input.id = "nodeSubtitleInput";
+    input.rows = 2;
+    input.maxLength = 500;
+    input.value = n.subtitle || "";
+    input.placeholder = "Smaller supporting text";
+    input.setAttribute("aria-label", "Node subtitle");
+    input.addEventListener("focus", pushHistoryOnce());
+    input.addEventListener("input", () => {
+      const value = input.value.replace(/\r\n?/g, "\n").slice(0, 500);
+      if (value) n.subtitle = value; else delete n.subtitle;
+      drawOnly();
+    });
+    input.addEventListener("blur", () => setNodeSubtitle(n, input.value));
+    return input;
+  });
+  frow("Icon source", () => {
+    const source = document.createElement("select");
+    source.id = "nodeIconSource";
+    source.setAttribute("aria-label", "Node icon source");
+    const current = nodeIconLibrary(n);
+    for (const [value, label] of NODE_ICON_LIBRARIES){
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = current === value;
+      source.appendChild(option);
+    }
+    source.addEventListener("change", () => {
+      pushHistory();
+      if (source.value === "emoji") setNodeIcon(n, "emoji:✨");
+      else if (source.value === "lucide") setNodeIcon(n, "lucide:rocket");
+      else if (source.value === "fa") setNodeIcon(n, "fa:bolt");
+      else setNodeIcon(n, "");
+      render();
+    });
+    return source;
+  });
+  const library = nodeIconLibrary(n);
+  const current = nodeIcon(n);
+  if (library === "emoji"){
+    frow("Emoji", () => {
+      const input = document.createElement("input");
+      input.id = "nodeEmojiInput";
+      input.type = "text";
+      input.value = current ? current.name : "";
+      input.placeholder = "✨";
+      input.setAttribute("aria-label", "Node emoji");
+      input.addEventListener("focus", pushHistoryOnce());
+      input.addEventListener("input", () => {
+        const emoji = cleanNodeEmoji(input.value);
+        if (emoji) n.icon = `emoji:${emoji}`; else delete n.icon;
+        drawOnly();
+      });
+      input.addEventListener("change", () => {
+        setNodeIcon(n, `emoji:${input.value}`);
+        render();
+      });
+      return input;
+    });
+  } else if (NODE_ICON_CATALOGS[library]){
+    frow("Icon", () => {
+      const select = document.createElement("select");
+      select.id = "nodeIconName";
+      select.setAttribute("aria-label", `${library === "fa" ? "Font Awesome" : "Lucide"} icon`);
+      for (const [value, label] of nodeIconOptions(library)){
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        option.selected = current && current.name === value;
+        select.appendChild(option);
+      }
+      select.addEventListener("change", () => {
+        pushHistory();
+        setNodeIcon(n, `${library}:${select.value}`);
+        render();
+      });
+      return select;
+    });
+  }
+}
+function renderNodePortFields(n){
+  const enabled = nodePortsEnabled(n);
+  frow("Input / output", () => {
+    const toggle = mkFlag(enabled ? "On" : "Off", enabled, on => {
+      setNodePortsEnabled(n, on);
+      render();
+    });
+    toggle.id = "nodePortsEnabled";
+    toggle.setAttribute("aria-label", "Show input and output link labels");
+    toggle.setAttribute("aria-pressed", String(enabled));
+    return toggle;
+  });
+  if (!enabled) return;
+  for (const [side, label, id, placeholder] of [
+    ["input", "Input label", "nodeInputLabel", "Input"],
+    ["output", "Output label", "nodeOutputLabel", "Output"]
+  ]){
+    frow(label, () => {
+      const input = mkInput(side === "input" ? nodeInputLabel(n) : nodeOutputLabel(n), value => {
+        setNodePortLabel(n, side, value);
+        drawOnly();
+      });
+      input.id = id;
+      input.maxLength = NODE_PORT_LABEL_MAX;
+      input.placeholder = placeholder;
+      input.setAttribute("aria-label", label);
+      return input;
+    });
+  }
+  const help = document.createElement("div");
+  help.className = "helper";
+  help.textContent = "Outgoing links use the right port; incoming links use the left port.";
+  appendInspector(help);
+}
 function renderNodeNotesField(n){
   frow("Notes", () => {
     const t = document.createElement("textarea");
@@ -424,6 +541,7 @@ function renderInspector(){
     } else if (n.type === "concept"){
       inspectorSection("concept:basics", "Basics", () => {
         renderNodeTitleField(n);
+        renderNodeDecorationFields(n);
         frow("Shape", () => {
           const s = document.createElement("select");
           s.setAttribute("aria-label", "Flowchart shape");
@@ -437,6 +555,8 @@ function renderInspector(){
           return s;
         });
       });
+      inspectorSection("concept:ports", "Link ports", () => renderNodePortFields(n),
+        {open:nodePortsEnabled(n)});
       inspectorSection("concept:appearance", "Appearance", () => {
         frow("Color", () => swatches(conceptColors(), n.color,
           (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
@@ -538,6 +658,7 @@ function renderInspector(){
     } else if (n.type === "status"){
       inspectorSection("status:basics", "Basics", () => {
         renderNodeTitleField(n);
+        renderNodeDecorationFields(n);
         frow("Status", () => statusValueSelect(n, {id:"statusValue"}));
         frow("Indicator side", () => {
           const s = document.createElement("select");
@@ -704,6 +825,7 @@ function renderInspector(){
       });
       frow("Routing", () => {
       const s = document.createElement("select");
+      s.setAttribute("aria-label", "Edge routing");
       for (const k of ["curve","ortho"]){
         const o = document.createElement("option");
         o.value = k; o.textContent = k === "curve" ? "curved" : "orthogonal";
@@ -713,12 +835,34 @@ function renderInspector(){
       s.addEventListener("change", () => {
         pushHistory();
         if (s.value === "ortho") e.routing = "ortho";
-        else delete e.routing;
+        else {
+          delete e.routing;
+          setOrthoCornerStyle(e, "rounded");
+        }
         render();
       });
         return s;
       });
       if (e.routing === "ortho"){
+        frow("Corners", () => {
+          const select = document.createElement("select");
+          select.id = "edgeOrthoCorners";
+          select.setAttribute("aria-label", "Orthogonal link corners");
+          for (const [value, label] of [["rounded","Rounded"],["square","Square"]]){
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            option.selected = orthoCornerStyle(e) === value;
+            select.appendChild(option);
+          }
+          select.addEventListener("change", () => {
+            if (orthoCornerStyle(e) === select.value) return;
+            pushHistory();
+            setOrthoCornerStyle(e, select.value);
+            render();
+          });
+          return select;
+        });
         const helper = document.createElement("div");
         helper.className = "helper";
         helper.textContent = "Drag the square waypoint on the canvas. It snaps to this link’s endpoint, stub, and midpoint coordinates.";
@@ -911,11 +1055,19 @@ function anchorRow(which, node, e, key){
   frow(which + " point", () => {
     const s = document.createElement("select");
     const o0 = document.createElement("option");
-    o0.value = ""; o0.textContent = "(auto — nearest point)";
+    o0.value = "";
+    o0.textContent = nodePortsEnabled(node)
+      ? `(auto — ${which === "From" ? "Output" : "Input"} port)`
+      : "(auto — nearest point)";
     s.appendChild(o0);
     for (const k of nodeAnchorKeys(node)){
       const o = document.createElement("option");
-      o.value = k; o.textContent = ANCHOR_LABELS[k];
+      o.value = k;
+      o.textContent = nodePortsEnabled(node) && k === "ml"
+        ? `Input — ${nodeInputLabel(node)}`
+        : nodePortsEnabled(node) && k === "mr"
+          ? `Output — ${nodeOutputLabel(node)}`
+          : ANCHOR_LABELS[k];
       if (e[key] === k) o.selected = true;
       s.appendChild(o);
     }

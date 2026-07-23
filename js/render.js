@@ -227,10 +227,12 @@ function edgeEndpoints(e, hidden = null, proxies = null){
   /* reference points: bound field row centers, else node centers */
   const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
   const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
+  const fromAnchor = e.fromAnchor || (nodePortsEnabled(a) ? "mr" : null);
+  const toAnchor = e.toAnchor || (nodePortsEnabled(b) ? "ml" : null);
   const pa = proxyA ? collapsedFrameCenterAnchor(proxyA, refB)
-    : ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, e.fromAnchor, refB);
+    : ia >= 0 ? fieldAnchor(a, ia, refB.x) : nodeAnchor(a, fromAnchor, refB);
   const pb = proxyB ? collapsedFrameCenterAnchor(proxyB, refA)
-    : ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, e.toAnchor, refA);
+    : ib >= 0 ? fieldAnchor(b, ib, refA.x) : nodeAnchor(b, toAnchor, refA);
   return { pa, pb, boundA: ia >= 0, boundB: ib >= 0,
            pinnedA: !proxyA && ia < 0 && !!e.fromAnchor,
            pinnedB: !proxyB && ib < 0 && !!e.toAnchor,
@@ -298,6 +300,77 @@ function curveEdgeCommand(pa, pb){
 function curveEdgePath(pa, pb){
   return `M ${pa.x} ${pa.y} ${curveEdgeCommand(pa, pb)}`;
 }
+function orthoCornerStyle(e){
+  return e && e.orthoCorner === "square" ? "square" : "rounded";
+}
+function setOrthoCornerStyle(e, value){
+  if (!e) return;
+  if (e.routing === "ortho" && value === "square") e.orthoCorner = "square";
+  else delete e.orthoCorner;
+}
+function compactPolylinePoints(points){
+  const clean = [];
+  for (const point of points || []){
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+    const previous = clean[clean.length - 1];
+    if (!previous || previous.x !== point.x || previous.y !== point.y)
+      clean.push({x:point.x, y:point.y});
+  }
+  return clean;
+}
+function pathNumber(value){
+  return String(Math.round(Number(value) * 1000) / 1000);
+}
+function squarePolylinePath(points){
+  const clean = compactPolylinePoints(points);
+  if (!clean.length) return "";
+  let d = `M ${pathNumber(clean[0].x)} ${pathNumber(clean[0].y)}`;
+  for (let i = 1; i < clean.length; i++){
+    const previous = clean[i - 1], point = clean[i];
+    if (point.y === previous.y) d += ` H ${pathNumber(point.x)}`;
+    else if (point.x === previous.x) d += ` V ${pathNumber(point.y)}`;
+    else d += ` L ${pathNumber(point.x)} ${pathNumber(point.y)}`;
+  }
+  return d;
+}
+function roundedPolylinePath(points, radius = 10){
+  const clean = compactPolylinePoints(points);
+  if (clean.length < 3) return squarePolylinePath(clean);
+  let d = `M ${pathNumber(clean[0].x)} ${pathNumber(clean[0].y)}`;
+  let cursor = clean[0];
+  const lineTo = point => {
+    if (cursor.x === point.x && cursor.y === point.y) return;
+    d += ` L ${pathNumber(point.x)} ${pathNumber(point.y)}`;
+    cursor = point;
+  };
+  for (let i = 1; i < clean.length - 1; i++){
+    const previous = clean[i - 1], corner = clean[i], next = clean[i + 1];
+    const inX = corner.x - previous.x, inY = corner.y - previous.y;
+    const outX = next.x - corner.x, outY = next.y - corner.y;
+    const inLength = Math.hypot(inX, inY), outLength = Math.hypot(outX, outY);
+    const cross = inX*outY - inY*outX;
+    if (!inLength || !outLength || Math.abs(cross) < .000001){
+      lineTo(corner);
+      continue;
+    }
+    const cornerRadius = Math.min(Math.max(0, radius), inLength/2, outLength/2);
+    const before = {
+      x:corner.x - inX/inLength*cornerRadius,
+      y:corner.y - inY/inLength*cornerRadius
+    };
+    const after = {
+      x:corner.x + outX/outLength*cornerRadius,
+      y:corner.y + outY/outLength*cornerRadius
+    };
+    lineTo(before);
+    d += ` Q ${pathNumber(corner.x)} ${pathNumber(corner.y)} ` +
+      `${pathNumber(after.x)} ${pathNumber(after.y)}`;
+    cursor = after;
+  }
+  const last = clean[clean.length - 1];
+  lineTo(last);
+  return d;
+}
 function hasCustomOrthoBend(e){
   return !!e && (Number.isFinite(e.orthoX) || Number.isFinite(e.orthoY));
 }
@@ -318,12 +391,11 @@ function orthoEdgeRoute(e, pa, pb){
       y:Number.isFinite(e && e.orthoY) ? e.orthoY : b.y
     };
     const custom = hasCustomOrthoBend(e);
-    const d = custom
-      ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${bend.x} V ${bend.y} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`
-      : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} H ${mx} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`;
     const points = custom
       ? [pa, a, {x:bend.x, y:a.y}, bend, {x:b.x, y:bend.y}, b, pb]
       : [pa, a, {x:mx, y:a.y}, {x:mx, y:b.y}, b, pb];
+    const d = orthoCornerStyle(e) === "square"
+      ? squarePolylinePath(points) : roundedPolylinePath(points);
     return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:mx, y:b.y} };
   }
   const my = (a.y + b.y) / 2;
@@ -332,12 +404,11 @@ function orthoEdgeRoute(e, pa, pb){
     y:Number.isFinite(e && e.orthoY) ? e.orthoY : my
   };
   const custom = hasCustomOrthoBend(e);
-  const d = custom
-    ? `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${bend.y} H ${bend.x} V ${b.y} H ${b.x} L ${pb.x} ${pb.y}`
-    : `M ${pa.x} ${pa.y} L ${a.x} ${a.y} V ${my} H ${b.x} V ${b.y} L ${pb.x} ${pb.y}`;
   const points = custom
     ? [pa, a, {x:a.x, y:bend.y}, bend, {x:bend.x, y:b.y}, b, pb]
     : [pa, a, {x:a.x, y:my}, {x:b.x, y:my}, b, pb];
+  const d = orthoCornerStyle(e) === "square"
+    ? squarePolylinePath(points) : roundedPolylinePath(points);
   return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
 }
 function orthoEdgePath(pa, pb, e = null){
@@ -742,6 +813,41 @@ function drawStandardShape(g, shape, r, attrs, dataAttr = "data-node-shape"){
 function drawConceptShape(g, n, r, attrs){
   return drawStandardShape(g, conceptShape(n), r, attrs);
 }
+function drawNodeIcon(parent, icon, x, y, size, ink){
+  if (!icon || !Number.isFinite(x) || !Number.isFinite(y) || !size) return null;
+  const group = el("g", {
+    transform:`translate(${x},${y})`, "pointer-events":"none",
+    "data-node-icon":icon.token, "data-icon-library":icon.library,
+    "data-icon-name":icon.name
+  }, parent);
+  el("rect", {width:size, height:size, rx:Math.max(6, size*.2),
+              fill:ink, "fill-opacity":.10, stroke:ink, "stroke-opacity":.08}, group);
+  if (icon.library === "emoji"){
+    const glyph = el("text", {x:size/2, y:size/2 + size*.29,
+      "text-anchor":"middle", "font-family":"'Apple Color Emoji','Segoe UI Emoji',sans-serif",
+      "font-size":size*.58, "data-node-emoji":"1"}, group);
+    glyph.textContent = icon.name;
+    return group;
+  }
+  if (icon.library === "lucide"){
+    const inner = size*.56;
+    const scale = inner/24;
+    const offset = (size - inner)/2;
+    const vector = el("g", {transform:`translate(${offset},${offset}) scale(${scale})`,
+      fill:"none", stroke:ink, "stroke-width":2, "stroke-linecap":"round",
+      "stroke-linejoin":"round", "data-node-vector-icon":"lucide"}, group);
+    for (const [tag, attrs] of icon.data.elements) el(tag, attrs, vector);
+    return group;
+  }
+  const inner = size*.54;
+  const scale = inner / Math.max(icon.data.width, icon.data.height);
+  const tx = (size - icon.data.width*scale)/2;
+  const ty = (size - icon.data.height*scale)/2;
+  const vector = el("g", {transform:`translate(${tx},${ty}) scale(${scale})`,
+    "data-node-vector-icon":"font-awesome"}, group);
+  el("path", {d:icon.data.path, fill:ink}, vector);
+  return group;
+}
 function drawPlainText(g, n, r, selected, t){
   const layout = textBoxLayout(n);
   const fill = n.color || conceptColors()[1];
@@ -795,15 +901,34 @@ function drawStatusNode(g, n, r, selected, t){
               stroke:selected ? t.accent : t.ink, "stroke-width":selected ? 2.2 : 1.2,
               "data-status-outline":"1"}, g);
 
-  const title = el("text", {"text-anchor":"middle", fill:bodyInk, "pointer-events":"none",
+  const decorated = !!layout.decoration.icon || layout.subtitleLines.length > 0;
+  if (layout.decoration.icon)
+    drawNodeIcon(g, layout.decoration.icon, layout.iconX, layout.iconY,
+      layout.decoration.iconSize, bodyInk);
+  const title = el("text", {"text-anchor":decorated ? layout.textAnchor : "middle",
+              fill:bodyInk, "pointer-events":"none",
               "font-family":"Archivo, sans-serif", "font-size":layout.fs, "font-weight":600,
               "data-status-title":"1"}, g);
-  const firstTitleY = r.h/2 - ((layout.titleLines.length - 1) * layout.lineH)/2 + layout.fs*.35;
+  const firstTitleY = decorated ? layout.firstTitleY
+    : r.h/2 - ((layout.titleLines.length - 1) * layout.lineH)/2 + layout.fs*.35;
   layout.titleLines.forEach((line, i) => {
-    const span = el("tspan", {x:mainCenter, y:firstTitleY + i*layout.lineH,
+    const span = el("tspan", {x:decorated ? layout.textX : mainCenter,
+                              y:firstTitleY + i*layout.lineH,
                               "data-status-title-line":i+1}, title);
     span.textContent = line;
   });
+  if (layout.subtitleLines.length){
+    const subtitle = el("text", {"text-anchor":layout.textAnchor, fill:bodyInk,
+                opacity:.72, "pointer-events":"none", "font-family":"Archivo, sans-serif",
+                "font-size":layout.decoration.subtitleFs, "font-weight":500,
+                "data-status-subtitle":"1"}, g);
+    layout.subtitleLines.forEach((line, i) => {
+      const span = el("tspan", {x:layout.textX,
+        y:layout.firstSubtitleY + i*layout.decoration.subtitleLineH,
+        "data-status-subtitle-line":i+1}, subtitle);
+      span.textContent = line;
+    });
+  }
 
   const status = el("text", {"text-anchor":"middle", fill:bandInk, "pointer-events":"none",
               "font-family":"Archivo, sans-serif", "font-size":layout.statusFs, "font-weight":700,
@@ -863,6 +988,25 @@ function drawRichNote(g, n, r, selected, t){
     y += line.h;
   }
 }
+function drawConceptPorts(parent, n, r, layout, ink){
+  if (!layout.ports) return;
+  const ports = nodePortPoints(n, {x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2});
+  if (!ports) return;
+  const middleGap = 16;
+  const inputMax = Math.max(18, r.w/2 - ports.input.x - middleGap);
+  const outputMax = Math.max(18, ports.output.x - r.w/2 - middleGap);
+  const attrs = {
+    y:layout.portY + layout.portFs*.36, fill:ink, opacity:.78,
+    "pointer-events":"none", "font-family":"'IBM Plex Mono', monospace",
+    "font-size":layout.portFs, "font-weight":600
+  };
+  const input = el("text", {...attrs, x:ports.input.x+12, "text-anchor":"start",
+    "data-node-input-label":"1"}, parent);
+  input.textContent = truncate(layout.inputLabel, inputMax, layout.portFont);
+  const output = el("text", {...attrs, x:ports.output.x-12, "text-anchor":"end",
+    "data-node-output-label":"1"}, parent);
+  output.textContent = truncate(layout.outputLabel, outputMax, layout.portFont);
+}
 function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
@@ -878,14 +1022,34 @@ function drawNode(n){
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.2});
     if (wrapped){
-      const titleText = el("text", {"text-anchor":"middle", fill:fc, "pointer-events":"none",
+      const decorated = !!wrapped.decoration;
+      if (decorated && wrapped.decoration.icon)
+        drawNodeIcon(g, wrapped.decoration.icon, wrapped.iconX, wrapped.iconY,
+          wrapped.decoration.iconSize, fc);
+      const titleText = el("text", {"text-anchor":decorated ? wrapped.textAnchor : "middle",
+                  fill:fc, "pointer-events":"none",
                   "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600,
                   "data-concept-wrapped":"1"}, g);
-      const firstY = wrapped.centerY - ((wrapped.lines.length - 1) * wrapped.lineH)/2 + fs*.35;
+      const firstY = decorated ? wrapped.firstTitleY
+        : wrapped.centerY - ((wrapped.lines.length - 1) * wrapped.lineH)/2 + fs*.35;
       wrapped.lines.forEach((line, i) => {
-        const span = el("tspan", {x:r.w/2, y:firstY + i*wrapped.lineH, "data-concept-line":i+1}, titleText);
+        const span = el("tspan", {x:decorated ? wrapped.textX : r.w/2,
+          y:firstY + i*wrapped.lineH, "data-concept-line":i+1}, titleText);
         span.textContent = line;
       });
+      if (decorated && wrapped.subtitleLines.length){
+        const subtitle = el("text", {"text-anchor":wrapped.textAnchor, fill:fc,
+                    opacity:.72, "pointer-events":"none", "font-family":"Archivo, sans-serif",
+                    "font-size":wrapped.decoration.subtitleFs, "font-weight":500,
+                    "data-concept-subtitle":"1"}, g);
+        wrapped.subtitleLines.forEach((line, i) => {
+          const span = el("tspan", {x:wrapped.textX,
+            y:wrapped.firstSubtitleY + i*wrapped.decoration.subtitleLineH,
+            "data-concept-subtitle-line":i+1}, subtitle);
+          span.textContent = line;
+        });
+      }
+      drawConceptPorts(g, n, r, wrapped, fc);
     } else {
       const titleText = el("text", {x:r.w/2, y:r.h/2 + fs*0.35, "text-anchor":"middle", fill:fc,
                   "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600}, g);
@@ -894,7 +1058,7 @@ function drawNode(n){
     if (n.notes){
       const noteAtSide = shape === "decision" || shape === "terminator" || shape === "document" || shape === "circle";
       const noteX = shape === "triangle" ? r.w*.72 : noteAtSide ? r.w - 14 : r.w - 12;
-      const noteY = shape === "triangle" ? r.h*.74 : noteAtSide ? r.h/2 : 12;
+      const noteY = nodePortsEnabled(n) ? 12 : shape === "triangle" ? r.h*.74 : noteAtSide ? r.h/2 : 12;
       el("circle", {cx:noteX, cy:noteY,
                     r:3.2, fill:t.ink, opacity:.55}, g);
     }
@@ -1033,21 +1197,24 @@ function drawNode(n){
 
   /* Standard attachment points plus table-only title-left/title-right anchors.
      mr stays always-visible as the primary whole-node affordance. Table title
-     anchors reveal like row handles and bind to the title, never to a field. */
+     anchors reveal like row handles and bind to the title, never to a field.
+     Port-enabled concepts keep both labeled side handles visible. */
   const anchorPts = anchorPointsForNode(n, { x:0, y:0, w:r.w, h:r.h, cx:r.w/2, cy:r.h/2 });
   const cleanText = n.type === "text" && textBoxShape(n) === "none";
   for (const key of nodeAnchorKeys(n)){
     const p = anchorPts[key];
     const tableTitle = key === "hl" || key === "hr";
-    const primaryVisible = key === "mr" && (!cleanText || selected);
+    const portSide = nodePortsEnabled(n) && (key === "ml" || key === "mr");
+    const primaryVisible = portSide || (key === "mr" && (!cleanText || selected));
     const attrs = {class: tableTitle ? "fieldhandle tabletitlehandle" : primaryVisible ? "" : "anchorhandle",
                    "data-handle": n.id, "data-anchor": key, cursor:"crosshair"};
     if (tableTitle) attrs["data-table-title-anchor"] = key;
+    if (portSide) attrs["data-node-port"] = key === "ml" ? "input" : "output";
     const hg = el("g", attrs, g);
     el("circle", {cx:p.x, cy:p.y, r: tableTitle || key !== "mc" ? 12 : 8, fill:"transparent"}, hg);
-    el("circle", {cx:p.x, cy:p.y, r: !tableTitle && key === "mr" ? 5.5 : 3.6, fill:t.tableFill,
+    el("circle", {cx:p.x, cy:p.y, r: !tableTitle && (key === "mr" || portSide) ? 5.5 : 3.6, fill:t.tableFill,
                   stroke: tableTitle || selected ? t.accent : t.ink, "stroke-width":1.4,
-                  opacity: tableTitle || selected ? 1 : .55}, hg);
+                  opacity: tableTitle || selected || portSide ? 1 : .55}, hg);
   }
 }
 /* per-row connect handles (left + right of each row) — tables and todos */

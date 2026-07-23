@@ -14,8 +14,10 @@ function seed(){
 
   const strategy = N({type:"concept", x:60,  y:220, title:"Loyalty program launch", notes:"Q3 initiative — north star: repeat purchase rate.", color:"#FFE9A8"});
   const tiers    = N({type:"concept", x:320, y:90,  title:"Tiered rewards", notes:"", color:"#CFE8FF"});
-  const referral = N({type:"concept", x:320, y:180, title:"Referral engine", notes:"", color:"#CFE8FF"});
-  const measure  = N({type:"concept", x:320, y:350, title:"Measurement plan", notes:"Holdout design + CUPED on pre-period spend.", color:"#D8F3DC"});
+  const referral = N({type:"concept", x:320, y:180, title:"Referral engine",
+    subtitle:"Invite loop", icon:"lucide:workflow", notes:"", color:"#CFE8FF"});
+  const measure  = N({type:"concept", x:320, y:350, title:"Measurement plan",
+    portsEnabled:true, notes:"Holdout design + CUPED on pre-period spend.", color:"#D8F3DC"});
 
   const customers = N({type:"table", x:720, y:60, title:"customers", color:"#16232F", notes:"", fields:[
     {id:"f_cust_pk",   name:"customer_id", type:"SERIAL", pk:true,  fk:false, nullable:false},
@@ -138,6 +140,21 @@ window.__T = {
   alignmentGuideGeometry,
   conceptShape,
   setConceptShape,
+  nodeIcon,
+  nodeIconLibrary,
+  nodeIconOptions,
+  setNodeIcon,
+  nodeSubtitle,
+  setNodeSubtitle,
+  normalizeNodeDecoration,
+  nodePortsEnabled,
+  nodeInputLabel,
+  nodeOutputLabel,
+  setNodePortsEnabled,
+  setNodePortLabel,
+  normalizeNodePorts,
+  nodePortPoints,
+  get NODE_ICON_LIBRARIES(){ return NODE_ICON_LIBRARIES.map(([id, label]) => ({id, label})); },
   textBoxShape,
   setTextBoxShape,
   textBoxLayout,
@@ -218,6 +235,10 @@ window.__T = {
   polylineMidpoint,
   notationVertex,
   orthoEdgeRoute,
+  orthoCornerStyle,
+  setOrthoCornerStyle,
+  squarePolylinePath,
+  roundedPolylinePath,
   snapOrthoBend,
   hasCustomOrthoBend,
   resetOrthoBend,
