@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.32.0";
+const APP_VERSION = "v1.35.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -773,12 +773,20 @@ function cleanEdgeForDocument(e){
   }
   if (!out.fromAnchor) delete out.fromAnchor;
   if (!out.toAnchor) delete out.toAnchor;
+  out.fromPort = cleanNodePortId(out.fromPort);
+  out.toPort = cleanNodePortId(out.toPort);
+  if (!out.fromPort) delete out.fromPort;
+  if (!out.toPort) delete out.toPort;
   if (!out.fromField) delete out.fromField;
   if (!out.toField) delete out.toField;
+  if (out.fromField) delete out.fromPort;
+  else if (out.fromPort) delete out.fromAnchor;
+  if (out.toField) delete out.toPort;
+  else if (out.toPort) delete out.toAnchor;
   if (!out.routing || out.routing === "curve") delete out.routing;
   if (out.routing === "ortho" && orthoCornerStyle(out) === "square") out.orthoCorner = "square";
   else delete out.orthoCorner;
-  for (const key of ["orthoX", "orthoY"]){
+  for (const key of ["orthoX", "orthoY", "orthoFromStub", "orthoToStub"]){
     const value = Number(out[key]);
     if (Number.isFinite(value)) out[key] = value;
     else delete out[key];
@@ -971,8 +979,9 @@ function applyDocument(d, opts = {}){
     }
   }
   for (const e of state.edges){
+    normalizeEdgePortBindings(e);
     setOrthoCornerStyle(e, e.orthoCorner);
-    for (const key of ["orthoX", "orthoY"]){
+    for (const key of ["orthoX", "orthoY", "orthoFromStub", "orthoToStub"]){
       const value = Number(e[key]);
       if (Number.isFinite(value)) e[key] = value;
       else delete e[key];

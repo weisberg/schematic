@@ -17,7 +17,10 @@ function seed(){
   const referral = N({type:"concept", x:320, y:180, title:"Referral engine",
     subtitle:"Invite loop", icon:"lucide:workflow", notes:"", color:"#CFE8FF"});
   const measure  = N({type:"concept", x:320, y:350, title:"Measurement plan",
-    portsEnabled:true, notes:"Holdout design + CUPED on pre-period spend.", color:"#D8F3DC"});
+    portsEnabled:true,
+    inputPorts:[{id:"events", label:"Events"}, {id:"targets", label:"Targets"}],
+    outputPorts:[{id:"metrics", label:"Metrics"}, {id:"decision", label:"Decision"}],
+    notes:"Holdout design + CUPED on pre-period spend.", color:"#D8F3DC"});
 
   const customers = N({type:"table", x:720, y:60, title:"customers", color:"#16232F", notes:"", fields:[
     {id:"f_cust_pk",   name:"customer_id", type:"SERIAL", pk:true,  fk:false, nullable:false},
@@ -148,12 +151,21 @@ window.__T = {
   setNodeSubtitle,
   normalizeNodeDecoration,
   nodePortsEnabled,
+  nodePortsForSide,
+  nodeInputPorts,
+  nodeOutputPorts,
   nodeInputLabel,
   nodeOutputLabel,
+  nodePortById,
+  nodePortBinding,
   setNodePortsEnabled,
   setNodePortLabel,
+  addNodePort,
+  removeNodePort,
   normalizeNodePorts,
+  normalizeEdgePortBindings,
   nodePortPoints,
+  nodePortAnchor,
   get NODE_ICON_LIBRARIES(){ return NODE_ICON_LIBRARIES.map(([id, label]) => ({id, label})); },
   textBoxShape,
   setTextBoxShape,
@@ -235,6 +247,8 @@ window.__T = {
   polylineMidpoint,
   notationVertex,
   orthoEdgeRoute,
+  orthoRouteCornerHandles,
+  setOrthoCornerPosition,
   orthoCornerStyle,
   setOrthoCornerStyle,
   squarePolylinePath,

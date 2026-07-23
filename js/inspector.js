@@ -409,26 +409,55 @@ function renderNodePortFields(n){
     return toggle;
   });
   if (!enabled) return;
-  for (const [side, label, id, placeholder] of [
-    ["input", "Input label", "nodeInputLabel", "Input"],
-    ["output", "Output label", "nodeOutputLabel", "Output"]
-  ]){
-    frow(label, () => {
-      const input = mkInput(side === "input" ? nodeInputLabel(n) : nodeOutputLabel(n), value => {
-        setNodePortLabel(n, side, value);
-        drawOnly();
-      });
-      input.id = id;
-      input.maxLength = NODE_PORT_LABEL_MAX;
-      input.placeholder = placeholder;
-      input.setAttribute("aria-label", label);
-      return input;
-    });
-  }
+  renderNodePortSide(n, "input");
+  renderNodePortSide(n, "output");
   const help = document.createElement("div");
   help.className = "helper";
-  help.textContent = "Outgoing links use the right port; incoming links use the left port.";
+  help.textContent = "Drag from an Output to a named Input. Existing unbound links use the first port on each side.";
   appendInspector(help);
+}
+function renderNodePortSide(n, side){
+  const config = nodePortConfig(side);
+  const ports = nodePortsForSide(n, side);
+  const group = document.createElement("div");
+  group.className = "port-editor-group";
+  const heading = document.createElement("div");
+  heading.className = "port-editor-heading";
+  const title = document.createElement("span");
+  title.textContent = side === "input" ? "Inputs" : "Outputs";
+  const add = mkBtn("+ Add", () => {
+    pushHistory();
+    addNodePort(n, side);
+    render();
+  }, "mini");
+  add.setAttribute("aria-label", `Add ${side}`);
+  add.disabled = ports.length >= NODE_PORT_MAX;
+  heading.append(title, add);
+  group.appendChild(heading);
+
+  ports.forEach((port, index) => {
+    const row = document.createElement("div");
+    row.className = "port-editor-row";
+    const input = mkInput(port.label, value => {
+      setNodePortLabel(n, side, value, port.id);
+      drawOnly();
+    });
+    input.maxLength = NODE_PORT_LABEL_MAX;
+    input.placeholder = `${config.fallback} ${index + 1}`;
+    input.setAttribute("aria-label", `${config.fallback} ${index + 1} name`);
+    input.setAttribute("data-port-input", port.id);
+    if (index === 0) input.id = side === "input" ? "nodeInputLabel" : "nodeOutputLabel";
+    const remove = mkBtn("×", () => {
+      pushHistory();
+      removeNodePort(n, side, port.id);
+      render();
+    }, "mini del");
+    remove.disabled = ports.length <= 1;
+    remove.setAttribute("aria-label", `Remove ${port.label}`);
+    row.append(input, remove);
+    group.appendChild(row);
+  });
+  appendInspector(group);
 }
 function renderNodeNotesField(n){
   frow("Notes", () => {
@@ -865,10 +894,10 @@ function renderInspector(){
         });
         const helper = document.createElement("div");
         helper.className = "helper";
-        helper.textContent = "Drag the square waypoint on the canvas. It snaps to this link’s endpoint, stub, and midpoint coordinates.";
+        helper.textContent = "Drag any square corner handle on the canvas. End handles move along their orthogonal leg; the central handle moves freely. Hold Shift to snap to grid points and half-grid positions.";
         appendInspector(helper);
-        frow("Waypoint", () => {
-          const button = mkBtn("Reset to automatic", () => resetOrthoBend(e));
+        frow("Corners", () => {
+          const button = mkBtn("Reset all to automatic", () => resetOrthoBend(e));
           button.id = "edgeResetOrthoBend";
           button.disabled = !hasCustomOrthoBend(e);
           return button;
@@ -1048,10 +1077,13 @@ function swapEdgeDirection(e){
   const ta = e.fromAnchor;
   if (e.toAnchor !== undefined) e.fromAnchor = e.toAnchor; else delete e.fromAnchor;
   if (ta !== undefined) e.toAnchor = ta; else delete e.toAnchor;
+  const tp = e.fromPort;
+  if (e.toPort !== undefined) e.fromPort = e.toPort; else delete e.fromPort;
+  if (tp !== undefined) e.toPort = tp; else delete e.toPort;
   if (hadLabelPosition) setEdgeLabelPosition(e, 1 - labelPosition);
 }
 /* pick a whole-node attachment point; table ends also offer title left/right */
-function anchorRow(which, node, e, key){
+function anchorRow(which, node, e, key, portKey){
   frow(which + " point", () => {
     const s = document.createElement("select");
     const o0 = document.createElement("option");
@@ -1060,27 +1092,40 @@ function anchorRow(which, node, e, key){
       ? `(auto — ${which === "From" ? "Output" : "Input"} port)`
       : "(auto — nearest point)";
     s.appendChild(o0);
+    if (nodePortsEnabled(node)){
+      const preferred = which === "From" ? "output" : "input";
+      const other = preferred === "input" ? "output" : "input";
+      for (const side of [preferred, other]){
+        for (const port of nodePortsForSide(node, side)){
+          const o = document.createElement("option");
+          o.value = `port:${port.id}`;
+          o.textContent = `${side === "input" ? "Input" : "Output"} — ${port.label}`;
+          if (e[portKey] === port.id) o.selected = true;
+          s.appendChild(o);
+        }
+      }
+    }
     for (const k of nodeAnchorKeys(node)){
+      if (nodePortsEnabled(node) && (k === "ml" || k === "mr")) continue;
       const o = document.createElement("option");
-      o.value = k;
-      o.textContent = nodePortsEnabled(node) && k === "ml"
-        ? `Input — ${nodeInputLabel(node)}`
-        : nodePortsEnabled(node) && k === "mr"
-          ? `Output — ${nodeOutputLabel(node)}`
-          : ANCHOR_LABELS[k];
+      o.value = `anchor:${k}`;
+      o.textContent = ANCHOR_LABELS[k];
       if (e[key] === k) o.selected = true;
       s.appendChild(o);
     }
     s.addEventListener("change", () => {
       pushHistory();
-      if (s.value) e[key] = s.value; else delete e[key];
+      delete e[key];
+      delete e[portKey];
+      if (s.value.startsWith("port:")) e[portKey] = s.value.slice(5);
+      else if (s.value.startsWith("anchor:")) e[key] = s.value.slice(7);
       render();
     });
     return s;
   });
 }
 /* choose whole-node vs. specific row (field/item) for one end of an edge */
-function attachRow(which, node, e, key){
+function attachRow(which, node, e, key, portKey, anchorKey){
   const rows = nodeRows(node);
   if (!rows || !rows.length) return;
   frow(which + " attaches to", () => {
@@ -1096,7 +1141,11 @@ function attachRow(which, node, e, key){
     }
     s.addEventListener("change", () => {
       pushHistory();
-      if (s.value) e[key] = s.value; else delete e[key];
+      if (s.value){
+        e[key] = s.value;
+        delete e[portKey];
+        delete e[anchorKey];
+      } else delete e[key];
       render();
     });
     return s;
@@ -1108,8 +1157,10 @@ function renderEdgeEndControls(a, b, e){
   appendInspector(grid);
   const firstPair = edgeFieldPairs(e)[0] || {};
   const ends = [
-    {which:"From", node:a, fieldKey:"fromField", anchorKey:"fromAnchor", bound:firstPair.fromField || e.fromField},
-    {which:"To", node:b, fieldKey:"toField", anchorKey:"toAnchor", bound:firstPair.toField || e.toField}
+    {which:"From", node:a, fieldKey:"fromField", anchorKey:"fromAnchor", portKey:"fromPort",
+     bound:firstPair.fromField || e.fromField},
+    {which:"To", node:b, fieldKey:"toField", anchorKey:"toAnchor", portKey:"toPort",
+     bound:firstPair.toField || e.toField}
   ];
   const previous = inspectorMount;
   for (const end of ends){
@@ -1117,8 +1168,8 @@ function renderEdgeEndControls(a, b, e){
     column.className = "edge-end-column";
     grid.appendChild(column);
     inspectorMount = column;
-    attachRow(end.which, end.node, e, end.fieldKey);
-    if (!end.bound) anchorRow(end.which, end.node, e, end.anchorKey);
+    attachRow(end.which, end.node, e, end.fieldKey, end.portKey, end.anchorKey);
+    if (!end.bound) anchorRow(end.which, end.node, e, end.anchorKey, end.portKey);
   }
   inspectorMount = previous;
 }

@@ -76,11 +76,18 @@ function addTodoItem(n){
 }
 function addEdge(from, to){
   if (from.id === to.id) return;
+  /* Ports carry direction: dragging from an input to an output still creates
+     an output → input edge, so its stored direction and arrow semantics agree
+     with the node labels. */
+  if (from.portSide === "input" && to.portSide === "output"){
+    const swap = from; from = to; to = swap;
+  }
   let a = nodeById(from.id), b = nodeById(to.id);
   if (!a || !b || isStructuralNode(a) || isStructuralNode(b)) return;
-  const key = ep => ep.id + ":" + (ep.fieldId || "");
+  const key = ep => [ep.id, ep.fieldId || "", ep.portId || ""].join(":");
   const dup = state.edges.some(e => {
-    const ef = e.from + ":" + (e.fromField || ""), et = e.to + ":" + (e.toField || "");
+    const ef = [e.from, e.fromField || "", e.fromPort || ""].join(":");
+    const et = [e.to, e.toField || "", e.toPort || ""].join(":");
     return (ef === key(from) && et === key(to)) || (ef === key(to) && et === key(from));
   });
   if (dup) return;
@@ -96,8 +103,10 @@ function addEdge(from, to){
   const e = { id: uid(), from: from.id, to: to.id, kind, label:"" };
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;
-  if (!e.fromField && from.anchor) e.fromAnchor = from.anchor;
-  if (!e.toField && to.anchor)     e.toAnchor   = to.anchor;
+  if (!e.fromField && from.portId) e.fromPort = from.portId;
+  if (!e.toField && to.portId)     e.toPort = to.portId;
+  if (!e.fromField && !e.fromPort && from.anchor) e.fromAnchor = from.anchor;
+  if (!e.toField && !e.toPort && to.anchor)       e.toAnchor   = to.anchor;
   if (kind !== "link" && (e.fromField || e.toField)) e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
   state.edges.push(e);
   setSelection("edge", e.id);

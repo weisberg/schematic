@@ -53,48 +53,60 @@ function drawEdgeGrips(){
   const ep = edgeEndpoints(e);
   if (!ep) return;
   const t = themeColors();
+  for (const [end, p] of [["from", ep.pa], ["to", ep.pb]]){
+    const gg = el("g", {"data-edgegrip": e.id, "data-gripend": end, cursor:"move"}, draftLayer);
+    el("circle", {cx:p.x, cy:p.y, r:12, fill:"transparent"}, gg);
+    el("circle", {cx:p.x, cy:p.y, r:5, fill:t.panel, stroke:t.accent, "stroke-width":2}, gg);
+  }
   if (e.routing === "ortho"){
     const route = orthoEdgeRoute(e, ep.pa, ep.pb);
     const activeSnap = drag && drag.mode === "ortho-bend" && drag.edgeId === e.id ? drag.snap : null;
     if (activeSnap && activeSnap.snapX != null){
-      const ys = [route.pa.y, route.pb.y, route.a.y, route.b.y, route.bend.y];
+      const ys = route.points.map(point => point.y);
       el("line", {x1:activeSnap.snapX, y1:Math.min(...ys)-36, x2:activeSnap.snapX, y2:Math.max(...ys)+36,
                   stroke:t.accent, "stroke-width":1, "stroke-dasharray":"4 4", opacity:.72,
                   "pointer-events":"none", "data-ortho-snap-x":"1"}, draftLayer);
     }
     if (activeSnap && activeSnap.snapY != null){
-      const xs = [route.pa.x, route.pb.x, route.a.x, route.b.x, route.bend.x];
+      const xs = route.points.map(point => point.x);
       el("line", {x1:Math.min(...xs)-36, y1:activeSnap.snapY, x2:Math.max(...xs)+36, y2:activeSnap.snapY,
                   stroke:t.accent, "stroke-width":1, "stroke-dasharray":"4 4", opacity:.72,
                   "pointer-events":"none", "data-ortho-snap-y":"1"}, draftLayer);
     }
-    const bend = el("g", {"data-edgebend":e.id, cursor:"move", role:"button", tabindex:0,
-                           "aria-label":`Move orthogonal link waypoint at ${Math.round(route.bend.x)}, ${Math.round(route.bend.y)}`}, draftLayer);
-    el("circle", {cx:route.bend.x, cy:route.bend.y, r:14, fill:"transparent"}, bend);
-    el("rect", {x:route.bend.x-5, y:route.bend.y-5, width:10, height:10, rx:2,
-                fill:t.panel, stroke:t.accent, "stroke-width":2}, bend);
-    el("title", {}, bend).textContent = "Drag to adjust this orthogonal link";
-    bend.addEventListener("keydown", ev => {
-      const delta = {ArrowLeft:[-1,0], ArrowRight:[1,0], ArrowUp:[0,-1], ArrowDown:[0,1]}[ev.key];
-      if (!delta) return;
-      ev.preventDefault();
-      ev.stopPropagation();
-      const step = ev.shiftKey ? GRID_SNAP : 4;
-      const next = {x:route.bend.x + delta[0]*step, y:route.bend.y + delta[1]*step};
-      pushHistory("ortho-bend:" + e.id);
-      e.orthoX = next.x;
-      e.orthoY = next.y;
-      render();
-      requestAnimationFrame(() => {
-        const nextHandle = document.querySelector(`[data-edgebend="${e.id}"]`);
-        if (nextHandle) nextHandle.focus();
+    for (const [index, corner] of orthoRouteCornerHandles(route).entries()){
+      const {point, axes, key} = corner;
+      const direction = axes.length === 2 ? "" : axes[0] === "x" ? " horizontally" : " vertically";
+      const cursor = axes.length === 2 ? "move" : axes[0] === "x" ? "ew-resize" : "ns-resize";
+      const handle = el("g", {"data-edgebend":e.id, "data-edgecorner":key,
+                              "data-corner-axes":axes.join(""), cursor, role:"button", tabindex:0,
+                              "aria-label":`Move orthogonal link corner ${index + 1}${direction} at ` +
+                                `${Math.round(point.x)}, ${Math.round(point.y)}`}, draftLayer);
+      const hitRadius = key === "from-stub" || key === "to-stub" ? 8 : 14;
+      el("circle", {cx:point.x, cy:point.y, r:hitRadius, fill:"transparent"}, handle);
+      el("rect", {x:point.x-5, y:point.y-5, width:10, height:10, rx:2,
+                  fill:t.panel, stroke:t.accent, "stroke-width":2}, handle);
+      el("title", {}, handle).textContent = `Drag this orthogonal link corner${direction}; ` +
+        "hold Shift to snap to grid points and half-grid positions";
+      handle.addEventListener("keydown", ev => {
+        const delta = {
+          ArrowLeft:{axis:"x", amount:-1}, ArrowRight:{axis:"x", amount:1},
+          ArrowUp:{axis:"y", amount:-1}, ArrowDown:{axis:"y", amount:1}
+        }[ev.key];
+        if (!delta || !axes.includes(delta.axis)) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const step = ev.shiftKey ? GRID_SNAP : 4;
+        pushHistory(`ortho-corner:${e.id}:${key}`);
+        const next = {...point, [delta.axis]:point[delta.axis] + delta.amount*step};
+        setOrthoCornerPosition(e, route, corner, next);
+        render();
+        requestAnimationFrame(() => {
+          const nextHandle = document.querySelector(
+            `[data-edgebend="${e.id}"][data-edgecorner="${key}"]`);
+          if (nextHandle) nextHandle.focus();
+        });
       });
-    });
-  }
-  for (const [end, p] of [["from", ep.pa], ["to", ep.pb]]){
-    const gg = el("g", {"data-edgegrip": e.id, "data-gripend": end, cursor:"move"}, draftLayer);
-    el("circle", {cx:p.x, cy:p.y, r:12, fill:"transparent"}, gg);
-    el("circle", {cx:p.x, cy:p.y, r:5, fill:t.panel, stroke:t.accent, "stroke-width":2}, gg);
+    }
   }
 }
 /* hitTest, but tolerant of drops just outside a node's rect — attachment points
@@ -136,24 +148,36 @@ function reattachEdgeEnd(e, end, hit, w){
   if (newFrom === newTo || isStructuralNode(n)){ render(); return; }
   const newFromField = isFrom ? (hit.field ? hit.field.id : "") : (e.fromField || "");
   const newToField = !isFrom ? (hit.field ? hit.field.id : "") : (e.toField || "");
+  const na = !hit.field ? nearestAnchorWithin(n, w) : null;
+  const newFromPort = isFrom ? (na?.portId || "") : (e.fromPort || "");
+  const newToPort = !isFrom ? (na?.portId || "") : (e.toPort || "");
   const dup = state.edges.some(o => {
     if (o === e) return false;
-    const of = o.from + ":" + (o.fromField || ""), ot = o.to + ":" + (o.toField || "");
-    const nf = newFrom + ":" + newFromField, nt = newTo + ":" + newToField;
+    const of = [o.from, o.fromField || "", o.fromPort || ""].join(":");
+    const ot = [o.to, o.toField || "", o.toPort || ""].join(":");
+    const nf = [newFrom, newFromField, newFromPort].join(":");
+    const nt = [newTo, newToField, newToPort].join(":");
     return (of === nf && ot === nt) || (of === nt && ot === nf);
   });
   if (dup){ render(); return; }
-  const na = !hit.field ? nearestAnchorWithin(n, w) : null;
   pushHistory();
   if (isFrom) e.from = n.id; else e.to = n.id;
   const fieldKey = isFrom ? "fromField" : "toField";
   const anchorKey = isFrom ? "fromAnchor" : "toAnchor";
+  const portKey = isFrom ? "fromPort" : "toPort";
   if (hit.field){
     e[fieldKey] = hit.field.id;
     delete e[anchorKey];
+    delete e[portKey];
   } else {
     delete e[fieldKey];
-    if (na) e[anchorKey] = na.key; else delete e[anchorKey];
+    if (na?.portId){
+      e[portKey] = na.portId;
+      delete e[anchorKey];
+    } else {
+      delete e[portKey];
+      if (na) e[anchorKey] = na.key; else delete e[anchorKey];
+    }
   }
   /* composite pairs cannot survive an endpoint move — collapse to the simple binding */
   if (Array.isArray(e.pairs)){
@@ -447,7 +471,9 @@ board.addEventListener("pointerdown", ev => {
   }
   if (handleEl){
     drag = { mode:"connect", from: { id: handleEl.getAttribute("data-handle"),
-                                     anchor: handleEl.getAttribute("data-anchor") || undefined } };
+                                     anchor: handleEl.getAttribute("data-anchor") || undefined,
+                                     portId:handleEl.getAttribute("data-node-port-id") || undefined,
+                                     portSide:handleEl.getAttribute("data-node-port") || undefined } };
     board.classList.add("connecting");
     return;
   }
@@ -491,10 +517,13 @@ board.addEventListener("pointerdown", ev => {
     const ep = e && edgeEndpoints(e);
     if (!e || e.routing !== "ortho" || !ep) return;
     const route = orthoEdgeRoute(e, ep.pa, ep.pb);
+    const cornerKey = edgeBendEl.getAttribute("data-edgecorner");
+    const corner = orthoRouteCornerHandles(route).find(item => item.key === cornerKey);
+    if (!corner) return;
     const start = clientToWorld(ev.clientX, ev.clientY);
-    drag = { mode:"ortho-bend", edgeId:e.id, start,
-             offset:{x:route.bend.x-start.x, y:route.bend.y-start.y},
-             original:{x:route.bend.x, y:route.bend.y}, moved:false, snap:null };
+    drag = { mode:"ortho-bend", edgeId:e.id, cornerKey, axes:corner.axes, start,
+             offset:{x:corner.point.x-start.x, y:corner.point.y-start.y},
+             original:{x:corner.point.x, y:corner.point.y}, moved:false, snap:null };
     return;
   }
 
@@ -577,7 +606,8 @@ board.addEventListener("pointerdown", ev => {
       const dn = nodeById(nodeId);
       return { id:nodeId, x:dn.x, y:dn.y };
     }).filter(Boolean), bendStarts:state.edges
-      .filter(e => hasCustomOrthoBend(e) && moving.has(e.from) && moving.has(e.to))
+      .filter(e => (Number.isFinite(e.orthoX) || Number.isFinite(e.orthoY)) &&
+        moving.has(e.from) && moving.has(e.to))
       .map(e => {
         const ep = edgeEndpoints(e);
         const bend = ep ? orthoEdgeRoute(e, ep.pa, ep.pb).bend : {x:e.orthoX, y:e.orthoY};
@@ -677,11 +707,16 @@ board.addEventListener("pointermove", ev => {
     const ep = e && edgeEndpoints(e);
     if (!e || !ep) return;
     const w = clientToWorld(ev.clientX, ev.clientY);
-    if (!drag.moved && Math.hypot(w.x - drag.start.x, w.y - drag.start.y) <= 1 / view.k) return;
+    const target = {x:w.x + drag.offset.x, y:w.y + drag.offset.y};
+    const allowedDx = drag.axes.includes("x") ? target.x - drag.original.x : 0;
+    const allowedDy = drag.axes.includes("y") ? target.y - drag.original.y : 0;
+    if (!drag.moved && Math.hypot(allowedDx, allowedDy) <= 1 / view.k) return;
     if (!drag.moved){ pushHistory(); drag.moved = true; }
-    const snapped = snapOrthoBend(e, {x:w.x + drag.offset.x, y:w.y + drag.offset.y}, ep);
-    e.orthoX = snapped.x;
-    e.orthoY = snapped.y;
+    const snapped = snapOrthoBend(e, target, ep, 10 / view.k, ev.shiftKey);
+    setOrthoCornerPosition(e, orthoEdgeRoute(e, ep.pa, ep.pb),
+      {key:drag.cornerKey, axes:drag.axes}, snapped);
+    if (!drag.axes.includes("x")) snapped.snapX = null;
+    if (!drag.axes.includes("y")) snapped.snapY = null;
     drag.snap = snapped;
     drawOnly();
   } else if (drag.mode === "edge-label"){
@@ -715,6 +750,9 @@ board.addEventListener("pointermove", ev => {
       const rowsA = nodeRows(a) || [];
       const idx = rowsA.findIndex(f => f.id === drag.from.fieldId);
       pa = idx >= 0 ? fieldAnchor(a, idx, w.x) : nodeAnchor(a, null, w);
+    } else if (drag.from.portId){
+      pa = nodePortAnchor(a, drag.from.portSide, drag.from.portId) ||
+        nodeAnchor(a, drag.from.anchor, w);
     } else {
       pa = nodeAnchor(a, drag.from.anchor, w);
     }
@@ -771,7 +809,8 @@ board.addEventListener("pointerup", ev => {
     if (hit){
       const na = !hit.field ? nearestAnchorWithin(hit.node, w) : null;
       addEdge(drag.from, { id: hit.node.id, fieldId: hit.field ? hit.field.id : undefined,
-                           anchor: na ? na.key : undefined });
+                           anchor: na ? na.key : undefined,
+                           portId:na?.portId, portSide:na?.portSide });
     } else {
       render();   // restore any cleared grips
     }
