@@ -106,7 +106,7 @@
   .menucontrol .sizestepper .sizeval{flex:1}
   .banner{background:#FFF7D6;border-bottom:1px solid #E8D58B;color:#604B00;
           padding:8px 16px;font-size:12px;line-height:1.35}
-  .banner[hidden]{display:none}
+  .banner[hidden]{display:none!important}
   .banner.danger{background:#FBEFEF;border-color:#E8C8C8;color:var(--danger)}
   .banner.recovery{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .banner.recovery button{padding:4px 9px;font-size:12px}

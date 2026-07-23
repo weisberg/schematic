@@ -49,16 +49,16 @@ The deployment story is:
 
 ---
 
-## 2. Architecture snapshot (as of 2026-07-15)
+## 2. Architecture snapshot (as of 2026-07-23)
 
-Files: `index.html`, `styles.css`, nine ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, ten ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
 
 ### 2.1 Runtime scripts (load order is a contract)
 
-`core` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
+`core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
 `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
@@ -76,6 +76,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
       "title": "Loyalty program launch", "notes": "…",
+      "subtitle": "Customer-facing release", "icon": "lucide:rocket",
       "color": "#FFE9A8", "fontSize": 14, "fontColor": "#16232F",
       "shape": "decision" },
     { "id": "n5", "type": "table", "x": 640, "y": 60,
@@ -92,6 +93,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
     { "id": "n9", "from": "n5", "to": "n6", "kind": "1:N", "label": "",
       "labelTextColor": "#C20029", "labelBackgroundColor": "#FFFFFF",
       "labelPosition": 0.64,
+      "routing": "ortho", "orthoCorner": "square",
       "fromField": "f_cust_pk", "toField": "f_ord_cust",
       "pairs": [{ "fromField": "f_cust_pk", "toField": "f_ord_cust" }] }
   ]
@@ -131,6 +133,17 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   It is presentation-only, applies only to concept nodes, and is absent for the default
   rounded-corner `process` rectangle so all older documents render unchanged. The explicit
   `rectangle` value renders the same layout with sharp corners.
+- Concept and status nodes may include an optional `subtitle` (up to 500 characters) and
+  optional leading/stacked `icon`. Icons use a portable token: `emoji:<text>`,
+  `lucide:<catalog-name>`, or `fa:<catalog-name>`. Invalid tokens and decoration keys on
+  unsupported node types are removed during import. Absent keys preserve the exact legacy layout.
+- Concept nodes may include additive `portsEnabled:true` plus optional `inputLabel` and
+  `outputLabel` captions (single-line, up to 80 characters). Defaults are `Input` and `Output`.
+  Enabled nodes reserve a caption row and move their `ml` / `mr` handles to the visible port
+  positions. Automatic outgoing ends use Output and incoming ends use Input; explicit other
+  anchors and all row bindings retain precedence. Absent `portsEnabled` preserves legacy geometry.
+- Orthogonal edges use rounded corners by default. The optional `orthoCorner:"square"`
+  override restores sharp Manhattan bends; it is omitted for rounded or non-orthogonal edges.
 - `kind` ∈ `link | 1:1 | 1:N | N:M`. Convention: **`from` = the "one" side**. Relation
   kinds are table↔table only; edges touching a to-do list, rich note, plain text, or status node
   are always `link`.
@@ -173,7 +186,8 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 |---|---|
 | State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
 | Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `textBoxLayout`, `textBoxMargins`, `manualNodeHeight`, `fieldRowCenterY`, `fieldAnchor`, `nodeAnchor`, `clientToWorld`, `hitTest(worldPt)` |
-| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `drawNotation`, `el(tag, attrs, parent)` |
+| Icons | `nodeIcon`, `nodeSubtitle`, `nodeIconOptions`, `setNodeIcon`, `setNodeSubtitle`, `normalizeNodeDecoration` |
+| Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `orthoCornerStyle`, `roundedPolylinePath`, `drawNotation`, `el(tag, attrs, parent)` |
 | Mutations | `addNode`, `addEdge(fromEp, toEp)` (endpoint = `{id, fieldId?}`), `addChildConcept`, `addRelatedTable`, `duplicateSelection`, `deleteSelection`, `reorderNode`, `moveField`, `cleanFieldRefs`, `ensureFieldIds` |
 | UI builders | `frow`, `mkInput`, `mkBtn`, `mkFlag`, `swatches`, `customColorRow`, `sizeStepper`, `normalizeHex`, context menu: `showCtx/hideCtx/ctxItem/ctxSep/ctxLabel/ctxSwatches/ctxSizeRow`, menus: `nodeMenu/edgeMenu/canvasMenu` |
 | I/O | `openDoc`, `saveDoc`, `saveAsDoc`, `newDoc`, `download(name, text, mime)`, JSON import handler, `generateSQL`, `ident`, PNG export handler |
@@ -236,8 +250,10 @@ Harness quirks you must respect:
   for very large documents.
 
 **Nodes**
-- Concept nodes: title, notes (dot indicator), fill color, per-node font size (9–48px)
-  and font color; box auto-fits text.
+- Concept nodes: title, optional smaller subtitle, optional icon component from the offline
+  Lucide or Font Awesome catalogs (or arbitrary emoji), notes (dot indicator), fill color,
+  per-node font size (9–48px) and font color; box auto-fits and wraps the combined content.
+  An optional Input / Output port row provides editable link captions and directional endpoints.
 - Rich-note nodes: title plus safe Markdown-style multiline content (headings, lists,
   tasks, blockquotes, bold, italic, and inline code), folded-note canvas rendering,
   configurable width/color/type, palette search, Markdown export, and node-level links.
@@ -246,8 +262,9 @@ Harness quirks you must respect:
   left/top/width/height, independent text margins, and an optional no-wrap mode. Exact sizing
   participates in Reset size; links, hit testing, save/load, duplicate, and SVG export follow
   the resulting geometry.
-- Status nodes: wrapped text plus a colored left/right status band; five built-in states,
-  per-node selection, and a diagram-wide custom-label catalog edited in the inspector.
+- Status nodes: wrapped title plus the same optional subtitle/icon component and a colored
+  left/right status band; five built-in states, per-node selection, and a diagram-wide
+  custom-label catalog edited in the inspector.
 - Table nodes: name, header color, fields (name, SQL type w/ datalist, PK/FK/NULL flags,
   reorder ↑↓, delete), per-node base font size (8–28px) scaling the entire node via
   `tableMetrics`, font color applied to field names; PK/FK badges; "no fields yet" state.
@@ -279,7 +296,9 @@ Harness quirks you must respect:
 - Auto-orientation on field↔field drags (PK side becomes "from"), swap direction
   (carries bindings), inline-editable labels, duplicate rejection at field granularity.
 - Per-edge routing: curved default or orthogonal Manhattan routing via inspector/context menu;
-  routing round-trips in JSON and keeps crow's-foot notation.
+  orthogonal bends are rounded by default with a square-corner override in the inspector,
+  right-click menu, and Selection dropdown; routing round-trips in JSON and keeps
+  crow's-foot notation.
 - Per-edge appearance: optional start/end arrowheads, custom line color, 1–8px width,
   and solid/dashed/dotted style through both the inspector and context menu. Existing
   links retain dashed defaults, relations retain solid defaults, and old documents gain
@@ -1693,6 +1712,51 @@ and PNG exports; multi-selection movement and connected custom orthogonal bends 
 delta; Shift and persistent grid snapping take precedence; ordinary alignment guides, undo/redo,
 large-canvas fast rendering, and saved-document compatibility remain unchanged; automated and
 browser interaction/visual QA pass.
+
+---
+
+**SCH-105 · Node icon components and subtitles · P1 · M · Done 2026-07-23**
+
+Add an optional visual component and supporting-text hierarchy to card-like concept and status
+nodes. The component may be arbitrary emoji or a curated offline icon from Lucide or Font Awesome;
+the subtitle renders below the title at a smaller size and wraps independently.
+
+AC: inspector controls switch among no icon, emoji, Lucide, and Font Awesome; vector icons require
+no network or runtime package; standard nodes use a leading icon tile while constrained flowchart
+shapes stack it safely; node auto-sizing and forced-width wrapping account for the full content;
+optional `icon`/`subtitle` values round-trip through JSON and duplicate; malformed or unsupported
+values are removed safely; legacy nodes keep their original geometry; SVG/PNG, undo, automated tests,
+and browser interaction/visual QA pass.
+
+---
+
+**SCH-106 · Rounded orthogonal link corners · P1 · S · Done 2026-07-23**
+
+Render actual curved transitions at orthogonal bends rather than relying on stroke joins. Rounded
+corners are the default; each orthogonal edge can opt into square corners.
+
+AC: automatic and user-shaped waypoint routes retain their axis-aligned legs, endpoint tangents,
+labels, notation, arrowheads, and snapping coordinates; inspector, right-click Routing group, and
+Selection Routing submenu expose Rounded/Square; only the square override writes
+`orthoCorner:"square"`; legacy orthogonal edges load rounded; curved edges discard the override;
+SVG/PNG, undo, automated tests, and browser interaction/visual QA pass.
+
+---
+
+**SCH-107 · Concept-node Input / Output link ports · P1 · M · Done 2026-07-23**
+
+Add an optional labeled port row to concept nodes. Each node exposes editable Input and Output
+captions; the visible side handles move to those rows so a flow reads as a sequence of named
+interfaces rather than links terminating at generic side midpoints.
+
+AC: the inspector enables/disables the row and edits both captions; default captions remain
+implicit; automatic outgoing ends use the right Output port and automatic incoming ends use the
+left Input port; the two port circles start/accept drag connections; explicit top/bottom/corner
+anchors and row bindings keep precedence; flowchart silhouettes place the port circles on their
+actual boundary; disabling restores legacy geometry; optional values round-trip through JSON and
+duplicate, malformed or unsupported values normalize safely, and SVG/PNG retain captions while
+removing editing handles; the starter tour demonstrates the feature; undo, automated tests, and
+browser interaction/visual/console QA pass.
 
 ---
 

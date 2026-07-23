@@ -17,14 +17,15 @@ requires no bundler, package installation, or server runtime.
 | Order | Script | Responsibility |
 |---:|---|---|
 | 1 | `js/core.js` | Constants, shared state, themes, selection, history, persistence, recovery, and top-level toolbar state |
-| 2 | `js/geometry.js` | Text measurement, node sizing, containment, anchors, hit testing, and coordinate conversion |
-| 3 | `js/render.js` | SVG scaffold, minimap, edge/node paths, and all canvas drawing |
-| 4 | `js/model.js` | Node/edge mutations, copy/paste, alignment, layout, and related-node creation |
-| 5 | `js/interactions.js` | Pointer, wheel, keyboard, inline editing, command palette, and shortcut modal behavior |
-| 6 | `js/inspector.js` | Inspector rendering, edge endpoint controls, field/item editors, palettes, and reusable UI controls |
-| 7 | `js/io.js` | Open/save, SQL, linting, DDL/CSV import, Mermaid/Markdown/SVG, and PNG export |
-| 8 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
-| 9 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
+| 2 | `js/icon-catalog.js` | Offline Lucide/Font Awesome icon data plus node decoration and link-port validation helpers |
+| 3 | `js/geometry.js` | Text measurement, node sizing, containment, anchors, hit testing, and coordinate conversion |
+| 4 | `js/render.js` | SVG scaffold, minimap, edge/node paths, and all canvas drawing |
+| 5 | `js/model.js` | Node/edge mutations, copy/paste, alignment, layout, and related-node creation |
+| 6 | `js/interactions.js` | Pointer, wheel, keyboard, inline editing, command palette, and shortcut modal behavior |
+| 7 | `js/inspector.js` | Inspector rendering, edge endpoint controls, field/item editors, palettes, and reusable UI controls |
+| 8 | `js/io.js` | Open/save, SQL, linting, DDL/CSV import, Mermaid/Markdown/SVG, and PNG export |
+| 9 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
+| 10 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
 
 The order is an architectural contract. Earlier files may declare functions that call later-file
 functions, but those calls must not execute until `bootstrap.js` runs after every declaration has

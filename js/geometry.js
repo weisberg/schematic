@@ -160,7 +160,7 @@ function wrapConceptTitle(text, font, maxWidth){
   }
   return lines.length ? lines : ["Untitled"];
 }
-function conceptWrappedLayout(n){
+function plainConceptWrappedLayout(n){
   const shape = conceptShape(n), fs = conceptFont(n);
   const font = `600 ${fs}px Archivo, sans-serif`;
   const lineH = Math.ceil(fs * 1.28);
@@ -218,6 +218,204 @@ function conceptWrappedLayout(n){
   const h = Math.max(baseHeight, lines.length * lineH + 22 + documentExtra);
   return {w, h, fs, font, lineH, lines, maxLines:lines.length, maxWidth,
           centerY:shape === "document" ? (h - 12)/2 : h/2};
+}
+function nodeDecorationMetrics(n, fs){
+  const icon = nodeIcon(n);
+  const subtitle = nodeSubtitle(n);
+  const subtitleFs = Math.max(9, Math.round(fs * .72));
+  return {
+    icon, subtitle,
+    iconSize:icon ? Math.max(30, Math.round(fs * 2.05)) : 0,
+    iconGap:icon ? Math.max(8, Math.round(fs * .55)) : 0,
+    subtitleFs,
+    subtitleFont:`500 ${subtitleFs}px Archivo, sans-serif`,
+    subtitleLineH:Math.ceil(subtitleFs * 1.25),
+    subtitleGap:subtitle ? Math.max(3, Math.round(fs * .22)) : 0
+  };
+}
+function decoratedTextMetrics(title, font, lineH, decoration, maxWidth){
+  const titleLines = wrapConceptTitle(title, font, maxWidth);
+  const subtitleLines = decoration.subtitle
+    ? wrapConceptTitle(decoration.subtitle, decoration.subtitleFont, maxWidth) : [];
+  const textH = titleLines.length * lineH +
+    (subtitleLines.length ? decoration.subtitleGap + subtitleLines.length * decoration.subtitleLineH : 0);
+  return {titleLines, subtitleLines, textH};
+}
+function positionDecoratedContent(layout, mode, contentCenterY){
+  const decoration = layout.decoration;
+  const text = layout.text;
+  if (mode === "stacked"){
+    const contentH = decoration.iconSize + decoration.iconGap + text.textH;
+    const top = contentCenterY - contentH/2;
+    layout.iconX = decoration.icon ? (layout.w - decoration.iconSize)/2 : null;
+    layout.iconY = decoration.icon ? top : null;
+    layout.textX = layout.w/2;
+    layout.textAnchor = "middle";
+    layout.textTop = top + decoration.iconSize + decoration.iconGap;
+    layout.contentH = contentH;
+  } else {
+    const contentH = Math.max(decoration.iconSize, text.textH);
+    const left = layout.contentLeft;
+    layout.iconX = decoration.icon ? left : null;
+    layout.iconY = decoration.icon ? contentCenterY - decoration.iconSize/2 : null;
+    layout.textX = decoration.icon ? left + decoration.iconSize + decoration.iconGap : layout.w/2;
+    layout.textAnchor = decoration.icon ? "start" : "middle";
+    layout.textTop = contentCenterY - text.textH/2;
+    layout.contentH = contentH;
+  }
+  layout.firstTitleY = layout.textTop + layout.fs * .83;
+  layout.firstSubtitleY = layout.textTop + text.titleLines.length * layout.lineH +
+    decoration.subtitleGap + decoration.subtitleFs * .83;
+  return layout;
+}
+function decoratedConceptLayout(n){
+  const shape = conceptShape(n), fs = conceptFont(n);
+  const font = `600 ${fs}px Archivo, sans-serif`;
+  const lineH = Math.ceil(fs * 1.28);
+  const decoration = nodeDecorationMetrics(n, fs);
+  const fixedWidth = manualNodeWidth(n);
+  const source = String(n.title || "Untitled").replace(/\r\n?/g, "\n");
+  const longestTitle = Math.max(...source.split("\n")
+    .map(line => textW(line.trim() || " ", font)));
+  const longestSubtitle = decoration.subtitle
+    ? Math.max(...decoration.subtitle.split("\n")
+      .map(line => textW(line.trim() || " ", decoration.subtitleFont)))
+    : 0;
+
+  if (WRAPPED_CONCEPT_SHAPES.has(shape)){
+    const spec = shape === "triangle"
+      ? {min:180, widthRatio:.46, heightRatio:.38, centerY:.64, heightFor:size => Math.round(size * .866)}
+      : shape === "circle"
+        ? {min:140, widthRatio:.64, heightRatio:.58, centerY:.5, heightFor:size => size}
+        : {min:120, widthRatio:.74, heightRatio:.72, centerY:.5, heightFor:size => size};
+    let layout = null;
+    const firstSize = fixedWidth == null ? spec.min : fixedWidth;
+    const lastSize = fixedWidth == null ? 1200 : fixedWidth;
+    const step = fixedWidth == null ? 10 : 1;
+    for (let size = firstSize; size <= lastSize; size += step){
+      const h = spec.heightFor(size);
+      const maxWidth = Math.max(44, Math.round(size * spec.widthRatio));
+      const text = decoratedTextMetrics(source, font, lineH, decoration, maxWidth);
+      const availableHeight = Math.max(lineH, h * spec.heightRatio);
+      layout = {w:size, h, fs, font, lineH, lines:text.titleLines,
+                titleLines:text.titleLines, subtitleLines:text.subtitleLines,
+                maxLines:text.titleLines.length, maxWidth, centerY:h * spec.centerY,
+                decoration, text, mode:"stacked"};
+      if (decoration.iconSize + decoration.iconGap + text.textH <= availableHeight)
+        return positionDecoratedContent(layout, "stacked", layout.centerY);
+    }
+    /* Forced very-small shapes retain the title and subtitle inside the safest
+       available region by truncating their wrapped lines and shrinking the tile. */
+    const available = Math.max(lineH, layout.h * spec.heightRatio);
+    const minSubtitle = decoration.subtitle ? decoration.subtitleLineH + decoration.subtitleGap : 0;
+    decoration.iconSize = Math.min(decoration.iconSize,
+      Math.max(16, available - lineH - minSubtitle - decoration.iconGap));
+    const titleCapacity = Math.max(1, Math.floor(
+      (available - decoration.iconSize - decoration.iconGap - minSubtitle) / lineH));
+    const titleLines = limitedWrappedLines(source, font, layout.maxWidth, titleCapacity);
+    const remaining = Math.max(decoration.subtitleLineH,
+      available - decoration.iconSize - decoration.iconGap -
+      titleLines.length * lineH - decoration.subtitleGap);
+    const subtitleLines = decoration.subtitle
+      ? limitedWrappedLines(decoration.subtitle, decoration.subtitleFont, layout.maxWidth,
+        Math.max(1, Math.floor(remaining / decoration.subtitleLineH))) : [];
+    const textH = titleLines.length * lineH +
+      (subtitleLines.length ? decoration.subtitleGap + subtitleLines.length * decoration.subtitleLineH : 0);
+    layout = {...layout, lines:titleLines, titleLines, subtitleLines,
+      text:{titleLines, subtitleLines, textH}, truncated:true};
+    return positionDecoratedContent(layout, "stacked", layout.centerY);
+  }
+
+  if (shape === "decision"){
+    let w = fixedWidth == null
+      ? Math.min(420, Math.max(180, Math.ceil(Math.max(longestTitle, longestSubtitle) + 96)))
+      : fixedWidth;
+    let maxWidth = Math.max(70, Math.round(w * .62));
+    let text = decoratedTextMetrics(source, font, lineH, decoration, maxWidth);
+    let contentH = decoration.iconSize + decoration.iconGap + text.textH;
+    let h = Math.max(100, contentH + 40);
+    if (fixedWidth == null) w = Math.min(420, Math.max(w, Math.ceil(h * 1.6)));
+    maxWidth = Math.max(70, Math.round(w * .62));
+    text = decoratedTextMetrics(source, font, lineH, decoration, maxWidth);
+    contentH = decoration.iconSize + decoration.iconGap + text.textH;
+    h = Math.max(100, contentH + 40);
+    const layout = {w, h, fs, font, lineH, lines:text.titleLines,
+      titleLines:text.titleLines, subtitleLines:text.subtitleLines,
+      maxLines:text.titleLines.length, maxWidth, centerY:h/2,
+      decoration, text, mode:"stacked"};
+    return positionDecoratedContent(layout, "stacked", layout.centerY);
+  }
+
+  const extraWidth = shape === "data" || shape === "manualInput" ? 56 : 44;
+  const reserve = decoration.iconSize + decoration.iconGap;
+  const w = fixedWidth == null
+    ? Math.min(480, Math.max(160, Math.ceil(Math.max(longestTitle, longestSubtitle) + extraWidth + reserve)))
+    : fixedWidth;
+  const maxWidth = Math.max(30, conceptTextWidth(shape, w) - reserve);
+  const text = decoratedTextMetrics(source, font, lineH, decoration, maxWidth);
+  const documentExtra = shape === "document" ? 18 : 0;
+  const baseHeight = Math.max(48, Math.round(fs * 2.2 + 17.2)) + documentExtra;
+  const contentH = Math.max(decoration.iconSize, text.textH);
+  const h = Math.max(baseHeight, contentH + 22 + documentExtra);
+  const centerY = shape === "document" ? (h - 12)/2 : h/2;
+  const sidePadding = shape === "data" || shape === "manualInput" ? 28 : 17;
+  const layout = {w, h, fs, font, lineH, lines:text.titleLines,
+    titleLines:text.titleLines, subtitleLines:text.subtitleLines,
+    maxLines:text.titleLines.length, maxWidth, centerY,
+    decoration, text, mode:"leading", contentLeft:sidePadding};
+  return positionDecoratedContent(layout, "leading", centerY);
+}
+function baseConceptWrappedLayout(n){
+  if (!nodeIcon(n) && !nodeSubtitle(n)) return plainConceptWrappedLayout(n);
+  return decoratedConceptLayout(n);
+}
+function shiftConceptContent(layout, dy){
+  const shifted = {...layout};
+  for (const key of ["centerY","iconY","textTop","firstTitleY","firstSubtitleY"])
+    if (Number.isFinite(shifted[key])) shifted[key] += dy;
+  return shifted;
+}
+function conceptPortLayout(n, base){
+  const fs = conceptFont(n);
+  const portFs = Math.max(10, Math.round(fs * .72));
+  const portFont = `600 ${portFs}px 'IBM Plex Mono', monospace`;
+  const footerH = Math.max(30, Math.ceil(portFs * 1.75));
+  const inputLabel = nodeInputLabel(n), outputLabel = nodeOutputLabel(n);
+  const desiredW = Math.ceil(textW(inputLabel, portFont) + textW(outputLabel, portFont) + 84);
+  const fixedWidth = manualNodeWidth(n);
+  let layout = base;
+
+  /* Auto-sized cards widen before adding the port row. Forced widths remain
+     exact and truncate only the port captions, matching other forced content. */
+  if (fixedWidth == null && desiredW > layout.w){
+    layout = baseConceptWrappedLayout({...n, manualWidth:true, w:desiredW});
+  }
+
+  const shape = conceptShape(n);
+  const constrained = shape === "decision" || WRAPPED_CONCEPT_SHAPES.has(shape);
+  if (constrained){
+    /* Circle/square/triangle geometry must retain its silhouette. Give auto-
+       sized shapes more room in both dimensions, then lift their content into
+       the upper visual region instead of appending a rectangular footer. */
+    if (fixedWidth == null){
+      const growth = shape === "triangle" ? Math.ceil(footerH / .43) : footerH * 2;
+      const targetW = Math.max(desiredW + 28, layout.w + growth);
+      layout = baseConceptWrappedLayout({...n, manualWidth:true, w:targetW});
+    }
+    layout = shiftConceptContent(layout, -footerH * .42);
+  } else {
+    layout = {...layout, h:layout.h + footerH + (shape === "document" ? 10 : 0)};
+  }
+
+  const portY = constrained
+    ? layout.h * (shape === "triangle" ? .78 : shape === "decision" ? .68 : .72)
+    : layout.h - footerH/2 - (shape === "document" ? 10 : 0);
+  return {...layout, ports:true, portFs, portFont, portY, footerH,
+          inputLabel, outputLabel};
+}
+function conceptWrappedLayout(n){
+  const base = baseConceptWrappedLayout(n);
+  return nodePortsEnabled(n) ? conceptPortLayout(n, base) : base;
 }
 function conceptTextWidth(shape, w){
   return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
@@ -321,15 +519,32 @@ function statusNodeLayout(n){
   const bandMax = Math.min(168, Math.max(48, Math.floor(w * .44)));
   const bandW = clampSize(desiredBand, Math.min(88, bandMax), bandMax);
   const mainW = Math.max(1, w - bandW);
-  const titleMaxWidth = Math.max(16, mainW - 28);
+  const decoration = nodeDecorationMetrics(n, fs);
+  const reserve = decoration.icon ? decoration.iconSize + decoration.iconGap : 0;
+  const titleMaxWidth = Math.max(16, mainW - 28 - reserve);
   const statusMaxWidth = Math.max(20, bandW - 18);
   const titleLines = wrapConceptTitle(n.title || "Status item", font, titleMaxWidth);
+  const subtitleLines = decoration.subtitle
+    ? wrapConceptTitle(decoration.subtitle, decoration.subtitleFont, titleMaxWidth) : [];
   const statusLines = wrapConceptTitle(status, statusFont, statusMaxWidth);
-  const h = Math.max(60, titleLines.length * lineH + 26, statusLines.length * statusLineH + 22);
+  const textH = titleLines.length * lineH +
+    (subtitleLines.length ? decoration.subtitleGap + subtitleLines.length * decoration.subtitleLineH : 0);
+  const h = Math.max(60, Math.max(textH, decoration.iconSize) + 26,
+    statusLines.length * statusLineH + 22);
   const side = n.statusSide === "left" ? "left" : "right";
-  return {w, h, fs, font, lineH, titleLines, titleMaxWidth,
+  const mainX = side === "left" ? bandW : 0;
+  const mainCenter = mainX + mainW/2;
+  const textTop = h/2 - textH/2;
+  const iconX = decoration.icon ? mainX + 14 : null;
+  const textX = decoration.icon ? iconX + decoration.iconSize + decoration.iconGap : mainCenter;
+  return {w, h, fs, font, lineH, titleLines, subtitleLines, titleMaxWidth,
           status, statusFs, statusFont, statusLineH, statusLines, statusMaxWidth,
-          bandW, mainW, side};
+          bandW, mainW, side, decoration, iconX,
+          iconY:decoration.icon ? (h - decoration.iconSize)/2 : null,
+          textX, textAnchor:decoration.icon ? "start" : "middle",
+          firstTitleY:textTop + fs*.83,
+          firstSubtitleY:textTop + titleLines.length*lineH +
+            decoration.subtitleGap + decoration.subtitleFs*.83};
 }
 function statusBandContainsPoint(n, point){
   if (!n || n.type !== "status" || !point) return false;
@@ -599,6 +814,44 @@ function conceptBoundaryPoint(n, r, ref, shape = visualNodeShape(n)){
   const scale = 1 / (Math.abs(dx) / (r.w/2) + Math.abs(dy) / (r.h/2));
   return { x:r.cx + dx * scale, y:r.cy + dy * scale };
 }
+function conceptHorizontalBoundsAtY(n, r, y){
+  const shape = conceptShape(n);
+  const localY = Math.max(0, Math.min(r.h, y - r.y));
+  if (shape === "circle"){
+    const ry = r.h/2, dy = localY - ry;
+    const dx = r.w/2 * Math.sqrt(Math.max(0, 1 - (dy/ry)**2));
+    return {left:r.cx-dx, right:r.cx+dx};
+  }
+  if (shape === "triangle"){
+    const half = r.w * localY / (2*r.h);
+    return {left:r.cx-half, right:r.cx+half};
+  }
+  if (shape === "decision"){
+    const half = r.w/2 * Math.max(0, 1 - Math.abs(localY-r.h/2)/(r.h/2));
+    return {left:r.cx-half, right:r.cx+half};
+  }
+  if (shape === "terminator"){
+    const radius = Math.min(r.w/2, r.h/2);
+    const dy = localY - r.h/2;
+    const dx = Math.sqrt(Math.max(0, radius*radius - dy*dy));
+    return {left:r.x+radius-dx, right:r.x+r.w-radius+dx};
+  }
+  if (shape === "data")
+    return {left:r.x + 18*(1-localY/r.h), right:r.x+r.w - 18*localY/r.h};
+  if (shape === "manualInput")
+    return {left:r.x + 20*(1-localY/r.h), right:r.x+r.w - 14*localY/r.h};
+  return {left:r.x, right:r.x+r.w};
+}
+function nodePortPoints(n, r = nodeRect(n)){
+  if (!nodePortsEnabled(n)) return null;
+  const layout = conceptWrappedLayout(n);
+  const y = r.y + layout.portY;
+  const bounds = conceptHorizontalBoundsAtY(n, r, y);
+  return {
+    input:{x:bounds.left, y, side:"w", key:"ml"},
+    output:{x:bounds.right, y, side:"e", key:"mr"}
+  };
+}
 function anchorPointsForNode(n, r = nodeRect(n), shape = visualNodeShape(n)){
   const pts = anchorPointsForRect(r);
   if (n && n.type === "table"){
@@ -606,8 +859,13 @@ function anchorPointsForNode(n, r = nodeRect(n), shape = visualNodeShape(n)){
     pts.hl = {x:r.x, y:titleY};
     pts.hr = {x:r.x+r.w, y:titleY};
   }
-  if (!CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)) return pts;
-  for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key], shape);
+  if (CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape))
+    for (const key of PERIMETER_ANCHORS) pts[key] = conceptBoundaryPoint(n, r, pts[key], shape);
+  const ports = nodePortPoints(n, r);
+  if (ports){
+    pts.ml = {x:ports.input.x, y:ports.input.y};
+    pts.mr = {x:ports.output.x, y:ports.output.y};
+  }
   return pts;
 }
 /* outward side of an anchor point, for curve control points and crow's feet;

@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.30.0";
+const APP_VERSION = "v1.32.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -776,6 +776,8 @@ function cleanEdgeForDocument(e){
   if (!out.fromField) delete out.fromField;
   if (!out.toField) delete out.toField;
   if (!out.routing || out.routing === "curve") delete out.routing;
+  if (out.routing === "ortho" && orthoCornerStyle(out) === "square") out.orthoCorner = "square";
+  else delete out.orthoCorner;
   for (const key of ["orthoX", "orthoY"]){
     const value = Number(out[key]);
     if (Number.isFinite(value)) out[key] = value;
@@ -798,6 +800,8 @@ function cleanEdgeForDocument(e){
 }
 function cleanNodeForDocument(n){
   const out = {...n};
+  normalizeNodeDecoration(out);
+  normalizeNodePorts(out);
   if (Array.isArray(out.fields)) out.fields = out.fields.map(cleanFieldForDocument);
   if (manualNodeWidth(out) != null){
     out.w = manualNodeWidth(out);
@@ -905,6 +909,8 @@ function applyDocument(d, opts = {}){
   setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
   for (const n of state.nodes){
     if (!n) continue;
+    normalizeNodeDecoration(n);
+    normalizeNodePorts(n);
     const fixedWidth = manualNodeWidth(n);
     if (fixedWidth != null){
       n.w = fixedWidth;
@@ -965,6 +971,7 @@ function applyDocument(d, opts = {}){
     }
   }
   for (const e of state.edges){
+    setOrthoCornerStyle(e, e.orthoCorner);
     for (const key of ["orthoX", "orthoY"]){
       const value = Number(e[key]);
       if (Number.isFinite(value)) e[key] = value;

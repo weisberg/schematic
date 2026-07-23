@@ -447,12 +447,27 @@ function buildEdgeSelectionDropdown(panel, edge){
     for (const [routing, label] of [["curve","Curved"],["ortho","Orthogonal"]]) menuCommand(body, label, () => {
       if ((edge.routing || "curve") === routing) return;
       pushHistory();
-      if (routing === "ortho") edge.routing = "ortho"; else delete edge.routing;
+      if (routing === "ortho") edge.routing = "ortho";
+      else {
+        delete edge.routing;
+        setOrthoCornerStyle(edge, "rounded");
+      }
       render();
     }, {pressed:(edge.routing || "curve") === routing, action:"routing-" + routing});
-    if (edge.routing === "ortho" && hasCustomOrthoBend(edge)){
+    if (edge.routing === "ortho"){
       menuSeparator(body);
-      menuCommand(body, "Reset waypoint to automatic", () => resetOrthoBend(edge), {action:"reset-waypoint"});
+      menuLabel(body, "Corners");
+      for (const [style, label] of [["rounded","Rounded"],["square","Square"]])
+        menuCommand(body, label, () => {
+          if (orthoCornerStyle(edge) === style) return;
+          pushHistory();
+          setOrthoCornerStyle(edge, style);
+          render();
+        }, {pressed:orthoCornerStyle(edge) === style, action:"ortho-corners-" + style});
+      if (hasCustomOrthoBend(edge)){
+        menuSeparator(body);
+        menuCommand(body, "Reset waypoint to automatic", () => resetOrthoBend(edge), {action:"reset-waypoint"});
+      }
     }
   });
 
@@ -815,13 +830,34 @@ function edgeMenu(e, x, y){
         button.addEventListener("click", () => {
           hideCtx();
           pushHistory();
-          if (k === "ortho") e.routing = "ortho"; else delete e.routing;
+          if (k === "ortho") e.routing = "ortho";
+          else {
+            delete e.routing;
+            setOrthoCornerStyle(e, "rounded");
+          }
           render();
         });
         routeRow.appendChild(button);
       }
       panel.appendChild(routeRow);
       if (e.routing === "ortho"){
+        ctxLabel(panel, "Corners");
+        const cornerRow = document.createElement("div");
+        cornerRow.className = "kindrow";
+        for (const [value, label] of [["rounded","Rounded"],["square","Square"]]){
+          const button = document.createElement("button");
+          button.textContent = label;
+          if (orthoCornerStyle(e) === value) button.className = "on";
+          button.addEventListener("click", () => {
+            hideCtx();
+            if (orthoCornerStyle(e) === value) return;
+            pushHistory();
+            setOrthoCornerStyle(e, value);
+            render();
+          });
+          cornerRow.appendChild(button);
+        }
+        panel.appendChild(cornerRow);
         ctxLabel(panel, "Waypoint");
         const note = document.createElement("div");
         note.className = "ctxhint";
