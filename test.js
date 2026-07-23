@@ -169,45 +169,148 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(window.__T.doc.dirty, false, "fallback save clears dirty state");
   }
 
-  /* SCH-083 — the starter document is a feature tour, not a shape gallery */
+  /* SCH-083 / SCH-111 — the starter document is a comprehensive feature tour */
   {
     const { window } = makeDom();
     const T = window.__T;
     const nodeTypes = new Set(T.state.nodes.map(n => n.type));
     for (const type of ["concept", "text", "status", "note", "todo", "table", "frame", "swimlane"])
       assert(nodeTypes.has(type), `starter document includes the ${type} node type`);
-    assert(T.state.nodes.some(n => n.type === "concept" && T.nodePortsEnabled(n)),
+    const measure = T.state.nodes.find(n => n.title === "Measurement plan");
+    assert(measure && T.nodePortsEnabled(measure),
       "starter document demonstrates labeled Input / Output link ports");
+    sameList(T.nodeInputPorts(measure).map(port => port.id), ["events","targets"],
+      "starter multi-port concept exposes both named inputs");
+    sameList(T.nodeOutputPorts(measure).map(port => port.id), ["metrics","decision"],
+      "starter multi-port concept exposes both named outputs");
+    sameList(T.state.edges.filter(edge => edge.to === measure.id).map(edge => edge.toPort).sort(),
+      ["events","targets"], "starter links use every named input");
+    sameList(T.state.edges.filter(edge => edge.from === measure.id).map(edge => edge.fromPort).sort(),
+      ["decision","metrics"], "starter links use every named output");
 
     const lanes = T.state.nodes.filter(n => n.type === "swimlane");
     sameList(lanes.map(T.swimlaneOrientation).sort(), ["horizontal", "vertical"],
       "starter document demonstrates both swimlane orientations");
-    assert(T.state.nodes.filter(n => n.type === "concept").every(n => !Object.hasOwn(n, "shape") && T.conceptShape(n) === "process"),
-      "starter concepts keep the normal default shape instead of becoming a shape gallery");
-    const plainText = T.state.nodes.find(n => n.type === "text");
-    assert(plainText && !Object.hasOwn(plainText, "shape") && T.textBoxShape(plainText) === "none",
-      "starter plain text remains an unboxed text primitive");
+    const conceptShapes = new Set(T.state.nodes.filter(n => n.type === "concept").map(T.conceptShape));
+    for (const shape of T.FLOWCHART_SHAPES.map(option => option.id))
+      assert(conceptShapes.has(shape), `starter tour demonstrates the ${shape} concept shape`);
+    assert.strictEqual(conceptShapes.size, T.FLOWCHART_SHAPES.length,
+      "starter demonstrates every shape without creating a separate shape gallery");
 
-    const frame = T.state.nodes.find(n => n.type === "frame");
+    const plainTexts = T.state.nodes.filter(n => n.type === "text");
+    assert(plainTexts.some(n => T.textBoxShape(n) === "none"),
+      "starter includes an unboxed plain-text primitive");
+    const preciseText = plainTexts.find(n => n.title === "Exact 220 × 84 px");
+    assert(preciseText && T.textBoxShape(preciseText) === "rectangle" &&
+      preciseText.manualWidth === true && T.manualNodeHeight(preciseText) === 84,
+      "starter includes a shaped text box with exact pixel dimensions");
+    assert.strictEqual(T.textBoxWrapEnabled(preciseText), false,
+      "starter exact text box demonstrates disabled wrapping");
+    assert.strictEqual(JSON.stringify(T.textBoxMargins(preciseText)),
+      JSON.stringify({top:12, right:18, bottom:12, left:18}),
+      "starter exact text box demonstrates independent margins");
+    assert(/^#[0-9a-f]{8}$/i.test(preciseText.color),
+      "starter uses an alpha color that exercises transparent palette storage");
+
+    const frame = T.state.nodes.find(n => n.title === "Strategy & experiments");
     assert(T.frameBorderEnabled(frame) && T.frameBorderWidth(frame) === 2,
       "starter frame demonstrates the optional border feature");
+    const visualFrame = T.state.nodes.find(n => n.title === "Visual primitives");
+    assert(T.frameBorderEnabled(visualFrame) && T.frameBorderWidth(visualFrame) === 4 &&
+      T.frameBorderColor(visualFrame).toUpperCase() === "#C20029",
+      "starter demonstrates independent frame border width and color");
+    const archive = T.state.nodes.find(n => n.title === "Archived workstream");
+    const legacy = T.state.nodes.find(n => n.title === "Legacy cohort analysis");
+    assert(archive && archive.collapsed === true && T.collapsedFrameHiddenNodeIds().has(legacy.id),
+      "starter includes a collapsed frame with hidden content");
+    assert.strictEqual(T.collapsedFrameProxyMap().get(legacy.id), archive.id,
+      "starter collapsed frame proxies external links to its center");
+    assert(T.state.edges.some(edge => edge.to === legacy.id),
+      "starter visibly links an external item to collapsed-frame content");
+
     const horizontal = lanes.find(n => T.swimlaneOrientation(n) === "horizontal");
     const vertical = lanes.find(n => T.swimlaneOrientation(n) === "vertical");
+    assertNoOverlaps([frame, horizontal, visualFrame, vertical].map(T.nodeRect),
+      "the four feature panels remain visually separate");
     assert(T.containerContainedNodes(frame).filter(n => n.type === "concept").length >= 4,
       "strategy frame demonstrates concept containment");
-    assert(T.containerContainedNodes(horizontal).filter(n => n.type === "table").length >= 3,
+    assert(T.containerContainedNodes(horizontal).filter(n => n.type === "table").length >= 4,
       "horizontal swimlane demonstrates table containment");
-    sameList(T.containerContainedNodes(vertical).map(n => n.type).sort(), ["note", "status", "todo"],
-      "vertical swimlane demonstrates rich-note, status, and to-do containment");
+    sameList([...new Set(T.containerContainedNodes(vertical).map(n => n.type))].sort(),
+      ["concept","note","status","todo"],
+      "vertical swimlane contains delivery nodes, rich notes, statuses, and to-do work");
+    const panels = [frame, horizontal, visualFrame, vertical];
+    const containingPanel = node => {
+      const center = T.nodeRect(node);
+      return panels.find(panel => {
+        const rect = T.nodeRect(panel);
+        return center.cx >= rect.x && center.cx <= rect.x + rect.w &&
+               center.cy >= rect.y && center.cy <= rect.y + rect.h;
+      });
+    };
+    for (const edge of T.state.edges){
+      const from = T.state.nodes.find(node => node.id === edge.from);
+      const to = T.state.nodes.find(node => node.id === edge.to);
+      assert.strictEqual(containingPanel(from), containingPanel(to),
+        `starter edge ${edge.label || edge.kind} stays inside one feature panel`);
+    }
+
+    const decoratedLibraries = new Set(T.state.nodes.map(T.nodeIconLibrary).filter(value => value !== "none"));
+    sameList([...decoratedLibraries].sort(), ["emoji","fa","lucide"],
+      "starter tour demonstrates emoji, Font Awesome, and Lucide icons");
+    assert(T.state.nodes.filter(n => T.nodeIconLibrary(n) !== "none")
+      .every(n => T.nodeSubtitle(n)),
+      "every decorated starter node pairs its icon with a subtitle");
+
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    const email = customers.fields.find(field => field.id === "f_cust_email");
+    assert(email.unique && email.index, "starter table demonstrates extended field metadata");
+    assert(customers.fields.some(field => field.default) && customers.fields.some(field => field.comment),
+      "starter fields demonstrate defaults and comments");
+    assert(T.state.nodes.some(n => n.type === "table" && n.collapsed === true),
+      "starter demonstrates a collapsed table");
+    assert(T.state.edges.some(edge => T.edgeFieldPairs(edge).length === 2),
+      "starter demonstrates a composite two-field relation");
+    const edgeKinds = new Set(T.state.edges.map(edge => edge.kind));
+    for (const kind of ["link","1:1","1:N","N:M"])
+      assert(edgeKinds.has(kind), `starter demonstrates the ${kind} edge kind`);
+    assert(T.state.edges.some(edge => edge.fromAnchor === "hr" && edge.toAnchor === "hl"),
+      "starter demonstrates table-title attachment anchors");
 
     const checklist = T.state.nodes.find(n => n.title === "Launch readiness");
     assert(checklist.items.some(item => item.done) && checklist.items.some(item => !item.done),
       "starter to-do shows both completed and open items");
+    assert(T.state.edges.some(edge => edge.to === checklist.id && edge.toField === "i_release_events"),
+      "starter link attaches directly to a to-do item");
+
     const styled = T.state.edges.find(e => e.label === "Triggers");
     assert(styled && styled.routing === "ortho" && styled.endArrow && styled.lineStyle === "dot",
       "starter links demonstrate orthogonal routing, arrows, and line styling");
     assert(styled.labelTextColor && styled.labelBackgroundColor,
       "starter link demonstrates independent label text and background colors");
+    assert(Number.isFinite(styled.orthoX) && Number.isFinite(styled.orthoY),
+      "starter rounded orthogonal link demonstrates custom movable corners");
+    assert(T.state.edges.some(edge => edge.routing === "ortho" && edge.orthoCorner === "square"),
+      "starter also demonstrates square orthogonal corners");
+    assert(T.state.edges.some(edge => edge.startArrow && edge.endArrow),
+      "starter demonstrates simultaneous start and end arrows");
+    sameList([...new Set(T.state.edges.map(edge =>
+      edge.lineStyle || (edge.kind === "link" ? "dash" : "solid")))].sort(),
+      ["dash","dot","solid"], "starter demonstrates every line style");
+    assert(T.state.edges.some(edge => edge.lineWidth === 3),
+      "starter demonstrates a custom line width");
+    assert(T.state.edges.some(edge => Number.isFinite(edge.labelPosition) && edge.labelPosition !== .5),
+      "starter includes a path-positioned link label");
+
+    const semanticLabels = new Set(T.state.edges.map(edge => edge.label));
+    for (const label of ["Contains","Depends on","Implements","Measures","Produces",
+      "Reads from","Writes to","Calculates","Validates","Triggers","References","Supports"])
+      assert(semanticLabels.has(label), `starter demonstrates the ${label} relationship preset`);
+    const statuses = T.state.nodes.filter(n => n.type === "status");
+    assert(statuses.some(n => n.statusSide === "left") && statuses.some(n => n.statusSide === "right"),
+      "starter demonstrates status indicators on both sides");
+    assert(statuses.some(n => n.status === "Blocked") && statuses.some(n => n.status === "In progress"),
+      "starter demonstrates multiple built-in status values");
   }
 
   /* SCH-091 — status nodes + one document-wide custom status catalog */
@@ -735,9 +838,16 @@ if (process.argv.includes("--api-surface")){
     T.clearSelection();
     T.render();
     const board = window.document.getElementById("board");
-    firePointer(window, board, "pointerdown", { clientX:40, clientY:80 });
-    firePointer(window, board, "pointermove", { clientX:520, clientY:280 });
-    firePointer(window, board, "pointerup", { clientX:520, clientY:280 });
+    const firstRect = T.nodeRect(first), secondRect = T.nodeRect(second);
+    const marquee = {
+      x1:Math.min(firstRect.x, secondRect.x) - 10,
+      y1:Math.min(firstRect.y, secondRect.y) - 10,
+      x2:Math.max(firstRect.x + firstRect.w, secondRect.x + secondRect.w) + 10,
+      y2:Math.max(firstRect.y + firstRect.h, secondRect.y + secondRect.h) + 10
+    };
+    firePointer(window, board, "pointerdown", { clientX:marquee.x1, clientY:marquee.y1 });
+    firePointer(window, board, "pointermove", { clientX:marquee.x2, clientY:marquee.y2 });
+    firePointer(window, board, "pointerup", { clientX:marquee.x2, clientY:marquee.y2 });
     assert(T.selection.ids.includes(first.id), "marquee selects fully enclosed first node");
     assert(T.selection.ids.includes(second.id), "marquee selects fully enclosed second node");
 
@@ -1462,7 +1572,7 @@ if (process.argv.includes("--api-surface")){
   {
     const { window } = makeDom();
     const T = window.__T;
-    const node = T.state.nodes.find(n => n.title === "Tiered rewards");
+    const node = T.state.nodes.find(n => n.title === "Loyalty program launch");
     const connectedEdge = T.state.edges.find(edge => edge.from === node.id);
     const endpointsBeforeWrap = T.edgeEndpoints(connectedEdge);
     T.startInlineEditor("node", node.id);
@@ -1540,7 +1650,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(T.view.k, beforeShiftHorizontal.k, "Shift plus horizontal wheel does not zoom");
     closeEnough(T.view.x, beforeShiftHorizontal.x - 9, "Shift plus horizontal wheel still pans horizontally");
 
-    const edge = T.state.edges.find(e => e.label === "drives");
+    const edge = T.state.edges.find(e => e.label === "Writes to");
     T.startInlineEditor("edge", edge.id);
     input = window.document.querySelector(".inline-editor");
     input.value = "maps to";
@@ -1573,7 +1683,7 @@ if (process.argv.includes("--api-surface")){
     sameList(T.EDGE_RELATIONSHIPS.map(r => [r.name, r.meaning]), expected,
       "edge relationship presets preserve the supplied names, meanings, and order");
 
-    let edge = T.state.edges.find(e => e.label === "drives");
+    let edge = T.state.edges.find(e => e.label === "earns");
     T.setSelection("edge", edge.id);
     T.render();
     let select = window.document.getElementById("edgeRelationshipSelect");
@@ -1594,7 +1704,7 @@ if (process.argv.includes("--api-surface")){
 
     T.undo();
     edge = T.state.edges.find(e => e.id === edge.id);
-    assert.strictEqual(edge.label, "drives", "undo restores the prior custom label");
+    assert.strictEqual(edge.label, "earns", "undo restores the prior custom label");
     T.redo();
     edge = T.state.edges.find(e => e.label === "Supports");
     assert(edge, "redo restores the preset relationship");
@@ -1636,7 +1746,7 @@ if (process.argv.includes("--api-surface")){
     const { window } = makeDom();
     const T = window.__T;
     const doc = window.document;
-    let edge = T.state.edges.find(e => e.label === "drives");
+    let edge = T.state.edges.find(e => e.label === "Depends on");
     const edgeId = edge.id;
     T.setSelection("edge", edgeId);
     T.render();
@@ -1750,7 +1860,7 @@ if (process.argv.includes("--api-surface")){
   {
     const { window } = makeDom();
     const T = window.__T, doc = window.document;
-    let edge = T.state.edges.find(e => e.label === "drives");
+    let edge = T.state.edges.find(e => e.label === "Depends on");
     const edgeId = edge.id;
     const rendered = () => ({
       line:doc.querySelector(`[data-edge="${edgeId}"] [data-edge-line]`),
@@ -2141,10 +2251,10 @@ if (process.argv.includes("--api-surface")){
     T.setEdgeLabelPosition(normalized, .5);
     assert.strictEqual(normalized.labelPosition, undefined, "the default midpoint remains absent from compact documents");
 
-    let edge = T.state.edges.find(e => e.label === "drives");
+    let edge = T.state.edges.find(e => e.label === "Depends on");
     let ep = T.edgeEndpoints(edge);
     const initial = T.edgeLabelPoint(edge, ep);
-    const desiredPosition = .82;
+    const desiredPosition = .68;
     const desired = T.edgeLabelPoint({...edge, labelPosition:desiredPosition}, ep);
     const offCurveProjection = T.projectEdgeLabelToPath(edge, ep, {x:desired.x + 13, y:desired.y - 11});
     const projectedExact = T.edgeLabelPoint({...edge, labelPosition:offCurveProjection.position}, ep);
@@ -2860,6 +2970,11 @@ if (process.argv.includes("--api-surface")){
       "a centered nested frame never mistakes its larger parent for hidden content");
     assert.strictEqual(T.edgeEndpoints(T.state.edges[0]).proxyA, "inner",
       "an expanded outer frame leaves its collapsed inner frame as the link proxy");
+    const inner = T.state.nodes.find(n => n.id === "inner");
+    T.setFrameCollapsed(inner, false);
+    sameList([...doc.querySelectorAll('#frameLayer > [data-frame]')].map(g => g.getAttribute("data-frame")),
+      ["outer","inner"], "expanded nested frames paint above their containing frame controls");
+    T.setFrameCollapsed(inner, true);
     T.setFrameCollapsed(T.state.nodes.find(n => n.id === "outer"), true);
     assert.strictEqual(T.edgeEndpoints(T.state.edges[0]).proxyA, "outer",
       "a collapsed outer frame becomes the visible proxy for all nested contents");
@@ -3642,7 +3757,11 @@ if (process.argv.includes("--api-surface")){
     assert(outline.includes("- Loyalty program launch"), "Markdown outline includes the seed root");
     assert(outline.includes("  > Q3 initiative"), "Markdown outline includes concept notes as blockquotes");
     assert(outline.includes("  - Tiered rewards"), "Markdown outline nests linked concepts");
-    assert(outline.includes("    - **customers**"), "Markdown outline includes linked tables as leaves");
+    const tiers = T.state.nodes.find(n => n.title === "Tiered rewards");
+    const customers = T.state.nodes.find(n => n.title === "customers");
+    T.addEdge({id:tiers.id}, {id:customers.id});
+    assert(T.generateMarkdownOutline().includes("    - **customers**"),
+      "Markdown outline includes explicitly linked tables as leaves");
 
     T.importDocText(JSON.stringify({ version:1, nextId:1, nodes:[
       { id:"r", type:"concept", x:0, y:0, title:"Root", notes:"", color:"#FFE9A8" },

@@ -49,11 +49,25 @@ function render(){
   const hidden = collapsedFrameHiddenNodeIds();
   const proxies = collapsedFrameProxyMap(hidden);
   let frames = 0, lanes = 0;
-  for (const n of state.nodes){
+  const structuralNodes = state.nodes.filter(n => {
     if (n.type === "frame") frames++;
     else if (n.type === "swimlane") lanes++;
-    if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
-  }
+    return !hidden.has(n.id) && isStructuralNode(n);
+  });
+  /* Paint broad containers before smaller nested containers so the inner
+     title, resize, and collapse controls remain reachable inside a parent. */
+  const containsStructuralCenter = (outer, inner) => {
+    const a = containmentRect(outer), b = containmentRect(inner);
+    if (a.w * a.h <= b.w * b.h) return false;
+    return b.cx >= a.x && b.cx <= a.x + a.w &&
+           b.cy >= a.y && b.cy <= a.y + a.h;
+  };
+  structuralNodes.sort((a, b) => {
+    if (containsStructuralCenter(a, b)) return -1;
+    if (containsStructuralCenter(b, a)) return 1;
+    return 0;
+  });
+  for (const n of structuralNodes) drawStructuralNode(n);
   for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
   for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
   for (const n of state.nodes)

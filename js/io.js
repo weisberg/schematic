@@ -283,6 +283,13 @@ function columnLine(f, dialect = docDialect){
   const comment = f.comment ? ` -- ${f.comment}` : "";
   return parts.join(" ") + comment;
 }
+function joinSqlColumns(columns){
+  return columns.map((line, index) => {
+    if (index === columns.length - 1 || /^\s*--/.test(line)) return line;
+    const comment = line.indexOf(" -- ");
+    return comment < 0 ? line + "," : line.slice(0, comment) + "," + line.slice(comment);
+  }).join("\n");
+}
 function generateSQL(dialect = docDialect){
   const tables = state.nodes.filter(n => n.type === "table");
   if (!tables.length) return "-- No table nodes on the canvas.\n-- Add a Table node, give it fields, then export again.";
@@ -317,14 +324,14 @@ function generateSQL(dialect = docDialect){
       }
     }
     if (dialect === "athena"){
-      lines.push(`CREATE EXTERNAL TABLE ${tn} (`, cols.join(",\n"), ")",
+      lines.push(`CREATE EXTERNAL TABLE ${tn} (`, joinSqlColumns(cols), ")",
         "STORED AS PARQUET",
         "-- LOCATION 's3://bucket/path/';");
       if (constraintComments.length) lines.push(...constraintComments);
       if (t.fields.some(f => /^SERIAL$/i.test(f.type || ""))) lines.push("-- SERIAL fields emitted as INT for Athena.");
       lines.push("");
     } else {
-      lines.push(`CREATE TABLE ${tn} (`, cols.join(",\n"), ");", "");
+      lines.push(`CREATE TABLE ${tn} (`, joinSqlColumns(cols), ");", "");
       for (const f of t.fields.filter(f => f.index)){
         lines.push(`CREATE INDEX idx_${ident(t.title)}_${ident(f.name)} ON ${tn} (${qident(f.name, dialect)});`);
       }
