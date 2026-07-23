@@ -1827,6 +1827,40 @@ automated tests, and browser interaction/visual/console QA pass.
 
 ---
 
+**SCH-111 · Comprehensive first-load feature tour · P1 · M · Done 2026-07-23**
+
+Expand the fresh-load loyalty map into a readable, comprehensive tour of the current canvas model.
+Keep the working strategy, data, and delivery example as the primary row, then add two compact lower
+labs for visual primitives and link behavior. Representative content demonstrates every node type,
+both swimlane orientations, expanded and collapsed containers, configurable borders, unboxed and
+precision-sized text, representative flowchart shapes, transparent colors, all icon sources,
+subtitles, multiple status layouts, rich-note markup, to-do state and row attachment, expanded and
+collapsed tables, advanced field metadata, composite relations, all edge kinds and line styles,
+arrows, independent label colors, table-title anchors, named multi-port bindings, rounded and square
+orthogonal routing, custom route corners, and path-positioned labels.
+
+AC: each named input and output is visibly used; a collapsed frame proxies an external link to hidden
+content; the schema is lint-clean and generated DDL remains parseable when fields have inline
+comments; representative shapes remain a coherent workflow rather than an exhaustive shape gallery;
+the initial Fit view is legible without overlap or clipping; starter-only changes do not alter opened
+documents or blank New behavior; the complete automated suite and browser first-load visual,
+interaction, fit, and console QA pass.
+
+---
+
+**SCH-112 · First-load tour visual cleanup · P1 · S · Done 2026-07-23**
+
+Reorganize the comprehensive starter into four balanced, self-contained panels: strategy and named
+ports, data modeling, visual primitives, and delivery/link styling. Remove all cross-panel links,
+keep every supported flowchart shape and document feature represented, and give tables, statuses,
+and checklists sufficient spacing at the default Fit zoom.
+
+AC: panel bounds do not overlap; every starter link begins and ends inside the same panel; visible
+nodes do not collide; collapsed-frame proxying still expands and re-collapses; the full automated
+suite and first-load browser visual, interaction, Fit, and console checks pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.
