@@ -489,10 +489,18 @@ function editingStylePayload(object){
     entries.push({field, value:value == null ? null : JSON.parse(JSON.stringify(value)),
       origin, operation:origin === "direct" ? "set" : "clear"});
   }
+  for (const field of ["styleClassId","modifierClassIds","styleTokenRefs"]){
+    const direct=Object.hasOwn(object,field);
+    const value=direct ? JSON.parse(JSON.stringify(object[field])) : null;
+    entries.push({field,value,origin:direct ? "reference" : "default",
+      operation:direct ? "set" : "clear"});
+    if (direct) values[field]=value;
+  }
   return {version:1, kind, sourceType:kind === "node" ? object.type : "edge",
     values, entries,
     provenance:{direct:entries.filter(entry => entry.origin === "direct").length,
-      inherited:entries.filter(entry => entry.origin !== "direct").length},
+      references:entries.filter(entry => entry.origin === "reference").length,
+      inherited:entries.filter(entry => !["direct","reference"].includes(entry.origin)).length},
     excluded:["content","identity","metadata","relationships","geometry","containment","icon identity"]};
 }
 function editingCopyStyle(){
@@ -507,6 +515,7 @@ function editingCopyStyle(){
 function editingStyleFieldCompatible(payload, target, field){
   if (payload.kind !== (state.edges.includes(target) ? "edge" : "node")) return false;
   if (payload.kind === "edge") return true;
+  if (["styleClassId","modifierClassIds","styleTokenRefs"].includes(field)) return true;
   if (field === "shape" && target.type !== payload.sourceType) return false;
   if (field === "statusSide" && target.type !== "status") return false;
   if (field.startsWith("textMargin") || field === "wrapText") return target.type === "text";
@@ -523,6 +532,11 @@ function editingApplicableStyleValues(payload, target){
     ? payload.entries : Object.entries(payload.values || {}).map(([field,value]) =>
       ({field,value,origin:"direct",operation:"set"}));
   const compatible = sourceEntries.filter(entry => editingStyleFieldCompatible(payload,target,entry.field))
+    .filter(entry => entry.field !== "styleClassId" || !entry.value ||
+      typeof styleClassById !== "function" || styleClassCompatible(styleClassById(entry.value),target))
+    .filter(entry => entry.field !== "modifierClassIds" || !Array.isArray(entry.value) ||
+      typeof styleClassById !== "function" || entry.value.some(id =>
+        styleClassCompatible(styleClassById(id),target)))
     .map(entry => ({...entry, value:entry.value == null ? entry.value :
       JSON.parse(JSON.stringify(entry.value))}));
   if (kind !== "node" || nodeSupportsManualHeight(target)) return compatible;

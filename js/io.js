@@ -94,6 +94,8 @@ function newDoc(){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = typeof defaultMetadata === "function" ? defaultMetadata() : undefined;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  state.styles = typeof defaultStyleSystem === "function" ? defaultStyleSystem() : undefined;
+  if (typeof ensureStyleSystem === "function") ensureStyleSystem();
   state.formatting = typeof defaultConditionalFormatting === "function"
     ? defaultConditionalFormatting() : undefined;
   if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();

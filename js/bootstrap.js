@@ -77,6 +77,7 @@ function seed(){
     {id:"f_rw_pts",  name:"points",      type:"INT",    pk:false, fk:false, nullable:false},
     {id:"f_rw_why",  name:"reason",      type:"VARCHAR(50)", pk:false, fk:false, nullable:true}]});
   const audit = N({type:"table", x:1310, y:155, title:"audit_log", color:"#6B7683", notes:"",
+    modifierClassIds:["class-deprecated"],
     collapsed:true, fields:[
       {id:"f_audit_pk", name:"audit_id", type:"BIGINT", pk:true, fk:false, nullable:false},
       {id:"f_audit_actor", name:"actor", type:"VARCHAR(80)", pk:false, fk:false, nullable:false}
@@ -142,6 +143,7 @@ function seed(){
   });
 
   const evidence = N({type:"note", x:830, y:605, title:"Launch decision",
+    styleClassId:"class-annotation",
      content:"## Why this matters\n- **Hypothesis:** tiers increase repeat orders\n- [x] Define the holdout\n- [ ] Review guardrails\n`owner: Growth + Data`",
      color:"#FFE9A8", fontSize:13, w:220});
   const approval = N({type:"status", x:1115, y:610, title:"Launch approval",
@@ -161,6 +163,7 @@ function seed(){
   const engine = N({type:"concept", x:1080, y:880, title:"Rules engine",
     subtitle:"Scoring + eligibility", icon:"emoji:⚙️", color:"#FFE9A8"});
   const decisionApi = N({type:"concept", x:1285, y:880, title:"Decision API", shape:"terminator",
+    styleClassId:"class-primary-system",
     subtitle:"Output decision", icon:"lucide:rocket", color:"#D8F3DC"});
 
   E(evidence, approval, "link", "Supports", null, null, {
@@ -334,6 +337,7 @@ function perfSeed(n = 500){
   state.nextId = 1;
   if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
   if (typeof defaultMetadata === "function") state.metadata = defaultMetadata();
+  if (typeof defaultStyleSystem === "function") state.styles = defaultStyleSystem();
   if (typeof defaultConditionalFormatting === "function")
     state.formatting = defaultConditionalFormatting();
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
@@ -353,6 +357,7 @@ buildScaffold();
 seed();
 if (typeof ensureOrganization === "function") ensureOrganization();
 if (typeof ensureMetadata === "function") ensureMetadata();
+if (typeof ensureStyleSystem === "function") ensureStyleSystem();
 if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
 if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
 ensureFieldIds();
@@ -361,11 +366,13 @@ initializeCommands();
 if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
 if (typeof initializeMetadataCommands === "function") initializeMetadataCommands();
+if (typeof initializeStyleSystemCommands === "function") initializeStyleSystemCommands();
 if (typeof initializeFormattingCommands === "function") initializeFormattingCommands();
 setupRibbon();
 if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 if (typeof initializeMetadataUi === "function") initializeMetadataUi();
+if (typeof initializeStyleSystemUi === "function") initializeStyleSystemUi();
 if (typeof initializeFormattingUi === "function") initializeFormattingUi();
 if (typeof initializeHistoryUi === "function") initializeHistoryUi();
 render();
@@ -466,6 +473,7 @@ window.__T = {
   nodeMenu,
   edgeMenu,
   nodeSize,
+  nodeTextSize,
   edgeRelationshipValue,
   edgeRelationshipSelect,
   nodeAnchor,
@@ -737,6 +745,79 @@ window.__T = {
   get metadataCsvPreview(){ return metadataCsvPreview; },
   invalidateMetadataEvaluation,
   defaultMetadata,
+  STYLE_SCHEMA_VERSION,
+  STYLE_LIBRARY_SCHEMA_VERSION,
+  STYLE_PROPERTY_DEFINITIONS,
+  defaultStyleSystem,
+  normalizeStyleSystem,
+  cleanStyleSystemForDocument,
+  ensureStyleSystem,
+  styleTokens,
+  styleTokenById,
+  styleClasses,
+  styleClassById,
+  styleComponents,
+  styleComponentById,
+  styleTemplates,
+  styleTemplateById,
+  styleResolveToken,
+  styleClassChain,
+  styleResolveAppearance,
+  styleEffectiveValue,
+  styleExplainObject,
+  styleValidateToken,
+  styleValidateClass,
+  styleValidateSystem,
+  styleTokenConsumers,
+  styleClassConsumers,
+  styleComponentInstances,
+  styleUnusedDefinitions,
+  styleDefinitionImpact,
+  styleCreateToken,
+  styleUpdateToken,
+  styleDeleteToken,
+  styleDuplicateToken,
+  styleCreateClass,
+  styleUpdateClass,
+  styleDeleteClass,
+  styleDuplicateClass,
+  styleApplyClass,
+  styleToggleModifier,
+  styleApplyToken,
+  stylePromoteObjectProperty,
+  styleCreateClassFromObject,
+  styleExportLibraryPackage,
+  styleAnalyzeLibraryImport,
+  styleImportLibraryPackage,
+  stylePreviewLibraryUpdate,
+  styleDetachLibraryItem,
+  styleClipboardDependencies,
+  stylePlanClipboardDependencies,
+  styleImportClipboardDependencies,
+  styleCreateComponentFromSelection,
+  styleInsertComponent,
+  styleComponentDiff,
+  stylePreviewComponentUpdate,
+  styleApplyComponentUpdate,
+  styleUpdateComponentFromSelection,
+  styleDetachComponentInstance,
+  styleMarkComponentOverride,
+  styleValidateTemplateValues,
+  stylePreviewTemplate,
+  styleInstantiateTemplate,
+  styleCreateTemplate,
+  styleUpdateTemplate,
+  styleDeleteTemplate,
+  styleRepairReferences,
+  styleInvalidateObjects,
+  styleInvalidateAll,
+  styleInvalidateTransaction,
+  openStyleManager,
+  closeStyleManager,
+  renderStyleManager,
+  get styleManagerOpen(){ return styleManagerOpen; },
+  get styleManagerMode(){ return styleManagerMode; },
+  get styleStats(){ return {...styleStats}; },
   FORMATTING_SCHEMA_VERSION,
   defaultConditionalFormatting,
   normalizeConditionalFormatting,
@@ -767,6 +848,7 @@ window.__T = {
   formattingSetManualValue,
   formattingClearManualOverride,
   formattingInvalidateObject,
+  formattingInvalidateAppearanceIds,
   formattingInvalidateAll,
   formattingInvalidateTransaction,
   formattingContrastRatio,

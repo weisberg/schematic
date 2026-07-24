@@ -2,10 +2,26 @@
 
 /* --------------------------- Geometry ----------------------------- */
 function clampSize(v, lo, hi){ v = parseFloat(v); if (!isFinite(v)) v = lo; return Math.min(hi, Math.max(lo, v)); }
-function conceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
-function noteFont(n){ return clampSize(n.fontSize || NOTE_FS_DEFAULT, 10, 28); }
-function textBoxFont(n){ return clampSize(n.fontSize || TEXT_FS_DEFAULT, 10, 72); }
-function statusNodeFont(n){ return clampSize(n.fontSize || STATUS_FS_DEFAULT, 10, 72); }
+function rawConceptFont(n){ return clampSize(n.fontSize || CONCEPT_FS_DEFAULT, 9, 48); }
+function rawNoteFont(n){ return clampSize(n.fontSize || NOTE_FS_DEFAULT, 10, 28); }
+function rawTextBoxFont(n){ return clampSize(n.fontSize || TEXT_FS_DEFAULT, 10, 72); }
+function rawStatusNodeFont(n){ return clampSize(n.fontSize || STATUS_FS_DEFAULT, 10, 72); }
+function rawTableFont(n){ return clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28); }
+function rawNodeTextSize(n){ return n.type === "concept" ? rawConceptFont(n)
+  : n.type === "note" ? rawNoteFont(n) : n.type === "text" ? rawTextBoxFont(n)
+  : n.type === "status" ? rawStatusNodeFont(n) : rawTableFont(n); }
+function styledNodeFont(n,raw,lo,hi){
+  if (n.styleOverrides?.fontSize) return clampSize(raw,lo,hi);
+  const hasReference=!!n.styleTokenRefs?.fontSize || !!n.styleClassId ||
+    (Array.isArray(n.modifierClassIds) && n.modifierClassIds.length > 0);
+  if (!hasReference || typeof styleEffectiveValue !== "function") return clampSize(raw,lo,hi);
+  const value=styleEffectiveValue(n,"fontSize",raw);
+  return clampSize(value,lo,hi);
+}
+function conceptFont(n){ return styledNodeFont(n,rawConceptFont(n),9,48); }
+function noteFont(n){ return styledNodeFont(n,rawNoteFont(n),10,28); }
+function textBoxFont(n){ return styledNodeFont(n,rawTextBoxFont(n),10,72); }
+function statusNodeFont(n){ return styledNodeFont(n,rawStatusNodeFont(n),10,72); }
 function nodeTextSize(n){ return n.type === "concept" ? conceptFont(n) : n.type === "note" ? noteFont(n)
   : n.type === "text" ? textBoxFont(n) : n.type === "status" ? statusNodeFont(n) : tableMetrics(n).base; }
 function clampNodeTextSize(n, value){
@@ -659,7 +675,7 @@ function statusBandContainsPoint(n, point){
 }
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
-  const base = clampSize(n.fontSize || TABLE_FS_DEFAULT, 8, 28);
+  const base = styledNodeFont(n,rawTableFont(n),8,28);
   const rowH = Math.round(base * 2);
   const headerH = Math.round(base * 2.96);
   const bs = Math.max(7, base - 3.5);

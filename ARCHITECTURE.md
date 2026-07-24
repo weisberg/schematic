@@ -27,12 +27,13 @@ requires no bundler, package installation, or server runtime.
 | 9 | `js/search.js` | Model-backed search index, structured queries, result navigation, discovery, and safe replacement previews |
 | 10 | `js/organization.js` | Object Explorer, layers, explicit groups, effective visibility/locking, organization commands, and export filtering |
 | 11 | `js/metadata.js` | Typed property/type registry, formulas, validation, metadata inspector, schema manager, and object table |
-| 12 | `js/conditional-formatting.js` | Typed visual rules, deterministic cascade and provenance, saved lenses, legends, and semantic zoom |
-| 13 | `js/editing.js` | Capability-driven transforms, style transfer, selection queries, grid/guides, shortcut preferences, and layout preview |
-| 14 | `js/history.js` | Durable transactions, portable checkpoints, local automatic retention, visual diff, and restoration |
-| 15 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
-| 16 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
-| 17 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
+| 12 | `js/style-system.js` | Design tokens, reusable classes, offline libraries, templates, component definitions/instances, and shared style provenance |
+| 13 | `js/conditional-formatting.js` | Typed visual rules layered above the style system, saved lenses, legends, and semantic zoom |
+| 14 | `js/editing.js` | Capability-driven transforms, style-reference transfer, selection queries, grid/guides, shortcut preferences, and layout preview |
+| 15 | `js/history.js` | Durable transactions, portable checkpoints, local automatic retention, visual diff, and restoration |
+| 16 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
+| 17 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
+| 18 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
 
 The order is an architectural contract. Earlier files may declare functions that call later-file
 functions, but those calls must not execute until `bootstrap.js` runs after every declaration has

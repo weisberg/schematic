@@ -1302,9 +1302,19 @@ function closeInlineEditor(commit){
         const n = nodeById(editor.id);
         if (n && n.type === "table") target.name = value;
         else target.text = value;
+        if (n && typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(n,n.type === "table" ? "fields" : "items",true);
       }
-      else if (editor.kind === "node") target.title = value;
-      else target.label = value;
+      else if (editor.kind === "node"){
+        target.title = value;
+        if (typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(target,"title",true);
+      }
+      else {
+        target.label = value;
+        if (typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(target,"label",true);
+      }
       render();
     }
   }

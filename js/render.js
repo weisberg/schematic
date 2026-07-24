@@ -1058,9 +1058,16 @@ function drawStatusNode(g, n, r, selected, t){
               "data-status-outline":"1"}, g);
 
   const decorated = !!layout.decoration.icon || layout.subtitleLines.length > 0;
-  if (layout.decoration.icon)
-    drawNodeIcon(g, layout.decoration.icon, layout.iconX, layout.iconY,
-      layout.decoration.iconSize, bodyInk);
+  if (layout.decoration.icon){
+    const requested=typeof formattingEffectiveValue === "function"
+      ? Number(formattingEffectiveValue(n,"iconSize",layout.decoration.iconSize))
+      : layout.decoration.iconSize;
+    const size=Number.isFinite(requested) ? Math.max(10,Math.min(96,requested))
+      : layout.decoration.iconSize;
+    drawNodeIcon(g, layout.decoration.icon,
+      layout.iconX+(layout.decoration.iconSize-size)/2,
+      layout.iconY+(layout.decoration.iconSize-size)/2,size,bodyInk);
+  }
   const title = el("text", {"text-anchor":decorated ? layout.textAnchor : "middle",
               fill:bodyInk, "pointer-events":"none",
               "font-family":"Archivo, sans-serif", "font-size":layout.fs, "font-weight":600,
@@ -1217,9 +1224,16 @@ function drawNode(n){
                 "stroke-width": selected ? 2.2 : 1.2});
     if (wrapped){
       const decorated = !!wrapped.decoration;
-      if (decorated && wrapped.decoration.icon)
-        drawNodeIcon(g, wrapped.decoration.icon, wrapped.iconX, wrapped.iconY,
-          wrapped.decoration.iconSize, fc);
+      if (decorated && wrapped.decoration.icon){
+        const requested=typeof formattingEffectiveValue === "function"
+          ? Number(formattingEffectiveValue(n,"iconSize",wrapped.decoration.iconSize))
+          : wrapped.decoration.iconSize;
+        const size=Number.isFinite(requested) ? Math.max(10,Math.min(96,requested))
+          : wrapped.decoration.iconSize;
+        drawNodeIcon(g, wrapped.decoration.icon,
+          wrapped.iconX+(wrapped.decoration.iconSize-size)/2,
+          wrapped.iconY+(wrapped.decoration.iconSize-size)/2,size,fc);
+      }
       const titleText = el("text", {"text-anchor":decorated ? wrapped.textAnchor : "middle",
                   fill:fc, "pointer-events":"none",
                   "font-family":"Archivo, sans-serif", "font-size":fs, "font-weight":600,
