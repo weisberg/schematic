@@ -40,6 +40,7 @@ function addNode(type, x, y, opts = {}){
     n.x = x - r.w/2;
     n.y = y - r.h/2;
   }
+  if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(n);
   state.nodes.push(n);
   setSelection("node", n.id);
   render();
@@ -54,6 +55,7 @@ function addSwimlane(orientation, x, y){
 }
 function setFrameCollapsed(frame, collapsed, opts = {}){
   if (!frame || frame.type !== "frame") return false;
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(frame)) return false;
   const next = collapsed === true;
   if ((frame.collapsed === true) === next) return false;
   if (opts.history !== false) pushHistory();
@@ -67,6 +69,7 @@ function addNodeCentered(type, point, opts = {}){
 }
 function addTodoItem(n){
   if (!n || n.type !== "todo") return null;
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(n)) return null;
   pushHistory();
   const item = { id:uid(), text:"New item" };
   n.items.push(item);
@@ -84,6 +87,8 @@ function addEdge(from, to){
   }
   let a = nodeById(from.id), b = nodeById(to.id);
   if (!a || !b || isStructuralNode(a) || isStructuralNode(b)) return;
+  if (typeof organizationCanMutateObject === "function" &&
+      (!organizationCanMutateObject(a) || !organizationCanMutateObject(b))) return;
   const key = ep => [ep.id, ep.fieldId || "", ep.portId || ""].join(":");
   const dup = state.edges.some(e => {
     const ef = [e.from, e.fromField || "", e.fromPort || ""].join(":");
@@ -101,6 +106,7 @@ function addEdge(from, to){
     if (fa && fb && !fa.pk && fb.pk){ const t = from; from = to; to = t; }
   }
   const e = { id: uid(), from: from.id, to: to.id, kind, label:"" };
+  if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(e);
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;
   if (!e.fromField && from.portId) e.fromPort = from.portId;
@@ -114,6 +120,7 @@ function addEdge(from, to){
 }
 function deleteSelection(){
   if (!sel) return;
+  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
   pushHistory();
   if (sel.kind === "node"){
     const ids = new Set(selectionIds("node"));
@@ -129,6 +136,7 @@ function deleteSelection(){
 function duplicateSelection(){
   const ids = selectionIds("node");
   if (!ids.length) return;
+  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
   pushHistory();
   const result = pastePayload(cloneSelectionPayload(ids), 36, false);
   setSelection("node", result.nodeIds);
@@ -216,7 +224,10 @@ function copySelection(cut = false){
     if (navigator.clipboard && navigator.clipboard.writeText)
       navigator.clipboard.writeText(text).catch(() => {});
   } catch {}
-  if (cut) deleteSelection();
+  if (cut){
+    if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
+    deleteSelection();
+  }
   return true;
 }
 function pasteSelection(){
@@ -229,6 +240,7 @@ function pasteSelection(){
 function alignSelection(mode){
   const nodes = selectedNodes();
   if (nodes.length < 2) return false;
+  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
   pushHistory();
   const entries = nodes.map(n => ({ n, r:nodeRect(n) }));
   if (mode === "left"){
@@ -260,6 +272,7 @@ function alignSelection(mode){
 function matchSelectionWidths(mode){
   const nodes = selectedNodes();
   if (nodes.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
+  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
   const widths = nodes.map(n => nodeRect(n).w);
   const rawTarget = mode === "smallest" ? Math.min(...widths)
                   : mode === "largest" ? Math.max(...widths)
@@ -274,6 +287,7 @@ function resetSelectionSizes(){
   const nodes = selectedNodes();
   const forced = nodes.filter(hasForcedNodeSize);
   if (!forced.length) return false;
+  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
   pushHistory();
   for (const node of forced){
     resetNodeWidth(node);
@@ -342,6 +356,11 @@ function layoutMindMapTree(){
   if (!root) return false;
   const scope = conceptTreeScope(root.id);
   if (!scope.ids.length) return false;
+  if (typeof organizationObjectLocked === "function" &&
+      scope.ids.map(nodeById).filter(Boolean).some(organizationObjectLocked)){
+    announce("Unlock every object in this tree before laying it out.");
+    return false;
+  }
   const sizes = new Map(scope.ids.map(id => [id, nodeRect(nodeById(id))]));
   const maxW = Math.max(...scope.ids.map(id => sizes.get(id).w));
   const gapX = maxW + 90;
@@ -399,6 +418,10 @@ function schemaDagEdges(tables){
 function layoutSchemaTables(){
   const tables = state.nodes.filter(n => n.type === "table");
   if (!tables.length) return false;
+  if (typeof organizationObjectLocked === "function" && tables.some(organizationObjectLocked)){
+    announce("Unlock every table before laying out the schema.");
+    return false;
+  }
   const dagEdges = schemaDagEdges(tables);
   const parents = new Map(tables.map(n => [n.id, []]));
   const children = new Map(tables.map(n => [n.id, []]));
@@ -466,6 +489,7 @@ function layoutSchemaTables(){
 function addRelatedTable(parentId){
   const p = nodeById(parentId);
   if (!p || p.type !== "table") return;
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(p)) return;
   const r = nodeRect(p);
   pushHistory();
   const ppk = p.fields.find(f => f.pk);
@@ -475,10 +499,15 @@ function addRelatedTable(parentId){
               fields:[{id: uid(), name:"id", type:"SERIAL", pk:true, fk:false, nullable:false}] };
   const fk = { id: uid(), name: fkName, type:"INT", pk:false, fk:true, nullable:false };
   n.fields.push(fk);
+  if (typeof organizationAssignActiveLayer === "function"){
+    organizationSetObjectLayer(n, organizationObjectLayerId(p));
+  }
   state.nodes.push(n);
   const e = { id: uid(), from: p.id, to: n.id, kind:"1:N", label:"", toField: fk.id };
   if (ppk) e.fromField = ppk.id;
   e.pairs = [{ fromField:e.fromField || "", toField:e.toField || "" }];
+  if (typeof organizationAssignActiveLayer === "function")
+    organizationSetObjectLayer(e, organizationObjectLayerId(p));
   state.edges.push(e);
   setSelection("node", n.id);
   render();
@@ -488,6 +517,7 @@ function addRelatedTable(parentId){
 function reorderNode(id, toFront){
   const i = state.nodes.findIndex(n => n.id === id);
   if (i < 0) return;
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(state.nodes[i])) return;
   pushHistory();
   const [n] = state.nodes.splice(i, 1);
   if (toFront) state.nodes.push(n); else state.nodes.unshift(n);
@@ -496,14 +526,20 @@ function reorderNode(id, toFront){
 function addChildConcept(){
   const p = firstSelectedNode();
   if (!p || isStructuralNode(p)) return;
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(p)) return;
   const r = nodeRect(p);
   pushHistory();
   const siblings = state.edges.filter(e => e.from === p.id).length;
   const n = { id: uid(), type:"concept", x: r.x + r.w + 90,
               y: r.y + siblings*64 - 20, title:"New idea", notes:"",
               color: p.type === "concept" ? p.color : conceptColors()[0] };
+  if (typeof organizationAssignActiveLayer === "function")
+    organizationSetObjectLayer(n, organizationObjectLayerId(p));
   state.nodes.push(n);
-  state.edges.push({ id: uid(), from: p.id, to: n.id, kind:"link", label:"" });
+  const edge = { id: uid(), from: p.id, to: n.id, kind:"link", label:"" };
+  if (typeof organizationAssignActiveLayer === "function")
+    organizationSetObjectLayer(edge, organizationObjectLayerId(p));
+  state.edges.push(edge);
   setSelection("node", n.id);
   render();
   focusTitleInput();

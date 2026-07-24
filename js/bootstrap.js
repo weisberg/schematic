@@ -2,6 +2,8 @@
 
 /* --------------------------- Seed data ---------------------------- */
 function seed(){
+  if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
+  if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   const N = (o) => { o.id = uid(); state.nodes.push(o); return o.id; };
   const E = (from, to, kind, label, fromField, toField, options = {}) => {
     const e = {id: uid(), from, to, kind, label: label||""};
@@ -183,6 +185,8 @@ function perfSeed(n = 500){
   state.nodes = [];
   state.edges = [];
   state.nextId = 1;
+  if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
+  if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   clearSelection();
   for (let i = 0; i < n; i++){
     state.nodes.push({ id:uid(), type:"table", x:(i%25)*230, y:Math.floor(i/25)*130,
@@ -197,9 +201,12 @@ function perfSeed(n = 500){
 /* ----------------------------- Init ------------------------------- */
 buildScaffold();
 seed();
+if (typeof ensureOrganization === "function") ensureOrganization();
 ensureFieldIds();
 initializeCommands();
+if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
 setupRibbon();
+if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 render();
 syncHistoryButtons();
 updateDocLabel();
@@ -467,6 +474,52 @@ window.__T = {
   openHiddenSearch,
   openOffCanvasSearch,
   openDuplicateNameSearch,
+  ensureOrganization,
+  cleanOrganizationForDocument,
+  normalizeOrganization,
+  organizationLayers,
+  organizationGroups,
+  organizationLayerById,
+  organizationGroupById,
+  organizationGroupAncestors,
+  organizationGroupLayerId,
+  organizationObjectLayerId,
+  organizationObjectLayer,
+  organizationLayerOpacity,
+  organizationObjectHidden,
+  organizationObjectLocked,
+  organizationEffectiveEvaluation,
+  invalidateOrganizationEvaluation,
+  organizationalHiddenNodeIds,
+  hiddenCanvasNodeIds,
+  organizationAssignActiveLayer,
+  organizationSetObjectLayer,
+  organizationSetNodeGroup,
+  organizationGroupDescendants,
+  organizationGroupMemberNodes,
+  organizationSetGroupParent,
+  createOrganizationLayer,
+  createOrganizationGroupFromSelection,
+  ungroupOrganizationGroup,
+  deleteOrganizationGroupContents,
+  duplicateOrganizationGroup,
+  organizationReorderGroup,
+  organizationSetHidden,
+  organizationSetLocked,
+  organizationShowAll,
+  organizationRevealSelection,
+  organizationIsolateCurrent,
+  organizationAllRows,
+  organizationFilteredRows,
+  organizationApplyDrop,
+  objectExplorerOpen,
+  setObjectExplorerOpen,
+  toggleObjectExplorer,
+  renderOrganizationExplorer,
+  filterOrganizationExportClone,
+  get organizationIsolation(){ return organizationIsolation ? {...organizationIsolation} : null; },
+  get organizationExplorerTarget(){ return organizationExplorerTarget ? {...organizationExplorerTarget} : null; },
+  get organizationFlatRows(){ return organizationFlatCache.map(row => ({...row})); },
   get searchResults(){ return searchResults.map(result => ({...result})); },
   get searchProposal(){ return searchProposal ? searchProposal.map(change => ({...change})) : null; },
   get searchIndexGeneration(){ return searchIndexGeneration; },

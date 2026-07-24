@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.38.0";
+const APP_VERSION = "v1.39.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -640,7 +640,8 @@ function conceptContainsPoint(n, r, point){
 }
 /* topmost node (and row, for tables/todos) under a world point */
 function hitTest(w){
-  const hidden = collapsedFrameHiddenNodeIds();
+  const hidden = typeof hiddenCanvasNodeIds === "function"
+    ? hiddenCanvasNodeIds() : collapsedFrameHiddenNodeIds();
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
     if (isStructuralNode(n) || hidden.has(n.id)) continue;
@@ -674,9 +675,17 @@ function textW(str, font){
 }
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({nodes:state.nodes, edges:state.edges, nextId:state.nextId, meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}}); }
+function snapshot(){ return JSON.stringify({
+  nodes:state.nodes,
+  edges:state.edges,
+  nextId:state.nextId,
+  organization:typeof cleanOrganizationForDocument === "function"
+    ? cleanOrganizationForDocument(state.organization) : state.organization,
+  meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}
+}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
+  if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   if (coalesceKey != null){
     const now = Date.now();
     if (coalesce.key === coalesceKey && now - coalesce.t < 1000){ coalesce.t = now; return; }
@@ -693,6 +702,8 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
+  state.organization = s.organization;
+  if (typeof ensureOrganization === "function") ensureOrganization();
   setCustomStatuses(s.meta ? s.meta.customStatuses : []);
   for (const n of state.nodes) if (n && n.type === "status") normalizeNodeStatus(n);
   applyColorScheme(s.meta ? s.meta.colorScheme : null);
@@ -836,6 +847,8 @@ function documentObject(){
     edges:state.edges.map(cleanEdgeForDocument),
     nextId:state.nextId
   };
+  if (typeof cleanOrganizationForDocument === "function")
+    d.organization = cleanOrganizationForDocument(state.organization);
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
   if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
@@ -847,7 +860,10 @@ function serializeDocument(){
   return JSON.stringify(documentObject(), null, 2);
 }
 function nextIdFromDocument(d){
-  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges)
+  const organizationRecords = d.organization && typeof d.organization === "object"
+    ? [...(Array.isArray(d.organization.layers) ? d.organization.layers : []),
+       ...(Array.isArray(d.organization.groups) ? d.organization.groups : [])] : [];
+  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges, organizationRecords)
     .map(x => parseInt(String(x.id).replace(/\D/g,"")) || 0)) + 1);
 }
 function migrateDocument(d){
@@ -864,12 +880,15 @@ function migrateDocument(d){
   if (!Array.isArray(out.nodes) || !Array.isArray(out.edges)) throw new Error("bad shape");
   const result = { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
   if (out.meta && typeof out.meta === "object") result.meta = out.meta;
+  if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   return result;
 }
 function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
+  state.organization = migrated.organization;
+  if (typeof ensureOrganization === "function") ensureOrganization();
   setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
   for (const n of state.nodes){
     if (!n) continue;

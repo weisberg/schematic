@@ -25,9 +25,10 @@ requires no bundler, package installation, or server runtime.
 | 7 | `js/inspector.js` | Inspector rendering, edge endpoint controls, field/item editors, palettes, and reusable UI controls |
 | 8 | `js/io.js` | Open/save, SQL, linting, DDL/CSV import, Mermaid/Markdown/SVG, and PNG export |
 | 9 | `js/search.js` | Model-backed search index, structured queries, result navigation, discovery, and safe replacement previews |
-| 10 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
-| 11 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
-| 12 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
+| 10 | `js/organization.js` | Object Explorer, layers, explicit groups, effective visibility/locking, organization commands, and export filtering |
+| 11 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
+| 12 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
+| 13 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
 
 The order is an architectural contract. Earlier files may declare functions that call later-file
 functions, but those calls must not execute until `bootstrap.js` runs after every declaration has

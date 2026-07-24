@@ -719,11 +719,14 @@ function collapsedFrameProxyMap(hidden = collapsedFrameHiddenNodeIds()){
   }
   return proxies;
 }
-function visibleCanvasNodes(hidden = collapsedFrameHiddenNodeIds()){
+function visibleCanvasNodes(hidden = null){
+  if (hidden == null) hidden = typeof hiddenCanvasNodeIds === "function"
+    ? hiddenCanvasNodeIds() : collapsedFrameHiddenNodeIds();
   return state.nodes.filter(n => !hidden.has(n.id));
 }
 function visibleCanvasEdges(hidden = collapsedFrameHiddenNodeIds(), proxies = collapsedFrameProxyMap(hidden)){
   return state.edges.filter(e => {
+    if (typeof organizationObjectHidden === "function" && organizationObjectHidden(e)) return false;
     const fromProxy = hidden.has(e.from) ? proxies.get(e.from) : null;
     const toProxy = hidden.has(e.to) ? proxies.get(e.to) : null;
     if ((hidden.has(e.from) && !fromProxy) || (hidden.has(e.to) && !toProxy)) return false;
@@ -734,7 +737,10 @@ function documentBounds(nodes = null){
   const wholeDocument = nodes == null || nodes === state.nodes;
   const hidden = wholeDocument ? collapsedFrameHiddenNodeIds() : null;
   const proxies = wholeDocument ? collapsedFrameProxyMap(hidden) : null;
-  const boundedNodes = wholeDocument ? visibleCanvasNodes(hidden) : nodes;
+  const organizationHidden = wholeDocument && typeof organizationalHiddenNodeIds === "function"
+    ? organizationalHiddenNodeIds() : new Set();
+  const combinedHidden = wholeDocument ? new Set([...hidden, ...organizationHidden]) : null;
+  const boundedNodes = wholeDocument ? visibleCanvasNodes(combinedHidden) : nodes;
   if (!boundedNodes.length) return null;
   let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
   for (const n of boundedNodes){

@@ -469,6 +469,7 @@ function renderNodeNotesField(n){
 function renderInspector(){
   updateInspectorVisibility();
   inspBody.innerHTML = "";
+  document.getElementById("inspector")?.classList.remove("organization-locked");
   updateInspectorSectionToggle();
   inspectorMount = inspBody;
   colorPickerSequence = 0;
@@ -482,6 +483,7 @@ function renderInspector(){
                : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note"
                : n.type === "text" ? "Plain text" : n.type === "status" ? "Status node" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
+    if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
 
     if (n.type === "swimlane"){
       inspectorSection("swimlane:basics", "Basics", () => {
@@ -824,6 +826,7 @@ function renderInspector(){
     if (!e){ clearSelection(); renderHelp(); return; }
     const a = nodeById(e.from), b = nodeById(e.to);
     setInspectorHeader("Edge", `${a.title} → ${b.title}`, {kind:"edge"});
+    if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(e);
     const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
       const rows = fid ? nodeRows(n) : null;
@@ -981,12 +984,14 @@ function renderInspector(){
       render();
     })], mkBtn("Delete edge", deleteSelection, "dangerbtn"), {inlineDanger:true});
   }
+  if (typeof applyOrganizationInspectorLockState === "function") applyOrganizationInspectorLockState();
 }
 
 function renderMultiInspector(){
   const nodes = selectedNodes();
   const nonStructural = nodes.filter(n => !isStructuralNode(n));
   setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
+  if (typeof renderOrganizationMultiInspector === "function") renderOrganizationMultiInspector(nodes);
   if (nodes.every(n => n.type === "status")){
     inspectorSection("multi:status", "Status", () => {
       frow("Status", () => {
@@ -1870,17 +1875,27 @@ function mkFlag(txt, on, set){
 }
 /* redraw canvas without rebuilding inspector (keeps input focus) */
 function drawOnly(){
+  if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
   const hidden = collapsedFrameHiddenNodeIds();
+  const organizationHidden = typeof organizationalHiddenNodeIds === "function"
+    ? organizationalHiddenNodeIds() : new Set();
+  const allHidden = new Set([...hidden, ...organizationHidden]);
   const proxies = collapsedFrameProxyMap(hidden);
-  for (const n of state.nodes) if (!hidden.has(n.id) && isStructuralNode(n)) drawStructuralNode(n);
-  for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
-  for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
+  const structural = state.nodes.filter(n => !allHidden.has(n.id) && isStructuralNode(n));
+  for (const n of typeof organizationSortRecords === "function" ? organizationSortRecords(structural) : structural)
+    drawStructuralNode(n);
+  const edges = visibleCanvasEdges(hidden, proxies);
+  for (const e of typeof organizationSortRecords === "function" ? organizationSortRecords(edges) : edges)
+    drawEdge(e, hidden, proxies);
+  const content = state.nodes.filter(n => !allHidden.has(n.id) && !isStructuralNode(n));
+  for (const n of typeof organizationSortRecords === "function" ? organizationSortRecords(content) : content) drawNode(n);
   for (const n of state.nodes)
-    if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
+    if (!allHidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
   renderMinimap();
   if (typeof markSearchIndexDirty === "function") markSearchIndexDirty();
+  if (typeof scheduleOrganizationExplorerRender === "function") scheduleOrganizationExplorerRender();
 }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }

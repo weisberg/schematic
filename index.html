@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.38.0">
+<link rel="stylesheet" href="styles.css?v=1.39.0">
 </head>
 <body>
 <noscript>
@@ -293,6 +293,29 @@
 <div class="banner recovery" id="recoveryBanner" hidden></div>
 
 <main>
+  <aside id="objectExplorer" class="object-explorer" hidden aria-label="Object Explorer">
+    <div class="object-explorer-head">
+      <div>
+        <span class="object-explorer-kicker">Document</span>
+        <h2>Object Explorer</h2>
+      </div>
+      <button id="btnCloseObjectExplorer" type="button" aria-label="Close Object Explorer" title="Close">×</button>
+    </div>
+    <div class="object-explorer-tools">
+      <input id="objectExplorerFilter" type="search"
+             placeholder="Filter name, type, state, property…" aria-label="Filter objects">
+      <div class="object-explorer-toolrow" role="toolbar" aria-label="Object organization">
+        <button id="btnOrganizationGroup" type="button" title="Group selected nodes">Group</button>
+        <button id="btnOrganizationLayer" type="button" title="Add a layer">+ Layer</button>
+        <button id="btnOrganizationReveal" type="button" title="Reveal the selected object">Reveal</button>
+        <button id="btnOrganizationIsolate" type="button" title="Show only the current explorer target">Isolate</button>
+        <button id="btnOrganizationShowAll" type="button" title="Show every hidden object">Show all</button>
+      </div>
+    </div>
+    <div id="objectExplorerTree" class="object-explorer-tree" role="tree"
+         aria-label="Pages, layers, groups, objects, and relationships" tabindex="0"></div>
+    <div id="objectExplorerProperties" class="object-explorer-properties" aria-live="polite"></div>
+  </aside>
   <div id="canvasWrap">
     <svg id="board" xmlns="http://www.w3.org/2000/svg" tabindex="0" role="application" aria-label="Schematic canvas"></svg>
   </div>
@@ -332,17 +355,18 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.38.0"></script>
-<script src="js/icon-catalog.js?v=1.38.0"></script>
-<script src="js/geometry.js?v=1.38.0"></script>
-<script src="js/render.js?v=1.38.0"></script>
-<script src="js/model.js?v=1.38.0"></script>
-<script src="js/interactions.js?v=1.38.0"></script>
-<script src="js/inspector.js?v=1.38.0"></script>
-<script src="js/io.js?v=1.38.0"></script>
-<script src="js/search.js?v=1.38.0"></script>
-<script src="js/commands.js?v=1.38.0"></script>
-<script src="js/context-menu.js?v=1.38.0"></script>
-<script src="js/bootstrap.js?v=1.38.0"></script>
+<script src="js/core.js?v=1.39.0"></script>
+<script src="js/icon-catalog.js?v=1.39.0"></script>
+<script src="js/geometry.js?v=1.39.0"></script>
+<script src="js/render.js?v=1.39.0"></script>
+<script src="js/model.js?v=1.39.0"></script>
+<script src="js/interactions.js?v=1.39.0"></script>
+<script src="js/inspector.js?v=1.39.0"></script>
+<script src="js/io.js?v=1.39.0"></script>
+<script src="js/search.js?v=1.39.0"></script>
+<script src="js/organization.js?v=1.39.0"></script>
+<script src="js/commands.js?v=1.39.0"></script>
+<script src="js/context-menu.js?v=1.39.0"></script>
+<script src="js/bootstrap.js?v=1.39.0"></script>
 </body>
 </html>

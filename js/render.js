@@ -43,18 +43,22 @@ function applyView(){
 
 function render(){
   renderStats.full++;
+  if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   if (inlineStatusPicker) closeInlineStatusPicker();
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
   draftLayer.innerHTML = "";
   const hidden = collapsedFrameHiddenNodeIds();
+  const organizationHidden = typeof organizationalHiddenNodeIds === "function"
+    ? organizationalHiddenNodeIds() : new Set();
+  const allHidden = new Set([...hidden, ...organizationHidden]);
   const proxies = collapsedFrameProxyMap(hidden);
   let frames = 0, lanes = 0;
   const structuralNodes = state.nodes.filter(n => {
     if (n.type === "frame") frames++;
     else if (n.type === "swimlane") lanes++;
-    return !hidden.has(n.id) && isStructuralNode(n);
+    return !allHidden.has(n.id) && isStructuralNode(n);
   });
   /* Paint broad containers before smaller nested containers so the inner
      title, resize, and collapse controls remain reachable inside a parent. */
@@ -65,15 +69,21 @@ function render(){
            b.cy >= a.y && b.cy <= a.y + a.h;
   };
   structuralNodes.sort((a, b) => {
+    if (typeof organizationLayerRank === "function" && organizationLayerRank(a) !== organizationLayerRank(b))
+      return organizationLayerRank(a) - organizationLayerRank(b);
     if (containsStructuralCenter(a, b)) return -1;
     if (containsStructuralCenter(b, a)) return 1;
     return 0;
   });
   for (const n of structuralNodes) drawStructuralNode(n);
-  for (const e of visibleCanvasEdges(hidden, proxies)) drawEdge(e, hidden, proxies);
-  for (const n of state.nodes) if (!hidden.has(n.id) && !isStructuralNode(n)) drawNode(n);
+  const edges = visibleCanvasEdges(hidden, proxies);
+  for (const e of typeof organizationSortRecords === "function" ? organizationSortRecords(edges) : edges)
+    drawEdge(e, hidden, proxies);
+  const contentNodes = state.nodes.filter(n => !allHidden.has(n.id) && !isStructuralNode(n));
+  for (const n of typeof organizationSortRecords === "function"
+    ? organizationSortRecords(contentNodes) : contentNodes) drawNode(n);
   for (const n of state.nodes)
-    if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
+    if (!allHidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
   const nodes = state.nodes.length - frames - lanes;
   const structural = [frames ? `${frames} frame${frames === 1 ? "" : "s"}` : "",
@@ -84,6 +94,7 @@ function render(){
   renderInspector();
   updateAlignMenu();
   if (typeof refreshSearchIndex === "function") refreshSearchIndex();
+  if (typeof scheduleOrganizationExplorerRender === "function") scheduleOrganizationExplorerRender();
 }
 function fastDragRender(ids){
   renderStats.fast++;
@@ -708,7 +719,8 @@ function drawEdge(e, hidden = null, proxies = null){
   const t = themeColors();
   const color = edgeLineColor(e, t);
   const width = edgeLineWidth(e);
-  const attrs = {"data-edge":e.id, cursor:"pointer"};
+  const attrs = {"data-edge":e.id, cursor:"pointer",
+    ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(e) : {})};
   if (ep.proxyA) attrs["data-edge-proxy-from"] = ep.proxyA;
   if (ep.proxyB) attrs["data-edge-proxy-to"] = ep.proxyB;
   const g = el("g", attrs, edgeLayer);
@@ -768,7 +780,8 @@ function drawFrameCollapseControl(parent, n, r, collapsed, color){
 function drawCollapsedFrameControlOverlay(n){
   const r = nodeRect(n);
   const overlay = el("g", {"data-frame-collapse-overlay":n.id,
-                            transform:`translate(${r.x},${r.y})`}, nodeLayer);
+                            transform:`translate(${r.x},${r.y})`,
+                            ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(n) : {})}, nodeLayer);
   drawFrameCollapseControl(overlay, n, r, true, n.color || frameColorDefault());
 }
 function drawFrame(n){
@@ -782,7 +795,8 @@ function drawFrame(n){
   const layer = collapsed ? nodeLayer : frameLayer;
   const g = el("g", {"data-node":n.id, "data-frame":n.id,
                       "data-frame-collapsed":collapsed ? "true" : "false",
-                      transform:`translate(${r.x},${r.y})`, cursor:"grab"}, layer);
+                      transform:`translate(${r.x},${r.y})`, cursor:"grab",
+                      ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(n) : {})}, layer);
   el("rect", {width:r.w, height:r.h, rx:collapsed ? 9 : 14, fill:collapsed ? t.panel : color,
               "fill-opacity":collapsed ? 1 : .10,
               stroke:borderEnabled ? frameBorderColor(n) : "none",
@@ -827,7 +841,8 @@ function drawSwimlane(n){
   const titleColor = normalizeHex(n.titleColor) || SWIMLANE_DEFAULT.titleColor;
   const titleSize = Math.min(defaults.titleSize, orientation === "horizontal" ? r.w * .45 : r.h * .45);
   const g = el("g", {"data-node":n.id, "data-swimlane":n.id, "data-orientation":orientation,
-                      transform:`translate(${r.x},${r.y})`, cursor:"grab"}, frameLayer);
+                      transform:`translate(${r.x},${r.y})`, cursor:"grab",
+                      ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(n) : {})}, frameLayer);
   el("rect", {width:r.w, height:r.h, rx:10, fill:bodyColor,
               stroke:selected ? t.accent : t.ink2, "stroke-width":selected ? 2.4 : 1.4,
               "data-swimlane-body":"1"}, g);
@@ -1094,7 +1109,8 @@ function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
   const t = themeColors();
-  const g = el("g", {"data-node": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab"}, nodeLayer);
+  const g = el("g", {"data-node": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab",
+    ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(n) : {})}, nodeLayer);
 
   if (n.type === "concept"){
     const fs = conceptFont(n);
