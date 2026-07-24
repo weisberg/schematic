@@ -172,11 +172,23 @@ function metadataObjectTypeById(id){ return ensureMetadata().objectTypes.find(it
 function metadataRelationshipTypeById(id){
   return ensureMetadata().relationshipTypes.find(item => item.id === id) || null;
 }
-function metadataObjectKind(object){ return state.edges.includes(object) || (object && "from" in object) ? "edge" : "node"; }
-function metadataObjectById(id){ return nodeById(id) || edgeById(id); }
+function metadataObjectKind(object){
+  return state.edges.includes(object) || (object && ("from" in object || "fromSemanticId" in object))
+    ? "edge" : "node";
+}
+function metadataObjectById(id){
+  return nodeById(id) || edgeById(id) ||
+    (state.semanticObjects || []).find(object => object.id === id) ||
+    (state.semanticRelationships || []).find(object => object.id === id) || null;
+}
 function metadataObjectName(object){
   if (!object) return "Object";
   if (metadataObjectKind(object) === "node") return object.title || object.id;
+  if ("fromSemanticId" in object){
+    const from=(state.semanticObjects||[]).find(item=>item.id===object.fromSemanticId);
+    const to=(state.semanticObjects||[]).find(item=>item.id===object.toSemanticId);
+    return object.label || `${from?.title || object.fromSemanticId} → ${to?.title || object.toSemanticId}`;
+  }
   const from = nodeById(object.from), to = nodeById(object.to);
   return object.label || `${from?.title || object.from} → ${to?.title || object.to}`;
 }
@@ -1228,15 +1240,25 @@ function metadataCsvEscape(value){
   return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 function metadataTableObjects(){
-  let objects = [...state.nodes, ...state.edges];
+  const semanticIds=new Set((state.semanticObjects||[]).map(object=>object.id));
+  const relationshipIds=new Set((state.semanticRelationships||[]).map(object=>object.id));
+  const canonicalReady=state.nodes.every(node=>node.semanticId&&semanticIds.has(node.semanticId)) &&
+    state.edges.every(edge=>edge.relationshipId&&relationshipIds.has(edge.relationshipId));
+  let objects = canonicalReady && Array.isArray(state.semanticObjects) &&
+      Array.isArray(state.semanticRelationships) &&
+      (state.semanticObjects.length || state.semanticRelationships.length)
+    ? [...state.semanticObjects, ...state.semanticRelationships]
+    : [...state.nodes, ...state.edges];
   if (metadataPanelKind !== "all")
     objects = objects.filter(object => metadataObjectKind(object) === metadataPanelKind);
   if (metadataPanelSemanticType)
     objects = objects.filter(object => object.semanticTypeId === metadataPanelSemanticType);
   if (metadataPanelSelectionOnly){
     const selected = new Set([
-      ...selectionIds("node").map(id => `node:${id}`),
-      ...selectionIds("edge").map(id => `edge:${id}`)
+      ...selectionIds("node").map(id => nodeById(id)?.semanticId).filter(Boolean)
+        .map(id => `node:${id}`),
+      ...selectionIds("edge").map(id => edgeById(id)?.relationshipId).filter(Boolean)
+        .map(id => `edge:${id}`)
     ]);
     objects = objects.filter(object => selected.has(`${metadataObjectKind(object)}:${object.id}`));
   }
@@ -1619,6 +1641,21 @@ function renderMetadataTable(body){
     }
     const selectRow = event => {
       if (event.target.closest("input,select,button")) return;
+      if ((state.semanticObjects || []).includes(object)){
+        if (typeof pagesOpenAppearanceChooser === "function")
+          pagesOpenAppearanceChooser(object.id,pagesAppearances(object.id));
+        return;
+      }
+      if ((state.semanticRelationships || []).includes(object)){
+        const instance=pagesOrdered().flatMap(page=>page.edges.map(edge=>({page,edge})))
+          .find(entry=>entry.edge.relationshipId===object.id);
+        if(instance){
+          pagesSwitch(instance.page.id);
+          setSelection("edge",instance.edge.id);
+          render();
+        }
+        return;
+      }
       setSelection(metadataObjectKind(object), object.id);
       render();
     };

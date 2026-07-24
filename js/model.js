@@ -123,6 +123,8 @@ function addEdge(from, to){
 function deleteSelection(){
   if (!sel) return;
   if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
+  if (typeof pagesRemoveSelectionFromPage === "function")
+    return pagesRemoveSelectionFromPage();
   pushHistory();
   if (sel.kind === "node"){
     const ids = new Set(selectionIds("node"));
@@ -139,6 +141,8 @@ function duplicateSelection(){
   const ids = selectionIds("node");
   if (!ids.length) return;
   if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
+  if (typeof pagesDuplicateSelectionIndependent === "function")
+    return pagesDuplicateSelectionIndependent();
   pushHistory();
   const result = pastePayload(cloneSelectionPayload(ids), 36, false);
   setSelection("node", result.nodeIds);
@@ -149,6 +153,8 @@ function cloneSelectionPayload(ids){
   const nodes=state.nodes.filter(n => nodeIds.has(n.id));
   const edges=state.edges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
   return {
+    sourceDocumentId:state.documentId || null,
+    sourcePageId:state.activePageId || null,
     nodes:nodes.map(n => JSON.parse(JSON.stringify(n))),
     edges:edges.map(e => JSON.parse(JSON.stringify(e))),
     ...(typeof styleClipboardDependencies === "function"
@@ -201,7 +207,7 @@ function remapPayload(payload, offset = 36){
     }
     return e;
   }).filter(e => e.from && e.to);
-  return { nodes, edges, nodeIds:nodes.map(n => n.id) };
+  return { nodes, edges, nodeIds:nodes.map(n => n.id), edgeIds:edges.map(e => e.id) };
 }
 function pastePayload(payload, offset = 36, mutate = true){
   if (mutate) pushHistory();
@@ -255,6 +261,10 @@ function copySelection(cut = false){
 }
 function pasteSelection(){
   if (!clipboardData || !clipboardData.nodes || !clipboardData.nodes.length) return false;
+  if (typeof pagesPastePayload === "function"){
+    pagesPastePayload(clipboardData,"independent");
+    return true;
+  }
   const result = pastePayload(clipboardData, 36, true);
   setSelection("node", result.nodeIds);
   render();

@@ -8,7 +8,7 @@
 const SVGNS = "http://www.w3.org/2000/svg";
 const board = document.getElementById("board");
 const wrap  = document.getElementById("canvasWrap");
-const DOC_VERSION = 1;
+const DOC_VERSION = 2;
 const MIGRATIONS = {};
 const FSA = "showOpenFilePicker" in window && "showSaveFilePicker" in window;
 const RECOVERY_KEY = "schematic.recovery";
@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.44.0";
+const APP_VERSION = "v1.45.2";
 const DEFAULT_GRID_SIZE = 24;
 const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
@@ -705,22 +705,7 @@ function textW(str, font){
 }
 
 /* --------------------------- History ------------------------------ */
-function snapshot(){ return JSON.stringify({
-  nodes:state.nodes,
-  edges:state.edges,
-  nextId:state.nextId,
-  editing:typeof cleanEditingForDocument === "function"
-    ? cleanEditingForDocument(state.editing) : state.editing,
-  organization:typeof cleanOrganizationForDocument === "function"
-    ? cleanOrganizationForDocument(state.organization) : state.organization,
-  metadata:typeof cleanMetadataForDocument === "function"
-    ? cleanMetadataForDocument(state.metadata) : state.metadata,
-  styles:typeof cleanStyleSystemForDocument === "function"
-    ? cleanStyleSystemForDocument(state.styles) : state.styles,
-  formatting:typeof cleanConditionalFormattingForDocument === "function"
-    ? cleanConditionalFormattingForDocument(state.formatting) : state.formatting,
-  meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}
-}); }
+function snapshot(){ return serializeDocument({includeHistory:false}); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
@@ -741,22 +726,13 @@ function pushHistory(coalesceKey){
 }
 function restore(json){
   const s = JSON.parse(json);
-  state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
-  state.editing = s.editing;
-  if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
-  state.organization = s.organization;
-  if (typeof ensureOrganization === "function") ensureOrganization();
-  state.metadata = s.metadata;
-  if (typeof ensureMetadata === "function") ensureMetadata();
-  state.styles = s.styles;
-  if (typeof ensureStyleSystem === "function") ensureStyleSystem();
-  state.formatting = s.formatting;
-  if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
-  setCustomStatuses(s.meta ? s.meta.customStatuses : []);
-  for (const n of state.nodes) if (n && n.type === "status") normalizeNodeStatus(n);
-  applyColorScheme(s.meta ? s.meta.colorScheme : null);
-  applyTheme(s.meta && s.meta.theme ? s.meta.theme : "light", { render:false });
-  applyDialect(s.meta && s.meta.dialect ? s.meta.dialect : "ansi", { render:false });
+  const previousSelection = sel ? {kind:sel.kind,ids:[...sel.ids]} : null;
+  applyDocument(s,{
+    resetHistory:false,
+    preserveVersionHistory:true,
+    fit:false
+  });
+  if (previousSelection) setSelection(previousSelection.kind,previousSelection.ids);
   pruneSelection();
   render();
 }
@@ -929,6 +905,7 @@ function cleanNodeForDocument(n){
   return out;
 }
 function documentObject(opts = {}){
+  if (typeof pagesSyncActive === "function") pagesSyncActive({ui:false});
   const cleanNode = typeof cleanMetadataObjectForDocument === "function"
     ? node => cleanMetadataObjectForDocument(cleanNodeForDocument(node))
     : cleanNodeForDocument;
@@ -941,6 +918,8 @@ function documentObject(opts = {}){
     edges:state.edges.map(cleanEdge),
     nextId:state.nextId
   };
+  if (typeof pagesDocumentPayload === "function")
+    Object.assign(d,pagesDocumentPayload(cleanNode,cleanEdge));
   if (typeof cleanOrganizationForDocument === "function")
     d.organization = cleanOrganizationForDocument(state.organization);
   if (typeof cleanMetadataForDocument === "function"){
@@ -979,7 +958,9 @@ function nextIdFromDocument(d){
     ? [...(Array.isArray(d.metadata.properties) ? d.metadata.properties : []),
        ...(Array.isArray(d.metadata.objectTypes) ? d.metadata.objectTypes : []),
        ...(Array.isArray(d.metadata.relationshipTypes) ? d.metadata.relationshipTypes : [])] : [];
-  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges, organizationRecords, metadataRecords)
+  const nodes = Array.isArray(d.nodes) ? d.nodes : [];
+  const edges = Array.isArray(d.edges) ? d.edges : [];
+  return d.nextId || (Math.max(0, ...nodes.concat(edges, organizationRecords, metadataRecords)
     .map(x => parseInt(String(x.id).replace(/\D/g,"")) || 0)) + 1);
 }
 function migrateDocument(d){
@@ -994,7 +975,13 @@ function migrateDocument(d){
     out = migrate(out);
   }
   if (!Array.isArray(out.nodes) || !Array.isArray(out.edges)) throw new Error("bad shape");
-  const result = { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
+  const result = {
+    ...out,
+    version:DOC_VERSION,
+    nodes:out.nodes,
+    edges:out.edges,
+    nextId:nextIdFromDocument(out)
+  };
   if (out.meta && typeof out.meta === "object") result.meta = out.meta;
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
@@ -1014,6 +1001,7 @@ function applyDocument(d, opts = {}){
   if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
   if (typeof editingUpdateGridPattern === "function") editingUpdateGridPattern();
   state.organization = migrated.organization;
+  if (typeof pagesAdoptDocument === "function") pagesAdoptDocument(migrated);
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = migrated.metadata;
   if (typeof ensureMetadata === "function") ensureMetadata();
@@ -1131,8 +1119,9 @@ function applyDocument(d, opts = {}){
     redoStack.length = 0;
     syncHistoryButtons();
   }
+  if (typeof pagesSyncActive === "function") pagesSyncActive({ui:false});
   render();
-  fitView();
+  if (opts.fit !== false) fitView();
 }
 function importDocText(text, opts = {}){
   const parsed = JSON.parse(text);

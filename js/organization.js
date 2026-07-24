@@ -51,7 +51,7 @@ function normalizeOrganization(raw){
   const pageSource = source.page && typeof source.page === "object" ? source.page : {};
   const page = {
     ...pageSource,
-    id:ORGANIZATION_PAGE_ID,
+    id:String(pageSource.id || ORGANIZATION_PAGE_ID),
     name:organizationName(pageSource.name, "Current canvas")
   };
   const layers = [];
@@ -694,11 +694,23 @@ function organizationIsolateCurrent(){
 }
 function organizationResolveTarget(target){
   if (!target) return null;
+  if (target.pageId && target.pageId !== state.activePageId &&
+      typeof pagesPageById === "function"){
+    const page = pagesPageById(target.pageId);
+    if (!page) return null;
+    if (target.kind === "layer") return (page.organization?.layers || []).find(item => item.id === target.id) || null;
+    if (target.kind === "group") return (page.organization?.groups || []).find(item => item.id === target.id) || null;
+    if (target.kind === "node") return (page.nodes || []).find(item => item.id === target.id) || null;
+    if (target.kind === "edge") return (page.edges || []).find(item => item.id === target.id) || null;
+    if (target.kind === "page") return page;
+  }
   if (target.kind === "layer") return organizationLayerById(target.id);
   if (target.kind === "group") return organizationGroupById(target.id);
   if (target.kind === "node") return nodeById(target.id);
   if (target.kind === "edge") return edgeById(target.id);
-  if (target.kind === "page") return state.organization.page;
+  if (target.kind === "page")
+    return typeof pagesPageById === "function" ? pagesPageById(target.id) || state.organization.page
+      : state.organization.page;
   return null;
 }
 function organizationTargetLabel(target){
@@ -733,7 +745,7 @@ function organizationRow(kind, id, label, depth, parentKey, opts = {}){
   const key = `${kind}:${id}`;
   return {kind, id, key, label, depth, parentKey, ...opts};
 }
-function organizationAllRows(){
+function organizationCurrentPageRows(){
   ensureOrganization();
   const rows = [];
   const page = state.organization.page;
@@ -790,6 +802,75 @@ function organizationAllRows(){
           3, `relationships:${layer.id}`, {type:"edge"}));
       }
     }
+  }
+  return rows;
+}
+function organizationAllRows(){
+  if (typeof pagesOrdered !== "function") return organizationCurrentPageRows();
+  const rows = [];
+  for (const page of pagesOrdered()){
+    const pageKey = `page:${page.id}`;
+    rows.push(organizationRow("page",page.id,page.name,0,null,{
+      key:pageKey,pageId:page.id,expandable:true,
+      active:page.id === state.activePageId
+    }));
+    if (!organizationExpanded.has(page.id)) continue;
+    if (page.id === state.activePageId){
+      for (const row of organizationCurrentPageRows().slice(1)){
+        const oldParent = row.parentKey;
+        rows.push({
+          ...row,
+          pageId:page.id,
+          parentKey:oldParent && oldParent.startsWith("page:") ? pageKey
+            : oldParent || pageKey
+        });
+      }
+      continue;
+    }
+    const organization = page.organization || {};
+    for (const layer of organization.layers || []){
+      const layerKey=`${page.id}|layer:${layer.id}`;
+      const objects=(page.nodes||[]).filter(node => (node.layerId || ORGANIZATION_LAYER_ID) === layer.id);
+      const edges=(page.edges||[]).filter(edge => (edge.layerId || ORGANIZATION_LAYER_ID) === layer.id);
+      rows.push(organizationRow("layer",layer.id,layer.name,1,pageKey,{
+        key:layerKey,pageId:page.id,expandable:objects.length+edges.length>0,
+        expandKey:`${page.id}|layer:${layer.id}`
+      }));
+      if(!organizationExpanded.has(`${page.id}|layer:${layer.id}`))continue;
+      for(const node of objects)
+        rows.push(organizationRow("node",node.id,node.title||node.id,2,layerKey,{
+          key:`${page.id}|node:${node.id}`,pageId:page.id,type:node.type
+        }));
+      if(edges.length){
+        const relationKey=`${page.id}|relationships:${layer.id}`;
+        rows.push(organizationRow("relationships",layer.id,`Relationships (${edges.length})`,2,layerKey,{
+          key:relationKey,pageId:page.id,expandable:true,expandKey:relationKey
+        }));
+        if(organizationExpanded.has(relationKey)){
+          const byId=new Map((page.nodes||[]).map(node=>[node.id,node]));
+          for(const edge of edges){
+            const from=byId.get(edge.from),to=byId.get(edge.to);
+            rows.push(organizationRow("edge",edge.id,
+              edge.label||`${from?.title||edge.from} → ${to?.title||edge.to}`,3,relationKey,{
+                key:`${page.id}|edge:${edge.id}`,pageId:page.id,type:"edge"
+              }));
+          }
+        }
+      }
+    }
+  }
+  const modelOnly=typeof pagesCanonicalObjectsWithNoAppearances==="function"
+    ? pagesCanonicalObjectsWithNoAppearances() : [];
+  if(modelOnly.length){
+    const key="model-only";
+    rows.push(organizationRow("model","model-only",`Model only (${modelOnly.length})`,0,null,{
+      key,expandable:true,expandKey:key
+    }));
+    if(organizationExpanded.has(key))
+      for(const object of modelOnly)
+        rows.push(organizationRow("semantic",object.id,object.title||object.id,1,key,{
+          key:`semantic:${object.id}`,type:object.type||"concept"
+        }));
   }
   return rows;
 }
@@ -863,7 +944,7 @@ function organizationRowSelected(row){
     organizationExplorerTarget.kind === row.kind && organizationExplorerTarget.id === row.id;
 }
 function organizationRowExpandableKey(row){
-  return row.kind === "relationships" ? `relationships:${row.id}` : row.id;
+  return row.expandKey || (row.kind === "relationships" ? `relationships:${row.id}` : row.id);
 }
 function organizationToggleExpanded(row, force){
   if (!row.expandable) return;
@@ -873,7 +954,9 @@ function organizationToggleExpanded(row, force){
   renderOrganizationExplorer(true);
 }
 function organizationSelectRow(row, opts = {}){
-  organizationExplorerTarget = {kind:row.kind, id:row.id};
+  if (row.pageId && row.pageId !== state.activePageId && typeof pagesSwitch === "function")
+    pagesSwitch(row.pageId);
+  organizationExplorerTarget = {kind:row.kind, id:row.id, pageId:row.pageId || state.activePageId};
   if (row.kind === "node"){
     if (opts.toggle) toggleNodeSelection(row.id); else setSelection("node", row.id);
   } else if (row.kind === "edge"){
@@ -885,6 +968,12 @@ function organizationSelectRow(row, opts = {}){
     state.organization.activeLayerId = row.id;
     clearSelection();
     announce(`Active layer: ${row.label}`);
+  } else if (row.kind === "page" && typeof pagesSwitch === "function"){
+    pagesSwitch(row.id);
+    clearSelection();
+  } else if (row.kind === "semantic" && typeof pagesOpenAppearanceChooser === "function"){
+    pagesOpenAppearanceChooser(row.id,[]);
+    clearSelection();
   } else {
     clearSelection();
   }
@@ -907,6 +996,11 @@ function organizationRenameRow(row){
   const finish = commit => {
     if (!input.isConnected) return;
     if (commit){
+      if (row.kind === "page" && typeof pagesRename === "function"){
+        pagesRename(row.id,input.value);
+        renderOrganizationExplorer(true);
+        return;
+      }
       const property = row.kind === "node" ? "title" : "name";
       const value = organizationName(input.value, row.label);
       if (value !== object[property]){

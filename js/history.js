@@ -421,7 +421,8 @@ function historyDiffSnapshots(before, after){
   };
   compareCollection("node",left.nodes,right.nodes);
   compareCollection("edge",left.edges,right.edges);
-  for (const section of ["organization","metadata","styles","formatting","editing","meta"]){
+  for (const section of ["pages","semanticObjects","semanticRelationships","pageOrder",
+    "activePageId","tombstones","organization","metadata","styles","formatting","editing","meta"]){
     if (!historyEqual(left[section],right[section])){
       items.push(historyDiffItem("changed",section,"document",section,
         section[0].toUpperCase()+section.slice(1),left[section],right[section]));

@@ -60,7 +60,7 @@ const STYLE_DIRECT_FIELDS = Object.freeze({
 });
 const STYLE_PROTECTED_COMPONENT_FIELDS = new Set([
   "id","x","y","componentInstanceId","componentDefinitionId","componentChildId",
-  "componentVersion"
+  "componentVersion","semanticId","relationshipId","pageId"
 ]);
 const STYLE_INSTANCE_LOCAL_FIELDS = new Set([
   "x","y","w","h","manualWidth","manualHeight","widthBeforeMatch","rotation",
@@ -1502,7 +1502,8 @@ function styleComponentSnapshot(nodes,edges){
       row.componentFieldId=stableFieldId;
     }
     for (const field of ["componentInstanceId","componentDefinitionId","componentVersion",
-      "componentOverrides","componentUpdateAvailable"]) delete child[field];
+      "componentOverrides","componentUpdateAvailable","semanticId","relationshipId","pageId"])
+      delete child[field];
     return child;
   });
   const snapshotEdges=edges.filter(edge => nodeMap.has(edge.from) && nodeMap.has(edge.to))
@@ -1512,7 +1513,8 @@ function styleComponentSnapshot(nodes,edges){
       child.componentChildId=child.id;
       child.from=nodeMap.get(edge.from); child.to=nodeMap.get(edge.to);
       for (const field of ["componentInstanceId","componentDefinitionId","componentVersion",
-        "componentOverrides","componentUpdateAvailable"]) delete child[field];
+        "componentOverrides","componentUpdateAvailable","semanticId","relationshipId","pageId"])
+        delete child[field];
       return child;
     });
   return {nodes:snapshotNodes,edges:snapshotEdges,bounds};

@@ -103,12 +103,13 @@ function searchContainersForNode(node, containers){
     });
 }
 
-function searchNodeContext(node, containers, collapsedHidden){
+function searchNodeContext(node, containers, collapsedHidden, scope = null){
   const ancestry = searchContainersForNode(node, containers);
   const collapsed = [...ancestry].reverse()
     .find(container => container.type === "frame" && container.collapsed === true);
   return {
-    page:SEARCH_PAGE_LABEL,
+    page:scope && scope.pageName || SEARCH_PAGE_LABEL,
+    pageId:scope && scope.pageId || null,
     containers:ancestry.map(container => container.title || searchTypeLabel(container.type)),
     containerIds:ancestry.map(container => container.id),
     collapsedContainerId:collapsed ? collapsed.id : null,
@@ -126,14 +127,15 @@ function searchNodeContext(node, containers, collapsedHidden){
   };
 }
 
-function searchEdgeContext(edge, nodeContextById){
+function searchEdgeContext(edge, nodeContextById, scope = null){
   const fromContext = nodeContextById.get(edge.from);
   const toContext = nodeContextById.get(edge.to);
   const containers = fromContext && toContext &&
     JSON.stringify(fromContext.containerIds) === JSON.stringify(toContext.containerIds)
     ? fromContext.containers : [];
   return {
-    page:SEARCH_PAGE_LABEL,
+    page:scope && scope.pageName || SEARCH_PAGE_LABEL,
+    pageId:scope && scope.pageId || null,
     containers,
     containerIds:fromContext && toContext &&
       JSON.stringify(fromContext.containerIds) === JSON.stringify(toContext.containerIds)
@@ -435,41 +437,95 @@ function markSearchIndexDirty(){
 
 function refreshSearchIndex(force = false){
   const started = performance.now();
-  const containers = state.nodes.filter(isStructuralNode);
-  const nodesById = new Map(state.nodes.map(node => [node.id, node]));
-  const collapsedHidden = collapsedFrameHiddenNodeIds();
-  const nodeContextById = new Map();
-  for (const node of state.nodes)
-    nodeContextById.set(node.id, searchNodeContext(node, containers, collapsedHidden));
-  const hierarchySignature = JSON.stringify(containers.map(container => ({
-    id:container.id, title:container.title, x:container.x, y:container.y,
-    w:container.w, h:container.h, collapsed:container.collapsed === true,
-    hidden:container.hidden === true, locked:container.locked === true
-  }))) + (typeof cleanOrganizationForDocument === "function"
-    ? JSON.stringify(cleanOrganizationForDocument()) : "");
-  const endpointTitleSignature = new Map(state.nodes.map(node => [node.id, node.title || ""]));
   const seen = new Set();
   let changed = 0;
 
-  for (const node of state.nodes){
-    const key = searchOwnerKey("node", node.id);
-    const signature = JSON.stringify(node) + hierarchySignature;
-    seen.add(key);
-    if (!force && searchOwnerSignatures.get(key) === signature) continue;
-    searchOwnerSignatures.set(key, signature);
-    searchOwnerRecords.set(key, searchNodeRecords(node, nodeContextById.get(node.id)));
-    changed++;
+  const scopes = typeof pagesSearchScopes === "function" ? pagesSearchScopes() : [{
+    pageId:null,pageName:SEARCH_PAGE_LABEL,nodes:state.nodes,edges:state.edges,
+    organization:state.organization
+  }];
+  for (const scope of scopes){
+    const containers = scope.nodes.filter(isStructuralNode);
+    const nodesById = new Map(scope.nodes.map(node => [node.id,node]));
+    const collapsedHidden = new Set();
+    for (const container of containers.filter(node => node.type === "frame" && node.collapsed === true)){
+      const bounds = containmentRect(container);
+      for (const node of scope.nodes){
+        if (node.id === container.id) continue;
+        const rect = nodeRect(node);
+        if (rect.cx >= bounds.x && rect.cx <= bounds.x + bounds.w &&
+            rect.cy >= bounds.y && rect.cy <= bounds.y + bounds.h) collapsedHidden.add(node.id);
+      }
+    }
+    const nodeContextById = new Map();
+    for (const node of scope.nodes){
+      const context = searchNodeContext(node,containers,collapsedHidden,scope);
+      /* Organization helpers are active-page projections. Direct flags remain
+         correct for unloaded pages; inherited organization is resolved when
+         that result is opened. */
+      if (scope.pageId !== state.activePageId){
+        context.hidden = node.hidden === true || collapsedHidden.has(node.id);
+        context.locked = node.locked === true;
+      }
+      nodeContextById.set(node.id,context);
+    }
+    const hierarchySignature = JSON.stringify({
+      pageId:scope.pageId,
+      containers:containers.map(container => ({
+        id:container.id,title:container.title,x:container.x,y:container.y,
+        w:container.w,h:container.h,collapsed:container.collapsed === true,
+        hidden:container.hidden === true,locked:container.locked === true
+      })),
+      organization:scope.organization
+    });
+    const endpointTitleSignature = new Map(scope.nodes.map(node => [node.id,node.title || ""]));
+    for (const node of scope.nodes){
+      const key = searchOwnerKey("node",node.id);
+      const signature = JSON.stringify(node)+hierarchySignature;
+      seen.add(key);
+      if (!force && searchOwnerSignatures.get(key) === signature) continue;
+      searchOwnerSignatures.set(key,signature);
+      searchOwnerRecords.set(key,searchNodeRecords(node,nodeContextById.get(node.id)));
+      changed++;
+    }
+    for (const edge of scope.edges){
+      const key = searchOwnerKey("edge",edge.id);
+      const signature = JSON.stringify(edge)+(endpointTitleSignature.get(edge.from)||"")+"\u0000"+
+        (endpointTitleSignature.get(edge.to)||"")+hierarchySignature;
+      seen.add(key);
+      if (!force && searchOwnerSignatures.get(key) === signature) continue;
+      searchOwnerSignatures.set(key,signature);
+      const context=searchEdgeContext(edge,nodeContextById,scope);
+      if(scope.pageId!==state.activePageId){
+        context.hidden=edge.hidden===true;
+        context.locked=edge.locked===true;
+      }
+      searchOwnerRecords.set(key,searchEdgeRecords(edge,context,nodesById));
+      changed++;
+    }
   }
-  for (const edge of state.edges){
-    const key = searchOwnerKey("edge", edge.id);
-    const signature = JSON.stringify(edge) +
-      (endpointTitleSignature.get(edge.from) || "") + "\u0000" +
-      (endpointTitleSignature.get(edge.to) || "") + hierarchySignature;
-    seen.add(key);
-    if (!force && searchOwnerSignatures.get(key) === signature) continue;
-    searchOwnerSignatures.set(key, signature);
-    searchOwnerRecords.set(key, searchEdgeRecords(edge, searchEdgeContext(edge, nodeContextById), nodesById));
-    changed++;
+  if (typeof pagesCanonicalObjectsWithNoAppearances === "function"){
+    for (const semantic of pagesCanonicalObjectsWithNoAppearances()){
+      const key=searchOwnerKey("semantic",semantic.id);
+      const signature=JSON.stringify(semantic);
+      seen.add(key);
+      if(!force&&searchOwnerSignatures.get(key)===signature)continue;
+      searchOwnerSignatures.set(key,signature);
+      const pseudo={...semantic,id:semantic.id,x:0,y:0};
+      const records=searchNodeRecords(pseudo,{
+        page:"Model only",pageId:null,containers:[],containerIds:[],
+        collapsedContainerId:null,hidden:false,collapsed:false,locked:false,
+        layer:"",owner:searchSafeString(semantic.owner),
+        tags:Array.isArray(semantic.tags)?semantic.tags:[],
+        status:searchSafeString(semantic.status),sourceAuthority:"local"
+      }).map(record=>({
+        ...record,
+        key:searchRecordKey("semantic",semantic.id,record.property,record.property),
+        ownerKind:"semantic",ownerId:semantic.id,modelOnly:true
+      }));
+      searchOwnerRecords.set(key,records);
+      changed++;
+    }
   }
   for (const key of [...searchOwnerRecords.keys()]){
     if (seen.has(key)) continue;
@@ -772,6 +828,7 @@ function scheduleSearchRun(){
 
 function searchCaptureNavigation(){
   return {
+    pageId:typeof state.activePageId === "string" ? state.activePageId : null,
     view:{x:view.x, y:view.y, k:view.k},
     selection:sel ? {kind:sel.kind, ids:[...sel.ids]} : null
   };
@@ -782,6 +839,8 @@ function searchRestoreNavigation(){
     announce("There is no previous search location.");
     return false;
   }
+  if (previous.pageId && typeof pagesSwitch === "function")
+    pagesSwitch(previous.pageId,{recordNavigation:false,restoreCamera:false});
   view.x = previous.view.x;
   view.y = previous.view.y;
   view.k = previous.view.k;
@@ -819,6 +878,17 @@ function searchMarkCanvasResult(result){
 function activateSearchResult(index, opts = {}){
   const result = searchResults[index];
   if (!result) return false;
+  if (opts.recordNavigation !== false) searchNavigationBack.push(searchCaptureNavigation());
+  if (result.ownerKind === "semantic"){
+    if (typeof pagesOpenAppearanceChooser === "function")
+      pagesOpenAppearanceChooser(result.ownerId,[]);
+    searchActiveIndex=index;
+    searchRenderResults();
+    announce(`Model-only object: ${result.objectLabel}. It has no visible appearance.`);
+    return true;
+  }
+  if (result.pageId && result.pageId !== state.activePageId && typeof pagesSwitch === "function")
+    pagesSwitch(result.pageId,{recordNavigation:false});
   if (result.collapsedContainerId){
     const frame = nodeById(result.collapsedContainerId);
     if (frame && frame.collapsed === true){
@@ -831,7 +901,6 @@ function activateSearchResult(index, opts = {}){
       refreshSearchIndex(true);
     }
   }
-  if (opts.recordNavigation !== false) searchNavigationBack.push(searchCaptureNavigation());
   searchActiveIndex = index;
   if (result.ownerKind === "node"){
     setSelection("node", result.ownerId);
@@ -860,8 +929,19 @@ function activateRelativeSearchResult(delta){
 function activateNextSearchResult(){ return activateRelativeSearchResult(1); }
 function activatePreviousSearchResult(){ return activateRelativeSearchResult(-1); }
 
+function searchRecordOwner(record){
+  if(record.ownerKind==="semantic")
+    return (state.semanticObjects||[]).find(object=>object.id===record.ownerId)||null;
+  if(record.pageId&&typeof pagesPageById==="function"){
+    const page=pagesPageById(record.pageId);
+    if(page)return record.ownerKind==="node"
+      ? page.nodes.find(node=>node.id===record.ownerId)||null
+      : page.edges.find(edge=>edge.id===record.ownerId)||null;
+  }
+  return record.ownerKind === "node" ? nodeById(record.ownerId) : edgeById(record.ownerId);
+}
 function searchReadPath(record){
-  const owner = record.ownerKind === "node" ? nodeById(record.ownerId) : edgeById(record.ownerId);
+  const owner = searchRecordOwner(record);
   if (!owner || !record.path) return undefined;
   const path = record.path;
   if (path.kind === "owner") return owner[path.prop];
@@ -876,7 +956,7 @@ function searchReadPath(record){
   return undefined;
 }
 function searchWritePath(record, value){
-  const owner = record.ownerKind === "node" ? nodeById(record.ownerId) : edgeById(record.ownerId);
+  const owner = searchRecordOwner(record);
   if (!owner || !record.path) return false;
   const path = record.path;
   if (path.kind === "owner"){ owner[path.prop] = value; return true; }
