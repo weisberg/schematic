@@ -23,8 +23,11 @@ function buildScaffold(){
   el("circle", {cx:1.2, cy:1.2, r:1.2, fill:themeColors().grid}, pat);
 
   world = el("g", {id:"world"}, board);
-  el("rect", {x:-50000, y:-50000, width:100000, height:100000, fill:"url(#dots)",
+  el("rect", {x:-50000, y:-50000, width:100000, height:100000,
+              fill:typeof pagesBackground === "function" ? pagesBackground() : themeColors().paper,
               "data-bg":"1"}, world);
+  el("rect", {x:-50000, y:-50000, width:100000, height:100000, fill:"url(#dots)",
+              "data-grid":"1"}, world);
   frameLayer = el("g", {id:"frameLayer"}, world);
   edgeLayer  = el("g", {id:"edgeLayer"}, world);
   nodeLayer  = el("g", {id:"nodeLayer"}, world);
@@ -49,7 +52,11 @@ function applyView(){
 }
 
 function render(){
+  if (typeof pagesBeforeRender === "function") pagesBeforeRender();
   renderStats.full++;
+  const pageBackground = world && world.querySelector("[data-bg]");
+  if (pageBackground)
+    pageBackground.setAttribute("fill",typeof pagesBackground === "function" ? pagesBackground() : themeColors().paper);
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   if (inlineStatusPicker) closeInlineStatusPicker();
   frameLayer.innerHTML = "";
@@ -1406,6 +1413,21 @@ function drawNode(n){
                   "font-size":11.5, "font-style":"italic"}, g).textContent = "no fields yet";
 
     drawRowHandles(g, n, n.fields, r, t);
+    }
+  }
+
+  if (n.targetPageId && typeof pagesPageById === "function"){
+    const targetPage = pagesPageById(n.targetPageId);
+    if (targetPage){
+      const link = el("g", {"data-page-link":n.id,cursor:"pointer",role:"button",tabindex:"0",
+        "aria-label":`Open detail page ${targetPage.name}`},g);
+      const title = el("title",{},link);
+      title.textContent = `Open detail page: ${targetPage.name}`;
+      el("rect",{x:Math.max(4,r.w-28),y:-10,width:24,height:20,rx:10,
+        fill:t.panel,stroke:t.accent,"stroke-width":1.4},link);
+      el("text",{x:Math.max(16,r.w-16),y:4,"text-anchor":"middle",
+        fill:t.accent,"font-family":"'IBM Plex Mono', monospace","font-size":11,
+        "font-weight":700,"pointer-events":"none"},link).textContent="↗";
     }
   }
 

@@ -158,7 +158,7 @@ if (process.argv.includes("--api-surface")){
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
-    "js/style-system.js", "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
+    "js/style-system.js", "js/pages.js", "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
     "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
@@ -174,7 +174,7 @@ if (process.argv.includes("--api-surface")){
     const { window, downloads } = makeDom();
     assert.strictEqual(window.__T.FSA, false, "FSA feature-detects absent API");
     const parsed = JSON.parse(window.__T.serializeDocument());
-    assert.strictEqual(parsed.version, 1, "serializer writes current version");
+    assert.strictEqual(parsed.version, 2, "serializer writes current version");
     assert(Array.isArray(parsed.nodes), "serializer includes nodes");
 
     window.__T.setDocDirty(true);
@@ -793,7 +793,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(window.__T.doc.name, "opened.schematic", "FSA open stores document name");
     window.__T.setDocDirty(true);
     await window.__T.saveDoc();
-    assert(window.__handles.openHandle.written.includes("\"version\": 1"), "FSA save writes serialized JSON to existing handle");
+    assert(window.__handles.openHandle.written.includes("\"version\": 2"), "FSA save writes serialized JSON to existing handle");
     assert.strictEqual(window.__T.doc.dirty, false, "FSA save clears dirty state");
     window.__T.doc.handle = null;
     window.__T.setDocDirty(true);
@@ -814,7 +814,7 @@ if (process.argv.includes("--api-surface")){
     };
     window.__T.doc.handle = badHandle;
     await window.__T.saveDoc();
-    assert(window.__handles.saveHandle.written.includes("\"version\": 1"), "NotAllowedError falls back to Save As");
+    assert(window.__handles.saveHandle.written.includes("\"version\": 2"), "NotAllowedError falls back to Save As");
   }
 
   {
@@ -852,7 +852,7 @@ if (process.argv.includes("--api-surface")){
     window.__T.setDocDirty(true);
     await delay(2100);
     const recovery = JSON.parse(storage.getItem("schematic.recovery"));
-    assert(recovery.json.includes("\"version\": 1"), "dirty document writes recovery snapshot");
+    assert(recovery.json.includes("\"version\": 2"), "dirty document writes recovery snapshot");
   }
 
   {
@@ -3048,7 +3048,8 @@ if (process.argv.includes("--api-surface")){
     firePointer(window, window.document.getElementById("board"), "pointerup", { clientX:oldW + 60, clientY:oldH + 44 });
     assert(frameAfterUndo.w > oldW && frameAfterUndo.h > oldH, "frame resize handle changes dimensions");
     const layerIds = [...window.document.querySelector("#world").children].map(el => el.id || el.getAttribute("data-bg") || "");
-    assert.deepStrictEqual(layerIds.slice(1, 4), ["frameLayer", "edgeLayer", "nodeLayer"], "frame layer renders behind edges and nodes");
+    assert.deepStrictEqual(layerIds.filter(id => ["frameLayer","edgeLayer","nodeLayer"].includes(id)).slice(0, 3),
+      ["frameLayer", "edgeLayer", "nodeLayer"], "frame layer renders behind edges and nodes");
     assert.strictEqual(T.hitTest({ x:260, y:190 }), null, "hitTest ignores frames for edge targeting");
     T.addEdge({ id:"n1" }, { id:"n2" });
     assert.strictEqual(T.state.edges.length, 0, "frames cannot be edge endpoints");
@@ -3715,7 +3716,7 @@ if (process.argv.includes("--api-surface")){
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Create", "Layout", "Selection", "View", "Organize", "Model data",
-        "Styles and reuse", "Formatting & lenses"],
+        "Styles and reuse", "Formatting & lenses", "Pages"],
       "canvas menu groups creation, layout, selection, view, organization, model-data, styles, and formatting actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
@@ -5688,11 +5689,12 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Link ports",
+      ["Object & appearance","Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Link ports",
         "Appearance","Notes"],
       "concept inspector groups controls by task");
     assert(!sections[0].open && !sections[1].open && !sections[2].open && !sections[3].open &&
-      !sections[4].open && sections[5].open && !sections[6].open && sections[7].open && !sections[8].open,
+      !sections[4].open && !sections[5].open && sections[6].open && !sections[7].open &&
+      sections[8].open && !sections[9].open,
       "primary inspector sections start open while inactive rule context and secondary sections stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
@@ -5745,7 +5747,7 @@ if (process.argv.includes("--api-surface")){
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Content","Discover","Appearance","Arrange","Organization","Metadata","Styles","Formatting",
-        "Style transfer","Actions"],
+        "Object & pages","Style transfer","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5770,7 +5772,7 @@ if (process.argv.includes("--api-surface")){
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Styles","Formatting",
-        "Style transfer","Actions"],
+        "Relationship scope","Style transfer","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -5821,10 +5823,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Size"],
-      n1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Content","Appearance"],
-      d1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Items"],
-      t1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Fields"]
+      f1:["Object & appearance","Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Size"],
+      n1:["Object & appearance","Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Content","Appearance"],
+      d1:["Object & appearance","Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Items"],
+      t1:["Object & appearance","Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -6040,14 +6042,14 @@ if (process.argv.includes("--api-surface")){
       "index results update after create and edit without reloading");
     T.setSelection("node", dynamic.id);
     T.deleteSelection();
-    assert.strictEqual(by("incremental needle").length, 0,
-      "deleted objects disappear from the index");
+    assert(by("incremental needle").some(result => result.ownerKind === "semantic" && result.modelOnly),
+      "removing the final appearance keeps the shared object discoverable as model-only");
     T.undo();
     assert(by("incremental needle").some(result => result.ownerId === dynamic.id),
       "undo restores the corresponding index state");
     T.redo();
-    assert.strictEqual(by("incremental needle").length, 0,
-      "redo restores the deletion in the index");
+    assert(by("incremental needle").some(result => result.ownerKind === "semantic" && result.modelOnly),
+      "redo restores the model-only lifecycle state in the index");
     metadataNode = T.state.nodes.find(node => node.title === "Tiered rewards");
 
     window.dispatchEvent(new window.KeyboardEvent("keydown", {
@@ -7316,6 +7318,8 @@ if (process.argv.includes("--api-surface")){
     }
     T.state.nodes = nodes;
     T.state.edges = edges;
+    T.state.semanticObjects = [];
+    T.state.semanticRelationships = [];
     T.state.nextId = 40000;
     const buildStart = performance.now();
     const stats = T.refreshSearchIndex(true);
@@ -7973,6 +7977,193 @@ if (process.argv.includes("--api-surface")){
     T.state.nodes = [];
     T.state.edges = [];
     window.close();
+  }
+
+  /* scheme theme overrides follow light/dark toggling */
+  /* Issue #87 — multi-page documents and model-once/view-many identity. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+
+    const legacy = {
+      version:1,nextId:8,legacyExtension:{kept:true},
+      organization:{page:{id:"page-default",name:"Legacy map"},
+        layers:[{id:"layer-default",name:"Default"}],groups:[],activeLayerId:"layer-default"},
+      nodes:[
+        {id:"legacy-a",type:"concept",x:40,y:55,title:"Payments service",notes:"Canonical notes",
+          color:"#CFE8FF"},
+        {id:"legacy-b",type:"concept",x:340,y:80,title:"Ledger",notes:"",color:"#D8F3DC"}
+      ],
+      edges:[{id:"legacy-edge",from:"legacy-a",to:"legacy-b",kind:"link",label:"Writes to",
+        routing:"ortho",orthoX:250,orthoY:120,labelPosition:.7}]
+    };
+    const migrated=T.migrateDocument(legacy);
+    assert.strictEqual(migrated.version,2,"legacy documents migrate to schema v2");
+    assert.strictEqual(migrated.pages.length,1,"legacy migration creates exactly one page");
+    assert.strictEqual(migrated.pages[0].instances[0].id,"legacy-a",
+      "legacy migration preserves existing instance IDs");
+    assert.deepStrictEqual(
+      [migrated.pages[0].instances[0].x,migrated.pages[0].instances[0].y],
+      [40,55],"legacy migration preserves exact geometry");
+    assert.strictEqual(migrated.pages[0].edgeInstances[0].orthoX,250,
+      "legacy migration preserves route geometry");
+    assert.strictEqual(migrated.pages[0].edgeInstances[0].labelPosition,.7,
+      "legacy migration preserves link-label placement");
+    assert.strictEqual(migrated.legacyExtension.kept,true,
+      "migration preserves unknown top-level extension data");
+    assert.strictEqual(migrated.semanticObjects.length,2,
+      "migration creates one canonical object per legacy node");
+    assert.strictEqual(migrated.semanticRelationships.length,1,
+      "migration creates one canonical relationship per legacy edge");
+
+    T.importDocText(JSON.stringify(legacy));
+    const page1=T.pagesActivePage();
+    const payments=T.state.nodes.find(node=>node.id==="legacy-a");
+    const ledger=T.state.nodes.find(node=>node.id==="legacy-b");
+    const relationship=T.state.edges[0];
+    assert.strictEqual(page1.name,"Legacy map","migrated page name remains visible");
+    assert(doc.querySelector('#pageTabs [aria-selected="true"]'),
+      "active page is exposed as an accessible selected tab");
+
+    const page2=T.pagesCreate("Data flow");
+    assert.strictEqual(T.pagesOrdered().length,2,"users can create a second page");
+    T.pagesRename(page2.id,"Data movement");
+    assert.strictEqual(T.pagesPageById(page2.id).name,"Data movement","pages can be renamed");
+    T.pagesSetBackground(page2.id,"#f4d8f0");
+    assert.strictEqual(T.pagesPageById(page2.id).background,"#f4d8f0",
+      "page background is page-local");
+    T.pagesAddNamedLocation(page2.id,"Review view",{x:120,y:80,k:1.4});
+    assert.strictEqual(T.pagesPageById(page2.id).namedLocations[0].camera.k,1.4,
+      "named locations retain page-local camera state");
+
+    const paymentsAlias=T.pagesAddExistingObject(payments.semanticId,page2.id,{x:90,y:140});
+    const ledgerAlias=T.pagesAddExistingObject(ledger.semanticId,page2.id,{x:430,y:190});
+    assert.notStrictEqual(paymentsAlias.id,payments.id,
+      "another appearance receives a new stable instance ID");
+    assert.strictEqual(paymentsAlias.semanticId,payments.semanticId,
+      "another appearance reuses the canonical semantic identity");
+    assert.strictEqual(T.state.edges.length,1,
+      "adding both endpoints offers and materializes the existing canonical relationship");
+    assert.strictEqual(T.state.edges[0].relationshipId,relationship.relationshipId,
+      "the local link appearance reuses the canonical relationship");
+    const aliasEdge=T.state.edges[0];
+    aliasEdge.routing="ortho";
+    aliasEdge.orthoX=777;
+    paymentsAlias.title="Payments platform";
+    paymentsAlias.x=155;
+    T.render();
+    T.pagesSwitch(page1.id);
+    assert.strictEqual(payments.title,"Payments platform",
+      "canonical rename propagates to every page");
+    assert.strictEqual(payments.x,40,
+      "moving an alias does not overwrite another appearance's geometry");
+    assert.strictEqual(relationship.orthoX,250,
+      "page-local relationship route geometry remains independent");
+
+    const appearances=T.pagesAppearances(payments.semanticId);
+    assert.strictEqual(appearances.length,2,"find appearances returns every containing page");
+    sameList(appearances.map(item=>item.pageName).sort(),["Data movement","Legacy map"],
+      "appearance discovery includes page context");
+    T.refreshSearchIndex(true);
+    const globalResults=T.querySearchIndex({text:"Payments platform",property:"title"}).results;
+    assert.strictEqual(globalResults.filter(result=>result.ownerKind==="node").length,2,
+      "global search indexes both loaded and inactive page appearances");
+    sameList([...new Set(globalResults.map(result=>result.page))].sort(),["Data movement","Legacy map"],
+      "global search results identify their page");
+
+    T.pagesSetDrilldownTarget(payments.id,page2.id);
+    assert(doc.querySelector('[data-page-link="legacy-a"]'),
+      "nodes linked to detail pages render a visible drill-down control");
+    T.setView({x:35,y:45,k:1.25});
+    T.pagesSwitch(page2.id);
+    T.setView({x:210,y:160,k:.8});
+    assert(T.pagesNavigateBack(),"page navigation can return to the prior location");
+    assert.strictEqual(T.pagesActivePage().id,page1.id,"Back restores the prior page");
+    assert.deepStrictEqual(
+      {x:T.view.x,y:T.view.y,k:T.view.k},{x:35,y:45,k:1.25},
+      "Back restores the exact prior camera");
+    assert(T.pagesNavigateForward(),"page navigation supports Forward");
+    assert.strictEqual(T.pagesActivePage().id,page2.id,"Forward restores the destination page");
+
+    const reused=T.pagesDuplicate(page2.id,"reuse",{activate:false,name:"Audience view"});
+    assert(reused.nodes.every(node=>page2.nodes.some(source=>source.semanticId===node.semanticId)),
+      "reuse-page duplication creates appearances without new canonical IDs");
+    assert(reused.nodes.every(node=>!page2.nodes.some(source=>source.id===node.id)),
+      "reuse-page duplication generates new instance IDs");
+    const independent=T.pagesDuplicate(page2.id,"independent",{activate:false,name:"Scenario copy"});
+    assert(independent.nodes.every(node=>!page2.nodes.some(source=>source.semanticId===node.semanticId)),
+      "independent page duplication remaps canonical object IDs");
+    assert(independent.edges.every(edge=>!page2.edges.some(source=>source.relationshipId===edge.relationshipId)),
+      "independent page duplication remaps canonical relationship IDs");
+    T.pagesReorder(independent.id,0);
+    assert.strictEqual(T.pagesOrdered()[0].id,independent.id,"pages can be reordered deterministically");
+
+    const pageDeletePreview=T.pagesDeletePreview(reused.id);
+    assert(pageDeletePreview.instanceCount>0&&pageDeletePreview.edgeInstanceCount>0,
+      "page deletion previews affected appearances and links");
+    const countBeforeDelete=T.pagesOrdered().length;
+    T.pagesDelete(reused.id,{confirm:false});
+    assert.strictEqual(T.pagesOrdered().length,countBeforeDelete-1,"page deletion removes one page");
+    T.undo();
+    assert.strictEqual(T.pagesOrdered().length,countBeforeDelete,"page deletion is undoable");
+
+    T.pagesSwitch(page2.id);
+    const canonicalCount=T.state.semanticObjects.length;
+    const appearanceCountBeforeRemove=T.pagesAppearances(payments.semanticId).length;
+    T.pagesRemoveAppearance(paymentsAlias.id);
+    assert.strictEqual(T.state.semanticObjects.length,canonicalCount,
+      "removing an appearance never deletes canonical data");
+    assert.strictEqual(T.pagesAppearances(payments.semanticId).length,appearanceCountBeforeRemove-1,
+      "remove from page affects only one instance");
+    T.pagesSwitch(page1.id);
+    const deletionPreview=T.pagesDeleteObjectPreview(payments.semanticId);
+    assert(deletionPreview.appearances.length>=1&&deletionPreview.relationships.length>=1,
+      "delete-everywhere preview reports pages and canonical relationships");
+    T.pagesDeleteObjectEverywhere(payments.semanticId,{confirm:false});
+    assert(!T.state.semanticObjects.some(object=>object.id===payments.semanticId),
+      "delete everywhere removes the canonical object explicitly");
+    assert(T.state.tombstones.some(item=>item.semanticId===payments.semanticId),
+      "global deletion retains a recoverable identity tombstone");
+    T.undo();
+    assert(T.state.semanticObjects.some(object=>object.id===payments.semanticId),
+      "undo restores a globally deleted canonical object");
+
+    const serializedA=T.serializeDocument({includeHistory:false});
+    const serializedB=T.serializeDocument({includeHistory:false});
+    assert.strictEqual(serializedA,serializedB,"multi-page serialization is deterministic");
+    const saved=JSON.parse(serializedA);
+    assert.strictEqual(saved.pageOrder.length,T.pagesOrdered().length,
+      "serialization records deterministic page order");
+    assert(Array.isArray(saved.pages)&&Array.isArray(saved.semanticObjects)&&
+      Array.isArray(saved.semanticRelationships),"schema v2 stores explicit page and canonical registries");
+    const pageCount=saved.pages.length;
+    T.importDocText(serializedA);
+    assert.strictEqual(T.pagesOrdered().length,pageCount,"multi-page save/reload preserves every page");
+    assert.strictEqual(T.pagesAppearances(payments.semanticId).length,appearanceCountBeforeRemove-1,
+      "save/reload preserves shared identity and removed appearances");
+
+    const interactive=T.pagesInteractiveExport();
+    assert(interactive.includes('data-page-panel=')&&interactive.includes("function openPage"),
+      "interactive export contains page panels and navigation");
+    assert(interactive.includes(`data-target-page="${page2.id}"`),
+      "interactive export preserves cross-page drill-down destinations");
+    const manifest=T.pagesExportManifest();
+    assert.strictEqual(manifest.length,T.pagesOrdered().filter(page=>page.export.include!==false).length,
+      "all-pages export respects page order and include settings");
+    assert.strictEqual(doc.querySelectorAll("#world").length,1,
+      "only the active page mounts a full-fidelity canvas");
+
+    const benchmark=T.pagesPerformanceBenchmark({
+      pages:50,semanticObjects:10000,instances:20000,relationships:30000
+    });
+    assert.deepStrictEqual(
+      [benchmark.pageCount,benchmark.semanticCount,benchmark.instanceCount,benchmark.relationshipCount],
+      [50,10000,20000,30000],"release benchmark covers the required multi-page scale");
+    assert.strictEqual(benchmark.inactiveCanvasesMounted,0,
+      "scale benchmark never mounts inactive canvases");
+    assert(benchmark.buildMs<5000&&benchmark.searchMs<500,
+      `multi-page model/search benchmark stays bounded (${benchmark.buildMs.toFixed(0)}ms build, `+
+      `${benchmark.searchMs.toFixed(1)}ms search)`);
   }
 
   /* scheme theme overrides follow light/dark toggling */

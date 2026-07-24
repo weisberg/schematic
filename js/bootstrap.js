@@ -360,15 +360,18 @@ if (typeof ensureMetadata === "function") ensureMetadata();
 if (typeof ensureStyleSystem === "function") ensureStyleSystem();
 if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
 if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
+if (typeof pagesInitializeFromCurrent === "function") pagesInitializeFromCurrent();
 ensureFieldIds();
 if (typeof initializeHistory === "function") initializeHistory();
 initializeCommands();
+if (typeof initializePagesCommands === "function") initializePagesCommands();
 if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
 if (typeof initializeMetadataCommands === "function") initializeMetadataCommands();
 if (typeof initializeStyleSystemCommands === "function") initializeStyleSystemCommands();
 if (typeof initializeFormattingCommands === "function") initializeFormattingCommands();
 setupRibbon();
+if (typeof initializePagesUi === "function") initializePagesUi();
 if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 if (typeof initializeMetadataUi === "function") initializeMetadataUi();
@@ -404,6 +407,45 @@ window.__T = {
   saveDoc,
   saveAsDoc,
   newDoc,
+  PAGES_SCHEMA_VERSION,
+  pagesInitializeFromCurrent,
+  pagesActivePage,
+  pagesPageById,
+  pagesOrdered,
+  pagesSwitch,
+  pagesCreate,
+  pagesRename,
+  pagesReorder,
+  pagesDuplicate,
+  pagesDelete,
+  pagesDeletePreview,
+  pagesAppearances,
+  pagesFindAllAppearances,
+  pagesAddExistingObject,
+  pagesDuplicateAppearance,
+  pagesPastePayload,
+  pagesRemoveAppearance,
+  pagesDeleteObjectPreview,
+  pagesDeleteObjectEverywhere,
+  pagesDeleteRelationshipPreview,
+  pagesDeleteRelationshipEverywhere,
+  pagesConvertDuplicateToAlias,
+  pagesSetDrilldownTarget,
+  pagesOpenDrilldown,
+  pagesNavigateBack,
+  pagesNavigateForward,
+  pagesAddNamedLocation,
+  pagesOpenNamedLocation,
+  pagesSetBackground,
+  pagesBackground,
+  pagesSearchScopes,
+  pagesCanonicalObjectsWithNoAppearances,
+  pagesObjectTableRows,
+  pagesExportManifest,
+  pagesInteractiveExport,
+  pagesPerformanceBenchmark,
+  openPagesManager,
+  closePagesManager,
   pushHistory,
   undo,
   redo,

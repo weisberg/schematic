@@ -332,6 +332,8 @@ function buildNodeSelectionDropdown(panel, primary, targets){
         {action:"select-attached-links"});
     }
   });
+  if (typeof buildPagesNodeDropdown === "function")
+    buildPagesNodeDropdown(panel,primary,targets);
 
   if (typeof editingCopyStyle === "function") menuSubmenu(panel, "selection-editing", "Edit appearance & geometry", body => {
     menuCommand(body, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
@@ -806,6 +808,8 @@ function nodeMenu(n, x, y){
       buildStyleNodeContext(m, n, targets);
     if (typeof buildFormattingNodeContext === "function")
       buildFormattingNodeContext(m, n, targets);
+    if (typeof buildPagesNodeContext === "function")
+      buildPagesNodeContext(m,n,targets);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "node:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -981,6 +985,8 @@ function edgeMenu(e, x, y){
       buildStyleEdgeContext(m, e);
     if (typeof buildFormattingEdgeContext === "function")
       buildFormattingEdgeContext(m, e);
+    if (typeof buildPagesEdgeContext === "function")
+      buildPagesEdgeContext(m,e);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "edge:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy link style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste link style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -1068,6 +1074,8 @@ function canvasMenu(w, x, y){
       buildStyleCanvasContext(m);
     if (typeof buildFormattingCanvasContext === "function")
       buildFormattingCanvasContext(m);
+    if (typeof buildPagesCanvasContext === "function")
+      buildPagesCanvasContext(m);
   });
 }
 

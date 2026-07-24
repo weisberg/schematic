@@ -173,6 +173,22 @@
   .banner.recovery{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .banner.recovery button{padding:4px 9px;font-size:12px}
 
+  /* ---------- Document pages ---------- */
+  .page-bar{position:relative;z-index:4;display:flex;min-height:38px;flex:none;align-items:center;gap:7px;
+            padding:4px 8px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .page-nav-controls,.page-bar-actions{display:flex;flex:none;align-items:center;gap:4px}
+  .page-nav-controls button{width:28px;height:28px;padding:0}
+  .page-tabs{display:flex;min-width:0;flex:1;gap:4px;overflow-x:auto;scrollbar-width:thin}
+  .page-tab{display:flex;min-width:94px;max-width:190px;height:29px;align-items:center;justify-content:space-between;
+            gap:8px;padding:4px 8px;border-color:transparent;background:transparent;font-size:11px}
+  .page-tab>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .page-tab small{display:grid;min-width:18px;height:18px;place-items:center;border-radius:9px;
+                  background:var(--control);color:var(--muted);font:8.5px var(--mono)}
+  .page-tab[aria-selected=true]{border-color:color-mix(in srgb,var(--accent) 35%,var(--line));
+                                background:var(--accent-soft);color:var(--accent)}
+  .page-tab[aria-selected=true] small{background:var(--panel);color:var(--accent)}
+  .page-bar-actions button{height:28px;padding:3px 8px;font-size:10.5px}
+
   /* ---------- Layout ---------- */
   main{flex:1;display:flex;min-height:0}
   #canvasWrap{flex:1;position:relative;min-width:0}
@@ -638,6 +654,49 @@
   .modal pre{font-family:var(--mono);font-size:12px;line-height:1.55;padding:16px 18px;overflow:auto;
              white-space:pre;color:var(--ink-2);flex:1}
   .modal .actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+
+  .pages-manager-modal{z-index:55}
+  .pages-manager-modal .pages-manager-card{width:min(980px,95vw);height:min(720px,90vh);max-height:90vh;
+                                           overflow:hidden;border:1px solid var(--line)}
+  .pages-manager-head{display:flex;min-height:62px;flex-direction:row;align-items:center;
+                      justify-content:space-between;gap:14px;
+                      padding:10px 14px 10px 18px;border-bottom:1px solid var(--line)}
+  .pages-manager-head>div{display:flex;flex-direction:column;gap:2px}
+  .pages-manager-modal .pages-manager-head h3{padding:0;border:0;font-size:17px}
+  #btnClosePagesManager{width:34px;height:34px;padding:0;border-color:transparent;background:transparent;
+                        color:var(--muted);font-size:24px;font-weight:400}
+  .pages-manager-body{display:grid;min-height:0;flex:1;grid-template-columns:minmax(240px,320px) minmax(0,1fr)}
+  .pages-manager-list{display:flex;min-height:0;flex-direction:column;gap:5px;overflow:auto;padding:8px;
+                      border-right:1px solid var(--line);background:var(--control)}
+  .page-manager-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:center;
+                    width:100%;padding:8px;border-color:transparent;background:transparent;text-align:left}
+  .page-manager-row.selected,.page-manager-row:hover{border-color:var(--line);background:var(--panel)}
+  .page-manager-row>span:last-child{display:flex;min-width:0;flex-direction:column;gap:4px}
+  .page-manager-row strong,.page-manager-row small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .page-manager-row small{color:var(--muted);font-size:9.5px;font-weight:500}
+  .page-thumbnail{position:relative;display:block;width:92px;height:58px;overflow:hidden;border:1px solid var(--line);
+                  border-radius:5px;box-shadow:0 1px 2px rgba(10,20,30,.08)}
+  .page-thumbnail i{position:absolute;width:8px;height:5px;border:1px solid rgba(22,35,47,.25);
+                    border-radius:2px;transform:translate(-50%,-50%)}
+  .pages-manager-detail{display:flex;min-width:0;min-height:0;flex-direction:column;gap:10px;overflow:auto;
+                        padding:16px 18px 24px}
+  .pages-manager-detail h4{margin-top:3px;font-size:12px}
+  .pages-manager-detail>label{display:flex;flex-direction:column;gap:5px;color:var(--muted);
+                              font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  .pages-manager-detail input,.pages-manager-detail select,.pages-manager-detail textarea{width:100%}
+  .pages-manager-detail input[type=color]{width:62px;height:32px;padding:3px;cursor:pointer}
+  .pages-manager-detail textarea{min-height:78px;resize:vertical}
+  .pages-manager-detail .page-check{flex-direction:row;align-items:center;letter-spacing:0;text-transform:none}
+  .pages-manager-detail .page-check input{width:auto}
+  .page-manager-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:6px}
+  .page-location-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px}
+  .pages-manager-footer{display:flex;align-items:center;gap:8px;padding:9px 12px;border-top:1px solid var(--line)}
+  .page-scope-card{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 9px;padding:9px;
+                   border:1px solid var(--line);border-radius:8px;background:var(--control)}
+  .page-scope-card strong{font-size:10.5px}
+  .page-scope-card span{color:var(--muted);font-size:9.5px;line-height:1.4}
+  .page-inspector-actions{display:grid;grid-template-columns:1fr;gap:5px}
+  .page-inspector-actions button{font-size:10.5px}
 
   /* ---------- Reusable styles, libraries, templates, components ---------- */
   .style-manager-modal{z-index:53}
@@ -1138,9 +1197,14 @@
     .object-explorer{position:absolute;z-index:31;top:0;bottom:0;left:0;width:min(320px,88vw);max-width:none;
                      box-shadow:12px 0 30px rgba(10,20,30,.22)}
   }
+  @media (max-width:680px){
+    .page-bar-actions #btnPageManager{display:none}
+    .pages-manager-body{grid-template-columns:1fr}
+    .pages-manager-list{max-height:210px;border-right:0;border-bottom:1px solid var(--line)}
+  }
   @media (prefers-reduced-motion:reduce){ *{transition:none!important} }
   @media print{
-    header,aside,footer,.banner,#minimap,.modal,.search-panel,.editing-toolbar,.editing-ruler,.editing-snap-hud{display:none!important}
+    header,aside,footer,.banner,.page-bar,#minimap,.modal,.search-panel,.editing-toolbar,.editing-ruler,.editing-snap-hud{display:none!important}
     [data-layer-export=false]{display:none!important}
     html,body{height:auto;overflow:visible;background:#fff}
     main{display:block;height:auto}

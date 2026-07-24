@@ -114,6 +114,7 @@ function newDoc(){
   applyTheme("light", { render:false });
   applyDialect("ansi", { render:false });
   setPngAsShown(false);
+  if (typeof pagesResetForNewDocument === "function") pagesResetForNewDocument();
   render();
   if (typeof historyResetForNewDocument === "function") historyResetForNewDocument();
   syncHistoryButtons();
@@ -165,6 +166,7 @@ function clearCanvas(){
     if (typeof ensureOrganization === "function") ensureOrganization();
     if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
     delete state.editing;
+    if (typeof pagesSyncActive === "function") pagesSyncActive({ui:false});
     clearSelection(); render();
   }
 }
@@ -627,7 +629,15 @@ function serializedSvg(asShown = true){
   const g = clone.querySelector("#world");
   if (g) g.removeAttribute("transform");
   const bg = clone.querySelector("[data-bg]");
-  if (bg) bg.setAttribute("fill", themeColors(png.themeName).paper);
+  if (bg) bg.setAttribute("fill", asShown && typeof pagesBackground === "function"
+    ? pagesBackground() : themeColors(png.themeName).paper);
+  for (const link of clone.querySelectorAll("[data-page-link]")){
+    const node = nodeById(link.getAttribute("data-page-link"));
+    if (!node || !node.targetPageId) continue;
+    link.setAttribute("data-target-page",node.targetPageId);
+    link.setAttribute("aria-label",`Open detail page ${typeof pagesPageById === "function"
+      ? pagesPageById(node.targetPageId)?.name || node.targetPageId : node.targetPageId}`);
+  }
   removeEditingArtifacts(clone);
   const style = document.createElementNS(SVGNS, "style");
   style.textContent = "/* Fonts use system fallbacks if Archivo or IBM Plex Mono are unavailable. */";

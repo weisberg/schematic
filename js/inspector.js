@@ -516,6 +516,7 @@ function renderInspector(){
                : n.type === "todo" ? "To-do list" : n.type === "note" ? "Rich note"
                : n.type === "text" ? "Plain text" : n.type === "status" ? "Status node" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
+    if (typeof renderPagesInspectorForObject === "function") renderPagesInspectorForObject(n);
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(n);
     if (typeof renderEditingInspectorForNode === "function") renderEditingInspectorForNode(n);
@@ -2061,6 +2062,7 @@ function mkFlag(txt, on, set){
 }
 /* redraw canvas without rebuilding inspector (keeps input focus) */
 function drawOnly(){
+  if (typeof pagesBeforeRender === "function") pagesBeforeRender();
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
   if (guideLayer) guideLayer.innerHTML = "";
