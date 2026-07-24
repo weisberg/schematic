@@ -144,7 +144,7 @@ if (process.argv.includes("--api-surface")){
 (async () => {
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
-    "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/commands.js",
+    "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/commands.js",
     "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
@@ -3396,7 +3396,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Create", "Layout", "View"], "canvas menu groups creation, layout, and view actions");
+      ["Create", "Layout", "View", "Organize"], "canvas menu groups creation, layout, view, and organization actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
     assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
@@ -5359,10 +5359,10 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Basics","Link ports","Appearance","Notes"],
+      ["Organization","Basics","Link ports","Appearance","Notes"],
       "concept inspector groups controls by task");
-    assert(sections[0].open && !sections[1].open && sections[2].open && !sections[3].open,
-      "primary inspector sections start open while optional link ports and notes stay compact");
+    assert(!sections[0].open && sections[1].open && !sections[2].open && sections[3].open && !sections[4].open,
+      "primary inspector sections start open while organization, link ports, and notes stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
     appearance.dispatchEvent(new window.Event("toggle"));
@@ -5413,7 +5413,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Discover","Appearance","Arrange","Actions"],
+      ["Content","Discover","Appearance","Arrange","Organization","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5437,7 +5437,7 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Discover","Actions"],
+      ["Relationship","Label","Line","Routing","Discover","Organization","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -5488,10 +5488,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Basics","Appearance","Size"],
-      n1:["Basics","Content","Appearance"],
-      d1:["Basics","Appearance","Notes","Items"],
-      t1:["Basics","Appearance","Notes","Fields"]
+      f1:["Organization","Basics","Appearance","Size"],
+      n1:["Organization","Basics","Content","Appearance"],
+      d1:["Organization","Basics","Appearance","Notes","Items"],
+      t1:["Organization","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -5841,6 +5841,423 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(T.searchPanelOpen(), false, "Escape closes the search panel");
     assert.deepStrictEqual(T.selectionIds("node"), selectionBeforeClose,
       "closing search with Escape preserves the result selection");
+  }
+
+  /* Search performance fixture: 10k objects and 20k relationships. */
+  /* SCH-081 — additive organization schema, migration, effective state, and undo. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const legacy = {
+      version:1, nextId:20,
+      nodes:[
+        {id:"a",type:"concept",x:40,y:40,title:"Alpha",notes:"",color:"#CFE8FF"},
+        {id:"b",type:"concept",x:280,y:40,title:"Beta",notes:"",color:"#D8F3DC"}
+      ],
+      edges:[{id:"e1",from:"a",to:"b",kind:"link",label:"Depends on"}]
+    };
+    T.importDocText(JSON.stringify(legacy));
+    assert.strictEqual(T.organizationLayers().length, 1,
+      "legacy documents receive one deterministic default layer");
+    assert.strictEqual(T.organizationLayers()[0].id, "layer-default",
+      "legacy default layer uses the stable reserved ID");
+    assert.strictEqual(T.organizationGroups().length, 0,
+      "legacy documents never infer groups from overlap or proximity");
+    assert(T.state.nodes.every(node => !Object.hasOwn(node, "layerId")),
+      "default-layer membership remains implicit on legacy objects");
+
+    const document = {
+      ...legacy,
+      nextId:40,
+      organization:{
+        pluginData:{preserve:true},
+        page:{id:"wrong",name:"Architecture"},
+        layers:[
+          {id:"layer-default",name:"Base"},
+          {id:"o20",name:"Services",opacity:.55,color:"#c20029",export:false,plugin:"keep"},
+          {id:"o20",name:"Duplicate"}
+        ],
+        groups:[
+          {id:"o21",name:"Platform",layerId:"o20",plugin:"keep"},
+          {id:"o22",name:"Runtime",parentGroupId:"o21"},
+          {id:"o23",name:"Cycle A",parentGroupId:"o24"},
+          {id:"o24",name:"Cycle B",parentGroupId:"o23"}
+        ],
+        activeLayerId:"o20"
+      }
+    };
+    document.nodes[0].groupId = "o22";
+    document.nodes[1].layerId = "missing";
+    document.nodes[1].hidden = false;
+    T.importDocText(JSON.stringify(document));
+    assert.strictEqual(T.organizationLayers().length, 2,
+      "duplicate layer IDs are deterministically discarded");
+    assert.strictEqual(T.organizationObjectLayerId(T.state.nodes[0]), "o20",
+      "nested groups inherit their root group's layer");
+    assert.strictEqual(T.state.nodes[1].layerId, undefined,
+      "invalid object layer membership migrates to the default layer");
+    assert.strictEqual(T.state.nodes[1].hidden, undefined,
+      "false direct-state flags are normalized away");
+    const cycleGroups = ["o23","o24"].map(T.organizationGroupById);
+    assert(cycleGroups.some(group => !group.parentGroupId),
+      "invalid nested-group cycles are broken deterministically");
+    const firstSave = T.serializeDocument();
+    const secondSave = T.serializeDocument();
+    assert.strictEqual(firstSave, secondSave,
+      "organization serialization is deterministic");
+    const saved = JSON.parse(firstSave);
+    assert.strictEqual(saved.organization.pluginData.preserve, true,
+      "unknown organization properties survive round-trip serialization");
+    assert.strictEqual(saved.organization.layers.find(layer => layer.id === "o20").plugin, "keep",
+      "unknown layer properties survive round-trip serialization");
+    assert.strictEqual(saved.organization.groups.find(group => group.id === "o21").plugin, "keep",
+      "unknown group properties survive round-trip serialization");
+    assert.strictEqual(saved.organization.layers.find(layer => layer.id === "o20").color, "#c20029",
+      "layer colors are normalized and persisted");
+
+    const platform = T.organizationGroupById("o21");
+    T.organizationSetHidden(platform, true);
+    assert.strictEqual(T.organizationObjectHidden(T.state.nodes[0]), true,
+      "group visibility contributes to effective node visibility");
+    assert.strictEqual(T.state.nodes[0].hidden, undefined,
+      "inherited group visibility never overwrites direct node state");
+    assert.strictEqual(T.visibleCanvasEdges().length, 0,
+      "links touching organizationally hidden objects are suppressed, not proxied");
+    T.organizationSetHidden(platform, false);
+    const layer = T.organizationLayerById("o20");
+    T.organizationSetLocked(layer, true);
+    assert.strictEqual(T.organizationObjectLocked(T.state.nodes[0]), true,
+      "layer locking contributes to effective node locking");
+    T.setSelection("node", "a");
+    const beforeDelete = T.state.nodes.length;
+    assert.strictEqual(T.deleteSelection(), false,
+      "delete rejects selections with effective locks");
+    assert.strictEqual(T.state.nodes.length, beforeDelete,
+      "a rejected locked deletion leaves model state untouched");
+    T.organizationSetLocked(layer, false);
+
+    const priorMembership = new Map(T.state.nodes.map(node => [node.id, node.groupId]));
+    T.setSelection("node", ["a","b"]);
+    const group = T.createOrganizationGroupFromSelection("Release unit");
+    assert(group && T.organizationGroupMemberNodes(group.id, true).length === 2,
+      "group creation records explicit membership for every selected node");
+    assert.strictEqual(T.undoDepth > 0, true, "group creation is undoable");
+    T.undo();
+    assert.strictEqual(T.organizationGroupById(group.id), null,
+      "undo removes the created group record");
+    assert(T.state.nodes.every(node => node.groupId === priorMembership.get(node.id)),
+      "undo restores every prior membership value");
+    T.redo();
+    assert(T.organizationGroupById(group.id),
+      "redo restores the group and its membership");
+  }
+
+  /* SCH-081 — group operations, active layers, direct/effective lock state, and creation paths. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:10,
+      organization:{
+        page:{id:"page-default",name:"Current canvas"},
+        layers:[{id:"layer-default",name:"Default"}],
+        groups:[],activeLayerId:"layer-default"
+      },
+      nodes:[
+        {id:"n1",type:"concept",x:0,y:0,title:"One",notes:"",color:"#CFE8FF"},
+        {id:"n2",type:"concept",x:220,y:0,title:"Two",notes:"",color:"#D8F3DC"},
+        {id:"n3",type:"concept",x:440,y:0,title:"Three",notes:"",color:"#FFE9A8"}
+      ],edges:[
+        {id:"e1",from:"n1",to:"n2",kind:"link",label:"Supports"},
+        {id:"e2",from:"n2",to:"n3",kind:"link",label:"Produces"}
+      ]
+    }));
+    const layer = T.createOrganizationLayer("Delivery");
+    const newNode = T.addNode("concept", 700, 0);
+    assert.strictEqual(newNode.layerId, layer.id,
+      "new nodes are assigned to the active layer");
+    T.addEdge({id:"n3"}, {id:newNode.id});
+    assert.strictEqual(T.state.edges.at(-1).layerId, layer.id,
+      "new relationships are assigned to the active layer independently of endpoints");
+    T.importCSVText("id,name\n1,one", "active_layer_table");
+    assert.strictEqual(T.state.nodes.at(-1).layerId, layer.id,
+      "CSV-created tables honor the active layer");
+    T.importDDLText("CREATE TABLE ddl_layer_test (id INT PRIMARY KEY);");
+    assert.strictEqual(T.state.nodes.at(-1).layerId, layer.id,
+      "DDL-created tables honor the active layer");
+
+    T.setSelection("node", ["n1","n2"]);
+    const parent = T.createOrganizationGroupFromSelection("Parent");
+    T.setSelection("node", "n3");
+    const child = T.createOrganizationGroupFromSelection("Child");
+    assert(T.organizationSetGroupParent(child, parent.id),
+      "groups can be nested under another group");
+    assert.strictEqual(T.organizationSetGroupParent(parent, child.id), false,
+      "group parenting rejects descendant cycles without mutating state");
+    assert.strictEqual(T.organizationGroupMemberNodes(parent.id, true).length, 3,
+      "parent groups resolve all nested member nodes");
+
+    const beforeNodeCount = T.state.nodes.length;
+    const beforeGroupCount = T.organizationGroups().length;
+    const duplicate = T.duplicateOrganizationGroup(parent.id);
+    assert(duplicate && T.state.nodes.length === beforeNodeCount + 3,
+      "duplicating a group duplicates every nested member");
+    assert.strictEqual(T.organizationGroups().length, beforeGroupCount + 2,
+      "duplicating a group remaps its complete nested group tree");
+    assert(T.organizationGroupMemberNodes(duplicate.id, true).every(node =>
+      node.groupId !== parent.id && node.groupId !== child.id),
+    "duplicated members point only at remapped group IDs");
+
+    const orderedBefore = T.state.nodes.map(node => node.id);
+    assert(T.organizationReorderGroup(parent.id, true),
+      "groups can be arranged as one unit");
+    const parentIds = new Set(T.organizationGroupMemberNodes(parent.id, true).map(node => node.id));
+    assert(T.state.nodes.slice(-parentIds.size).every(node => parentIds.has(node.id)),
+      "bringing a group forward preserves its members as one ordered block");
+    assert.notDeepStrictEqual(T.state.nodes.map(node => node.id), orderedBefore,
+      "group arrangement changes only z-order");
+
+    T.organizationSetLocked(parent, true);
+    assert(T.organizationGroupMemberNodes(parent.id, true).every(T.organizationObjectLocked),
+      "group locking is inherited by nested members");
+    assert.strictEqual(T.organizationReorderGroup(parent.id, false), false,
+      "locked groups cannot be rearranged");
+    T.organizationSetLocked(parent, false);
+    const directLock = T.state.nodes.find(node => node.id === "n1");
+    directLock.locked = true;
+    T.organizationSetLocked(parent, true);
+    T.organizationSetLocked(parent, false);
+    assert.strictEqual(directLock.locked, true,
+      "toggling an ancestor lock preserves a descendant's direct lock");
+    delete directLock.locked;
+    assert(T.ungroupOrganizationGroup(child.id),
+      "ungroup removes only the requested organizational record");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "n3").groupId, undefined,
+      "ungroup releases direct members without changing their geometry");
+  }
+
+  /* SCH-081 — spatial inheritance and collapsed-frame proxying remain distinct. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:10,nodes:[
+        {id:"f",type:"frame",x:0,y:0,title:"Container",color:"#2456E6",w:360,h:240},
+        {id:"inside",type:"concept",x:80,y:80,title:"Inside",notes:"",color:"#CFE8FF"},
+        {id:"outside",type:"concept",x:520,y:80,title:"Outside",notes:"",color:"#D8F3DC"}
+      ],edges:[{id:"edge",from:"inside",to:"outside",kind:"link",label:"References"}]
+    }));
+    const frame = T.state.nodes.find(node => node.id === "f");
+    const inside = T.state.nodes.find(node => node.id === "inside");
+    T.organizationSetHidden(frame, true);
+    assert.strictEqual(T.organizationObjectHidden(inside), true,
+      "spatial children inherit hidden state from containing frames");
+    assert.strictEqual(T.visibleCanvasEdges().length, 0,
+      "spatial organizational hiding suppresses external links");
+    T.organizationSetHidden(frame, false);
+    T.organizationSetLocked(frame, true);
+    assert.strictEqual(T.organizationObjectLocked(inside), true,
+      "spatial children inherit lock state from containing frames");
+    T.organizationSetLocked(frame, false);
+    T.setSelection("node", "inside");
+    assert(T.organizationIsolateCurrent(),
+      "a node inside a frame can be isolated");
+    assert.strictEqual(T.organizationObjectHidden(inside), false,
+      "isolation keeps the target node visible");
+    assert.strictEqual(T.organizationObjectHidden(frame), false,
+      "isolation also keeps required spatial ancestors visible");
+    assert.strictEqual(T.organizationObjectHidden(T.state.nodes.find(node => node.id === "outside")), true,
+      "isolation hides unrelated objects");
+    assert(T.organizationIsolateCurrent(), "repeating isolation clears the transient mode");
+    frame.collapsed = true;
+    assert.strictEqual(T.organizationObjectHidden(inside), false,
+      "collapsed-frame state is not conflated with organizational visibility");
+    const collapsed = T.collapsedFrameHiddenNodeIds();
+    const proxies = T.collapsedFrameProxyMap(collapsed);
+    assert.strictEqual(proxies.get("inside"), "f",
+      "collapsed contents retain the existing frame proxy mapping");
+    assert.strictEqual(T.visibleCanvasEdges(collapsed, proxies).length, 1,
+      "collapsed contents keep their external relationship on the canvas");
+    assert.strictEqual(T.edgeEndpoints(T.state.edges[0], collapsed, proxies).proxyA, "f",
+      "the preserved relationship connects to the collapsed frame");
+    T.organizationSetHidden(inside, true);
+    assert.strictEqual(T.visibleCanvasEdges(collapsed, proxies).length, 0,
+      "a direct hide still suppresses a relationship even inside a collapsed frame");
+  }
+
+  /* SCH-081 — layer rendering, visual export, search, and lock-aware editing. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:20,
+      organization:{
+        page:{id:"page-default",name:"Current canvas"},
+        layers:[
+          {id:"layer-default",name:"Default"},
+          {id:"l1",name:"Background",opacity:.5,color:"#007873",export:false},
+          {id:"l2",name:"Foreground"}
+        ],
+        groups:[],activeLayerId:"l2"
+      },
+      nodes:[
+        {id:"front",type:"concept",x:0,y:0,title:"Front",notes:"",color:"#CFE8FF",layerId:"l2"},
+        {id:"back",type:"concept",x:0,y:0,title:"Back",notes:"",color:"#FFE9A8",layerId:"l1"}
+      ],
+      edges:[]
+    }));
+    const rendered = [...doc.querySelectorAll("#nodeLayer > [data-node]")]
+      .map(element => element.getAttribute("data-node"));
+    sameList(rendered, ["back","front"],
+      "layer order overrides insertion order within the node render pass");
+    assert.strictEqual(doc.querySelector('[data-node="back"]').getAttribute("opacity"), "0.5",
+      "layer opacity is applied to the whole rendered object");
+    assert.strictEqual(doc.querySelector('[data-node="back"]').getAttribute("data-layer-export"), "false",
+      "rendered objects expose their effective export state");
+    const clone = T.cloneBoardForPng(true).clone;
+    assert.strictEqual(clone.querySelector('[data-node="back"]'), null,
+      "visual export removes objects on excluded layers");
+    assert(clone.querySelector('[data-node="front"]'),
+      "visual export preserves objects on included layers");
+
+    const front = T.state.nodes.find(node => node.id === "front");
+    T.organizationSetHidden(front, true);
+    assert.strictEqual(T.hitTest({x:20,y:20}).node.id, "back",
+      "organizationally hidden nodes are removed from hit testing while visible overlaps remain reachable");
+    T.refreshSearchIndex(true);
+    const hiddenResult = T.querySearchIndex({text:"Front",visibility:"hidden"}).results;
+    assert(hiddenResult.some(result => result.ownerId === "front"),
+      "search discovery indexes effective hidden state");
+    delete front.hidden;
+    front.sourceAuthority = "external";
+    T.setSelection("node", "front");
+    T.render();
+    assert.strictEqual(T.organizationObjectLocked(front), true,
+      "external source authority contributes to effective lock state");
+    assert(doc.querySelector("#inspBody [data-organization-lock-guard=true]"),
+      "the inspector communicates that ordinary controls are lock-guarded");
+    assert.strictEqual(T.startInlineEditor("node", "front"), undefined,
+      "inline editing does not open for effectively locked nodes");
+    assert.strictEqual(doc.querySelector(".inline-editor"), null,
+      "lock rejection leaves no editable overlay behind");
+  }
+
+  /* SCH-081 — explorer selection sync, keyboard access, drag/drop semantics, and virtualization. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:20,
+      organization:{
+        page:{id:"page-default",name:"Current canvas"},
+        layers:[
+          {id:"layer-default",name:"Default"},
+          {id:"layer-two",name:"Second"}
+        ],
+        groups:[{id:"group-one",name:"Grouped work",layerId:"layer-default"}],
+        activeLayerId:"layer-default"
+      },
+      nodes:[
+        {id:"a",type:"concept",x:0,y:0,title:"Alpha",notes:"",color:"#CFE8FF"},
+        {id:"b",type:"concept",x:220,y:0,title:"Beta",notes:"",color:"#D8F3DC",groupId:"group-one"},
+        {id:"frame",type:"frame",x:500,y:0,title:"Area",color:"#2456E6",w:360,h:240}
+      ],edges:[{id:"e",from:"a",to:"b",kind:"link",label:"Supports"}]
+    }));
+    assert(T.setObjectExplorerOpen(true, {persist:false,focus:false}),
+      "Object Explorer can be opened from application state");
+    const explorer = doc.getElementById("objectExplorer");
+    const tree = doc.getElementById("objectExplorerTree");
+    assert.strictEqual(explorer.hidden, false, "open state reveals the explorer");
+    assert.strictEqual(tree.getAttribute("role"), "tree",
+      "explorer exposes tree semantics");
+    const pageRow = tree.querySelector('[data-organization-row="page:page-default"]');
+    const layerRow = tree.querySelector('[data-organization-row="layer:layer-default"]');
+    assert(pageRow && layerRow, "explorer starts with page and layer hierarchy");
+    T.organizationAllRows().find(row => row.kind === "group");
+    const groupRow = tree.querySelector('[data-organization-row="group:group-one"]');
+    groupRow.querySelector(".object-explorer-disclosure").click();
+    T.renderOrganizationExplorer(true);
+    const betaRow = tree.querySelector('[data-organization-row="node:b"]');
+    betaRow.click();
+    sameList(T.selectionIds("node"), ["b"],
+      "explorer selection synchronizes to canvas selection");
+    T.setSelection("node", "a");
+    T.render();
+    T.renderOrganizationExplorer(true);
+    assert.strictEqual(tree.querySelector('[data-organization-row="node:a"]').getAttribute("aria-selected"), "true",
+      "canvas selection synchronizes back to the explorer");
+    const alphaRow = tree.querySelector('[data-organization-row="node:a"]');
+    alphaRow.focus();
+    tree.dispatchEvent(new window.KeyboardEvent("keydown", {key:"F2",bubbles:true,cancelable:true}));
+    const rename = tree.querySelector(".object-explorer-rename");
+    assert(rename, "F2 opens accessible inline rename");
+    rename.value = "Alpha renamed";
+    rename.dispatchEvent(new window.KeyboardEvent("keydown", {key:"Enter",bubbles:true,cancelable:true}));
+    assert.strictEqual(T.state.nodes.find(node => node.id === "a").title, "Alpha renamed",
+      "keyboard rename commits to the model");
+    assert(T.undoDepth > 0, "explorer rename is undoable");
+
+    const sourceRow = T.organizationAllRows().find(row => row.kind === "node" && row.id === "a");
+    const groupTarget = T.organizationAllRows().find(row => row.kind === "group" && row.id === "group-one");
+    assert(T.organizationApplyDrop(sourceRow, groupTarget),
+      "node-to-group drag/drop assigns explicit group membership");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "a").groupId, "group-one",
+      "node-to-group drop updates membership without geometry inference");
+    const layerTarget = T.organizationAllRows().find(row => row.kind === "layer" && row.id === "layer-two");
+    const movedRow = T.organizationAllRows().find(row => row.kind === "node" && row.id === "a");
+    assert(T.organizationApplyDrop(movedRow, layerTarget),
+      "node-to-layer drag/drop removes group membership and assigns the target layer");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "a").groupId, undefined,
+      "moving a node to a layer removes its explicit group parent");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "a").layerId, "layer-two",
+      "node-to-layer drop records the target layer");
+    const frameTarget = T.organizationAllRows().find(row => row.kind === "node" && row.id === "frame");
+    assert(T.organizationApplyDrop(movedRow, frameTarget),
+      "node-to-frame drop uses existing spatial containment semantics");
+    const moved = T.state.nodes.find(node => node.id === "a");
+    const frame = T.state.nodes.find(node => node.id === "frame");
+    assert(T.containerContainedNodes(frame).some(node => node.id === moved.id),
+      "node-to-frame drop moves the node into the frame footprint");
+
+    const layerRowTwo = tree.querySelector('[data-organization-row="layer:layer-two"]');
+    layerRowTwo?.click();
+    assert.strictEqual(T.organizationIsolateCurrent(), true,
+      "an explorer target can be isolated without mutating direct visibility");
+    assert(T.organizationIsolation, "isolation is tracked as transient UI state");
+    const serialized = JSON.parse(T.serializeDocument());
+    assert(!JSON.stringify(serialized).includes("organizationIsolation"),
+      "transient isolation is not serialized into the document");
+    assert(T.organizationShowAll(), "Show all clears transient isolation");
+    assert.strictEqual(T.organizationIsolation, null, "Show all returns the full canvas");
+    assert(T.COMMANDS.some(command => command.id === "toggleObjectExplorer" && command.owner === "object-organization"),
+      "Object Explorer is available through the shared command/ribbon registry");
+  }
+
+  /* SCH-081 — 10k-row explorer keeps a bounded DOM window and responsive filtering. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.state.nodes = Array.from({length:10000}, (_, index) => ({
+      id:`org-${index}`,type:"concept",x:(index % 100) * 180,y:Math.floor(index / 100) * 90,
+      title:index === 9999 ? "organization needle" : `Object ${index}`,notes:"",color:"#CFE8FF"
+    }));
+    T.state.edges = [];
+    T.state.nextId = 20000;
+    T.setObjectExplorerOpen(true, {persist:false,focus:false});
+    T.renderOrganizationExplorer(true);
+    assert(T.organizationFlatRows.length >= 10003,
+      "large-model explorer indexes page, layer, objects, and relationships");
+    assert(doc.querySelectorAll("#objectExplorerTree [data-organization-row]").length < 50,
+      "explorer virtualization keeps the mounted row count bounded");
+    const filter = doc.getElementById("objectExplorerFilter");
+    const started = performance.now();
+    filter.value = "organization needle";
+    filter.dispatchEvent(new window.Event("input", {bubbles:true}));
+    const elapsed = performance.now() - started;
+    assert(T.organizationFlatRows.some(row => row.id === "org-9999"),
+      "large-model explorer filtering finds the unique target");
+    assert(elapsed < 1000,
+      `10k-row explorer filter stays responsive (${elapsed.toFixed(1)}ms)`);
   }
 
   /* Search performance fixture: 10k objects and 20k relationships. */

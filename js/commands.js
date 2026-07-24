@@ -311,6 +311,11 @@ function commandTooltip(command){
 function executeCommand(id, context = {}){
   const command = commandDefinition(id);
   if (!command) return false;
+  if (command.mutatesDocument && command.scope === "selection" &&
+      typeof organizationSelectionLocked === "function" && organizationSelectionLocked()){
+    if (context.announce !== false) announce("The selection contains a locked object.");
+    return false;
+  }
   if (!commandIsEnabled(command)){
     if (context.announce !== false) announce(commandDisabledReason(command));
     return false;

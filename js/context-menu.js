@@ -717,6 +717,8 @@ function nodeMenu(n, x, y){
         ctxItem(sub, "Send to back",   () => reorderNode(n.id, false));
       });
     });
+    if (typeof buildOrganizationNodeContext === "function")
+      buildOrganizationNodeContext(m, n, targets);
     ctxGroup(m, "node:actions", "Actions", panel => {
       ctxItem(panel, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
       ctxItem(panel, targets.length > 1 ? "Delete selected nodes" : "Delete node",
@@ -875,6 +877,8 @@ function edgeMenu(e, x, y){
       ctxItem(panel, "Find connected objects", () => executeCommand("searchConnected"),
         {action:"search-connected"});
     });
+    if (typeof buildOrganizationEdgeContext === "function")
+      buildOrganizationEdgeContext(m, e);
     ctxGroup(m, "edge:actions", "Actions", panel => {
       ctxItem(panel, "Swap direction", () => {
         pushHistory();
@@ -926,6 +930,8 @@ function canvasMenu(w, x, y){
       ctxItem(panel, "Zoom in", () => executeCommand("zoomIn"), {action:"zoom-in"});
       ctxItem(panel, "Zoom out", () => executeCommand("zoomOut"), {action:"zoom-out"});
     });
+    if (typeof buildOrganizationCanvasContext === "function")
+      buildOrganizationCanvasContext(m);
   });
 }
 

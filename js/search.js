@@ -112,10 +112,13 @@ function searchNodeContext(node, containers, collapsedHidden){
     containers:ancestry.map(container => container.title || searchTypeLabel(container.type)),
     containerIds:ancestry.map(container => container.id),
     collapsedContainerId:collapsed ? collapsed.id : null,
-    hidden:node.hidden === true || collapsedHidden.has(node.id),
+    hidden:(typeof organizationObjectHidden === "function" ? organizationObjectHidden(node) : node.hidden === true) ||
+      collapsedHidden.has(node.id),
     collapsed:node.collapsed === true || !!collapsed,
-    locked:node.locked === true,
-    layer:searchSafeString(node.layer || node.layerName || node.layerId),
+    locked:typeof organizationObjectLocked === "function"
+      ? organizationObjectLocked(node) : node.locked === true,
+    layer:searchSafeString(typeof organizationObjectLayer === "function"
+      ? organizationObjectLayer(node).name : node.layer || node.layerName || node.layerId),
     owner:searchSafeString(node.owner),
     tags:Array.isArray(node.tags) ? node.tags.map(searchSafeString).filter(Boolean) : [],
     status:searchSafeString(node.status),
@@ -137,10 +140,14 @@ function searchEdgeContext(edge, nodeContextById){
       ? fromContext.containerIds : [],
     collapsedContainerId:(fromContext && fromContext.collapsedContainerId) ||
       (toContext && toContext.collapsedContainerId) || null,
-    hidden:edge.hidden === true || !!(fromContext && fromContext.hidden) || !!(toContext && toContext.hidden),
+    hidden:(typeof organizationObjectHidden === "function"
+      ? organizationObjectHidden(edge) : edge.hidden === true) ||
+      !!(fromContext && fromContext.hidden) || !!(toContext && toContext.hidden),
     collapsed:!!(fromContext && fromContext.collapsed) || !!(toContext && toContext.collapsed),
-    locked:edge.locked === true,
-    layer:searchSafeString(edge.layer || edge.layerName || edge.layerId),
+    locked:typeof organizationObjectLocked === "function"
+      ? organizationObjectLocked(edge) : edge.locked === true,
+    layer:searchSafeString(typeof organizationObjectLayer === "function"
+      ? organizationObjectLayer(edge).name : edge.layer || edge.layerName || edge.layerId),
     owner:searchSafeString(edge.owner),
     tags:Array.isArray(edge.tags) ? edge.tags.map(searchSafeString).filter(Boolean) : [],
     status:searchSafeString(edge.status),
@@ -424,7 +431,8 @@ function refreshSearchIndex(force = false){
     id:container.id, title:container.title, x:container.x, y:container.y,
     w:container.w, h:container.h, collapsed:container.collapsed === true,
     hidden:container.hidden === true, locked:container.locked === true
-  })));
+  }))) + (typeof cleanOrganizationForDocument === "function"
+    ? JSON.stringify(cleanOrganizationForDocument()) : "");
   const endpointTitleSignature = new Map(state.nodes.map(node => [node.id, node.title || ""]));
   const seen = new Set();
   let changed = 0;
@@ -975,7 +983,8 @@ function applySearchReplace(){
     const current = searchSafeString(searchReadPath(change.record));
     const owner = change.record.ownerKind === "node"
       ? nodeById(change.record.ownerId) : edgeById(change.record.ownerId);
-    if (!owner || owner.locked === true || current !== change.oldValue) stale.push(change);
+    if (!owner || (typeof organizationObjectLocked === "function"
+      ? organizationObjectLocked(owner) : owner.locked === true) || current !== change.oldValue) stale.push(change);
     else valid.push(change);
   }
   if (!valid.length){

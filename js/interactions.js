@@ -50,6 +50,7 @@ let lastPress = null; // {t, x, y} of the previous plain pointerdown, for double
 function drawEdgeGrips(){
   const e = singleSelectedEdge();
   if (!e) return;
+  if (typeof organizationObjectLocked === "function" && organizationObjectLocked(e)) return;
   const ep = edgeEndpoints(e);
   if (!ep) return;
   const t = themeColors();
@@ -93,6 +94,7 @@ function drawEdgeGrips(){
           ArrowUp:{axis:"y", amount:-1}, ArrowDown:{axis:"y", amount:1}
         }[ev.key];
         if (!delta || !axes.includes(delta.axis)) return;
+        if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(e)) return;
         ev.preventDefault();
         ev.stopPropagation();
         const step = ev.shiftKey ? GRID_SNAP : 4;
@@ -114,7 +116,8 @@ function drawEdgeGrips(){
 function looseHit(w, tol = 16){
   const hit = hitTest(w);
   if (hit) return hit;
-  const hidden = collapsedFrameHiddenNodeIds();
+  const hidden = typeof hiddenCanvasNodeIds === "function"
+    ? hiddenCanvasNodeIds() : collapsedFrameHiddenNodeIds();
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i];
     if (isStructuralNode(n) || hidden.has(n.id)) continue;
@@ -141,6 +144,8 @@ function drawDropPreview(hit, w){
 }
 /* move one end of an existing edge to a new attachment point / row / node */
 function reattachEdgeEnd(e, end, hit, w){
+  if (typeof organizationCanMutateObject === "function" &&
+      (!organizationCanMutateObject(e) || !organizationCanMutateObject(hit && hit.node))) return false;
   const isFrom = end === "from";
   const n = hit.node;
   const newFrom = isFrom ? n.id : e.from;
@@ -404,6 +409,10 @@ function toggleSnapToGrid(){
 }
 /* "Clean Up": snap every node to the dot grid without dragging */
 function cleanUpToGrid(){
+  if (typeof organizationObjectLocked === "function" && state.nodes.some(organizationObjectLocked)){
+    announce("Unlock every object before cleaning up the canvas.");
+    return false;
+  }
   if (!state.nodes.length) return;
   pushHistory();
   for (const n of state.nodes){
@@ -448,7 +457,7 @@ board.addEventListener("pointerdown", ev => {
   if (todoCheckEl){
     const n = nodeById(todoCheckEl.getAttribute("data-todonode"));
     const it = n && n.items && n.items.find(i => i.id === todoCheckEl.getAttribute("data-todocheck"));
-    if (n && it){
+    if (n && it && (typeof organizationCanMutateObject !== "function" || organizationCanMutateObject(n))){
       pushHistory();
       if (it.done) delete it.done; else it.done = true;  // absent means false — never write done:false
       setSelection("node", n.id);
@@ -463,12 +472,16 @@ board.addEventListener("pointerdown", ev => {
     return;
   }
   if (fieldHandleEl){
+    const source = nodeById(fieldHandleEl.getAttribute("data-fieldnode"));
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(source)) return;
     drag = { mode:"connect", from: { id: fieldHandleEl.getAttribute("data-fieldnode"),
                                      fieldId: fieldHandleEl.getAttribute("data-fieldhandle") } };
     board.classList.add("connecting");
     return;
   }
   if (handleEl){
+    const source = nodeById(handleEl.getAttribute("data-handle"));
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(source)) return;
     drag = { mode:"connect", from: { id: handleEl.getAttribute("data-handle"),
                                      anchor: handleEl.getAttribute("data-anchor") || undefined,
                                      portId:handleEl.getAttribute("data-node-port-id") || undefined,
@@ -479,6 +492,7 @@ board.addEventListener("pointerdown", ev => {
   if (collapseEl){
     const id = collapseEl.getAttribute("data-collapse");
     const n = nodeById(id);
+    if (n && typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(n)) return;
     if (n && n.type === "frame"){
       setFrameCollapsed(n, n.collapsed !== true);
     } else if (n && (n.type === "table" || n.type === "todo")){
@@ -493,6 +507,7 @@ board.addEventListener("pointerdown", ev => {
     const id = resizeEl.getAttribute("data-frame-resize");
     const n = nodeById(id);
     if (!n || !isStructuralNode(n) || (n.type === "frame" && n.collapsed === true)) return;
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(n)) return;
     const w = clientToWorld(ev.clientX, ev.clientY);
     setSelection("node", id);
     const size = nodeSize(n);
@@ -515,6 +530,7 @@ board.addEventListener("pointerdown", ev => {
     const e = edgeById(edgeBendEl.getAttribute("data-edgebend"));
     const ep = e && edgeEndpoints(e);
     if (!e || e.routing !== "ortho" || !ep) return;
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(e)) return;
     const route = orthoEdgeRoute(e, ep.pa, ep.pb);
     const cornerKey = edgeBendEl.getAttribute("data-edgecorner");
     const corner = orthoRouteCornerHandles(route).find(item => item.key === cornerKey);
@@ -529,6 +545,8 @@ board.addEventListener("pointerdown", ev => {
   const gripEl = ev.target.closest("[data-edgegrip]");
   if (gripEl){
     lastPress = null;
+    const edge = edgeById(gripEl.getAttribute("data-edgegrip"));
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(edge)) return;
     drag = { mode:"reattach", edgeId: gripEl.getAttribute("data-edgegrip"),
              end: gripEl.getAttribute("data-gripend") };
     board.classList.add("connecting");
@@ -576,6 +594,7 @@ board.addEventListener("pointerdown", ev => {
     const e = edgeById(edgeLabelEl.getAttribute("data-edge-label-handle"));
     const ep = e && edgeEndpoints(e);
     if (!e || !ep) return;
+    if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(e)) return;
     if (!isSelected("edge", e.id)){
       setSelection("edge", e.id);
       render();
@@ -591,6 +610,13 @@ board.addEventListener("pointerdown", ev => {
     const w = clientToWorld(ev.clientX, ev.clientY);
     const wasSelected = isSelected("node", id);
     if (!wasSelected && !ev.shiftKey) setSelection("node", id);
+    if (typeof organizationObjectLocked === "function" &&
+        (organizationObjectLocked(n) || selectedNodes().some(organizationObjectLocked))){
+      drag = null;
+      render();
+      announce("This object or another selected object is locked.");
+      return;
+    }
     const selectedIds = new Set(selectionIds("node"));
     if (ev.shiftKey && !wasSelected) selectedIds.add(id);
     const moveIds = new Set(selectedIds);
@@ -919,6 +945,10 @@ function nudgeSelection(key, step){
   }
   const nodes = [...moving.values()];
   if (!nodes.length) return;
+  if (typeof organizationObjectLocked === "function" && nodes.some(organizationObjectLocked)){
+    announce("The selection contains a locked object.");
+    return false;
+  }
   pushHistory();
   for (const n of nodes){
     if (key === "ArrowLeft") n.x -= step;
@@ -1088,6 +1118,7 @@ function closeInlineStatusPicker(){
 function startInlineStatusPicker(n){
   closeInlineEditor(false);
   closeInlineStatusPicker();
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(n)) return;
   const box = inlineStatusPickerBox(n);
   if (!box) return;
   const select = statusValueSelect(n, {close:closeInlineStatusPicker});
@@ -1121,6 +1152,8 @@ function startInlineStatusPicker(n){
 }
 function startInlineEditor(kind, id, rowId){
   closeInlineEditor(false);
+  const owner = kind === "edge" ? edgeById(id) : nodeById(id);
+  if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(owner)) return;
   const box = inlineEditorBox(kind, id, rowId);
   if (!box) return;
   const target = kind === "row" ? inlineEditorRow(id, rowId)

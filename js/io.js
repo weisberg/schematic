@@ -89,6 +89,9 @@ function newDoc(){
   state.nodes = [];
   state.edges = [];
   state.nextId = 1;
+  state.organization = typeof defaultOrganization === "function" ? defaultOrganization() : undefined;
+  if (typeof ensureOrganization === "function") ensureOrganization();
+  if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   clearSelection();
   undoStack.length = 0;
   redoStack.length = 0;
@@ -139,7 +142,11 @@ document.getElementById("fileInput").addEventListener("change", ev => {
 });
 function clearCanvas(){
   if (!state.nodes.length || confirm("Clear the entire canvas? (Undo can bring it back.)")){
-    pushHistory(); state.nodes = []; state.edges = []; clearSelection(); render();
+    pushHistory(); state.nodes = []; state.edges = [];
+    state.organization = typeof defaultOrganization === "function" ? defaultOrganization() : state.organization;
+    if (typeof ensureOrganization === "function") ensureOrganization();
+    if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
+    clearSelection(); render();
   }
 }
 
@@ -505,6 +512,7 @@ function importParsedDDL(parsed){
       title:src.title, notes:"", color:tableColors()[i % tableColors().length],
       fields:src.fields.map(f => ({ id:uid(), name:f.name, type:f.type, pk:!!f.pk, fk:!!f.fk,
         nullable:f.nullable !== false, default:f.default, unique:!!f.unique, index:!!f.index, comment:f.comment })) };
+    if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(n);
     state.nodes.push(n);
     tableIdByName.set(ident(n.title), n.id);
     fieldIdByTableName.set(ident(n.title), new Map(n.fields.map(f => [ident(f.name), f.id])));
@@ -526,6 +534,7 @@ function importParsedDDL(parsed){
     }
     const e = { id:uid(), from, to, kind:"1:N", label:"" };
     if (pairs.length) setEdgePairs(e, pairs);
+    if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(e);
     state.edges.push(e);
   }
   render();
@@ -589,6 +598,7 @@ function generateMarkdownOutline(){
 function serializedSvg(asShown = true){
   if (!state.nodes.length) return "";
   const bounds = documentBounds();
+  if (!bounds) return "";
   const pad = 40, W = bounds.w + pad*2, H = bounds.h + pad*2;
   const png = cloneBoardForPng(asShown);
   const clone = png.clone;
@@ -647,9 +657,11 @@ function importCSVText(text, name = "imported_csv"){
   if (!inferred.fields.length) return inferred;
   pushHistory();
   const c = viewCenter();
-  state.nodes.push({ id:uid(), type:"table", x:c.x-95, y:c.y-40, title:inferred.name,
+  const node = { id:uid(), type:"table", x:c.x-95, y:c.y-40, title:inferred.name,
     notes:"", color:tableColors()[state.nodes.filter(n => n.type === "table").length % tableColors().length],
-    fields:inferred.fields.map(f => ({...f, id:uid()})) });
+    fields:inferred.fields.map(f => ({...f, id:uid()})) };
+  if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(node);
+  state.nodes.push(node);
   render();
   return inferred;
 }
@@ -733,11 +745,13 @@ function cloneBoardForPng(asShown = pngAsShown){
   if (previousTheme !== exportTheme) applyTheme(exportTheme, { render:true });
   const clone = board.cloneNode(true);
   if (previousTheme !== exportTheme) applyTheme(previousTheme, { render:true });
+  if (typeof filterOrganizationExportClone === "function") filterOrganizationExportClone(clone);
   return { clone, themeName:exportTheme };
 }
 function exportPngDocument(){
   if (!state.nodes.length){ alert("Nothing to export yet."); return; }
   const bounds = documentBounds();
+  if (!bounds){ alert("Nothing visible to export."); return; }
   const x0 = bounds.x, y0 = bounds.y, x1 = bounds.x + bounds.w, y1 = bounds.y + bounds.h;
   const pad = 40, W = x1 - x0 + pad*2, H = y1 - y0 + pad*2;
   const png = cloneBoardForPng(pngAsShown);

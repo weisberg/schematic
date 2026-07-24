@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, twelve ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, thirteen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,7 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `commands` → `context-menu` → `bootstrap`.
+`search` → `organization` → `commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -73,6 +73,19 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "version": 1,
   "meta": { "theme": "light", "dialect": "ansi", "recentColors": ["#ab12cd"] },
   "nextId": 42,
+  "organization": {
+    "page": { "id": "page-default", "name": "Current canvas" },
+    "layers": [
+      { "id": "layer-default", "name": "Default" },
+      { "id": "o40", "name": "Annotations", "opacity": 0.65,
+        "color": "#C20029", "export": false }
+    ],
+    "groups": [
+      { "id": "o41", "name": "Payment services", "layerId": "o40" },
+      { "id": "o42", "name": "Settlement", "parentGroupId": "o41" }
+    ],
+    "activeLayerId": "o40"
+  },
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
       "title": "Loyalty program launch", "notes": "…",
@@ -170,6 +183,14 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 - Table fields may include optional `default`, `unique`, `index`, and `comment` keys.
 - Table nodes may include `collapsed`; collapsed tables render header + field count.
 - `meta.theme`, `meta.dialect`, and `meta.recentColors` are optional document metadata.
+- `organization` (v1.39, additive) persists the single current page root, ordered layers,
+  explicit non-rendered groups, nested group parents, and the active layer. Nodes and edges may
+  carry optional `layerId`, `hidden`, and `locked`; nodes may additionally carry `groupId`.
+  Default-layer membership and false state flags are omitted. Layer records may carry optional
+  `hidden`, `locked`, `export:false`, `opacity` (0.1–1), and `color`. Direct state is preserved
+  independently from effective state inherited through groups, layers, spatial frames/swimlanes,
+  and external source authority. Missing organization data migrates to one visible, unlocked
+  `layer-default`; no groups are inferred.
 - `meta.customStatuses` (v1.17, additive) is the shared, case-insensitively deduplicated list
   of custom status labels in the diagram. Built-in labels are never written there.
   Imports also recover custom labels already used by status nodes when older JSON lacks this key.
@@ -384,6 +405,18 @@ Harness quirks you must respect:
   `looseHit`). Grips are stripped from PNG/SVG exports via `[data-edgegrip]`.
 
 **Editing surfaces**
+- Object Explorer: a virtualized, keyboard-accessible synchronized tree of the current page,
+  ordered layers, nested explicit groups, spatial frames/swimlanes, nodes, and relationships.
+  It supports inline rename, type/state/property filtering, drag/drop reparenting and z-order,
+  direct/effective visibility and lock state, active-layer creation, reveal/isolate/show-all,
+  layer opacity/color/export controls, and group duplicate/ungroup/delete/order operations.
+  Selection stays synchronized with the canvas. Groups remain non-rendered and nested group
+  contents move, hide, lock, duplicate, delete, and arrange as a unit.
+- Organization controls are also available in the inspector, node/edge/blank-canvas context
+  menus, shared command palette, and View/Arrange ribbon contributions. Locks preserve inspection
+  while preventing movement, resizing, property edits, deletion, relationship changes, layout,
+  and other mutation paths. Layer order is stable within render passes; excluded layers are
+  omitted from SVG/PNG/print while remaining in native JSON.
 - Right inspector (node/table/edge editors, help + legend when nothing selected) uses a
   compact object header, task-grouped persistent disclosures, and a sticky action footer.
 - Multi-select inspector with bulk color, text-size, and text-color controls.
