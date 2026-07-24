@@ -98,7 +98,6 @@ function addEdge(from, to){
     return (ef === key(from) && et === key(to)) || (ef === key(to) && et === key(from));
   });
   if (dup) return;
-  pushHistory();
   const kind = (a.type === "table" && b.type === "table") ? "1:N" : "link";
   /* field-to-field between tables: orient so the PK/"one" side is `from`
      (drag FK column → PK column or the reverse; both come out right) */
@@ -107,7 +106,12 @@ function addEdge(from, to){
     const fb = b.fields.find(f => f.id === to.fieldId);
     if (fa && fb && !fa.pk && fb.pk){ const t = from; from = to; to = t; }
   }
+  const compatibility=typeof routingApproveConnection==="function"
+    ?routingApproveConnection(from,to,kind):{allowed:true,override:false};
+  if(!compatibility.allowed)return;
+  pushHistory();
   const e = { id: uid(), from: from.id, to: to.id, kind, label:"" };
+  if(compatibility.override)e.portCompatibilityOverride=true;
   if (typeof organizationAssignActiveLayer === "function") organizationAssignActiveLayer(e);
   if (from.fieldId) e.fromField = from.fieldId;
   if (to.fieldId)   e.toField   = to.fieldId;

@@ -481,6 +481,8 @@ function renderNodePortSide(n, side){
     remove.setAttribute("aria-label", `Remove ${port.label}`);
     row.append(input, remove);
     group.appendChild(row);
+    if(typeof routingPortDetails==="function")
+      group.appendChild(routingPortDetails(n,side,port));
   });
   appendInspector(group);
 }
@@ -507,6 +509,11 @@ function renderInspector(){
   inspectorMount = inspBody;
   colorPickerSequence = 0;
   if (!sel){ setInspectorHeader("Inspector"); renderHelp(); return; }
+  if(sel.kind==="edge"&&selectionCount("edge")>1&&
+     typeof renderRoutingMultiInspector==="function"){
+    renderRoutingMultiInspector(selectionIds("edge").map(edgeById).filter(Boolean));
+    return;
+  }
 
   if (sel.kind === "node"){
     if (selectionCount("node") > 1){ renderMultiInspector(); return; }
@@ -1063,6 +1070,7 @@ function renderInspector(){
         return control;
       });
     }, {open:false});
+    if(typeof renderRoutingInspectorForEdge==="function")renderRoutingInspectorForEdge(e);
     inspectorSection("edge:label", "Label", () => {
       frow("Relationship", () => edgeRelationshipSelect(e, { id:"edgeRelationshipSelect", onCustom:focusEdgeLabelInput }));
       frow("Label text", () => {
@@ -1215,6 +1223,10 @@ function swapEdgeDirection(e){
   const tp = e.fromPort;
   if (e.toPort !== undefined) e.fromPort = e.toPort; else delete e.fromPort;
   if (tp !== undefined) e.toPort = tp; else delete e.toPort;
+  const fromPortUnresolved = e.fromPortUnresolved === true;
+  const toPortUnresolved = e.toPortUnresolved === true;
+  if (toPortUnresolved) e.fromPortUnresolved = true; else delete e.fromPortUnresolved;
+  if (fromPortUnresolved) e.toPortUnresolved = true; else delete e.toPortUnresolved;
   if (hadLabelPosition) setEdgeLabelPosition(e, 1 - labelPosition);
 }
 /* pick a whole-node attachment point; table ends also offer title left/right */

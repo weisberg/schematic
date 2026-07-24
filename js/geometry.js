@@ -1013,8 +1013,10 @@ function nodePortPoints(n, r = nodeRect(n)){
     return ports.map((port, index) => {
       const y = r.y + top + layout.portRowH * (index + .5);
       const bounds = conceptHorizontalBoundsAtY(n, r, y);
-      return {...port, x:side === "input" ? bounds.left : bounds.right, y,
-              side:side === "input" ? "w" : "e", key:side === "input" ? "ml" : "mr",
+      const placement=port.placement|| (side === "input" ? "left" : "right");
+      const left=placement==="left";
+      return {...port, x:left ? bounds.left : bounds.right, y,
+              side:left ? "w" : "e", key:left ? "ml" : "mr",
               portSide:side};
     });
   };

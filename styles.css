@@ -654,6 +654,34 @@
   .modal pre{font-family:var(--mono);font-size:12px;line-height:1.55;padding:16px 18px;overflow:auto;
              white-space:pre;color:var(--ink-2);flex:1}
   .modal .actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--line)}
+  .routing-preview-card{width:min(760px,94vw)!important}
+  .routing-preview-body{padding:16px 18px;overflow:auto;display:grid;gap:14px}
+  .routing-preview-summary{display:grid;grid-template-columns:repeat(4,minmax(86px,1fr));gap:8px}
+  .routing-preview-stat{border:1px solid var(--line);border-radius:8px;padding:9px 10px;
+    display:flex;align-items:baseline;justify-content:space-between;background:var(--surface)}
+  .routing-preview-stat strong{font:700 18px var(--mono)}
+  .routing-preview-stat span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .routing-preview-stat.failed strong{color:#C20029}
+  .routing-preview-stat.changed strong{color:#007873}
+  .routing-preview-delta{grid-column:1/-1;margin:0}
+  .routing-preview-list{display:grid;gap:6px;max-height:42vh;overflow:auto}
+  .routing-preview-row{display:grid;grid-template-columns:minmax(160px,.8fr) minmax(240px,1.2fr);
+    gap:12px;padding:9px 10px;border:1px solid var(--line);border-radius:7px}
+  .routing-preview-row strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .routing-preview-row span{font:10.5px var(--mono);color:var(--muted)}
+  .routing-preview-row.failed{border-color:#C2002966;background:#C200290C}
+  .routing-diagnostic{border-left:3px solid #B45309;padding-left:9px}
+  .port-detail-row{display:grid;grid-template-columns:1fr 1fr 68px 88px 54px;gap:5px;margin:0 0 8px 20px}
+  .port-detail-row input,.port-detail-row select{min-width:0;font-size:10px;padding:5px 6px}
+  .port-type-select{font-family:var(--mono)}
+  .port-order-buttons{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+  .port-order-buttons button{min-width:0;padding:4px 2px}
+  .port-detail-row .port-allowed-relationships{grid-column:1/-1}
+  @media(max-width:700px){
+    .routing-preview-summary{grid-template-columns:repeat(2,1fr)}
+    .routing-preview-row{grid-template-columns:1fr}
+    .port-detail-row{grid-template-columns:1fr}
+  }
 
   .pages-manager-modal{z-index:55}
   .pages-manager-modal .pages-manager-card{width:min(980px,95vw);height:min(720px,90vh);max-height:90vh;

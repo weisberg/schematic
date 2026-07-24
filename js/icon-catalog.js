@@ -203,7 +203,22 @@ function normalizedNodePortList(raw, side){
     }
     used.add(id);
     const fallback = raw.length > 1 ? `${config.fallback} ${result.length + 1}` : config.fallback;
-    result.push({id, label:cleanNodePortLabel(candidate.label, fallback)});
+    const port={...candidate,id,label:cleanNodePortLabel(candidate.label, fallback)};
+    const type=String(candidate.type||"").trim().toLowerCase();
+    if(type)port.type=type;else delete port.type;
+    const group=String(candidate.group||"").trim().slice(0,60);
+    if(group)port.group=group;else delete port.group;
+    if(!["one","many"].includes(candidate.multiplicity))delete port.multiplicity;
+    if(Number.isFinite(Number(candidate.order)))port.order=Number(candidate.order);
+    else delete port.order;
+    if(["left","right"].includes(candidate.placement))port.placement=candidate.placement;
+    else delete port.placement;
+    if(Array.isArray(candidate.allowedRelationships)){
+      port.allowedRelationships=[...new Set(candidate.allowedRelationships.map(String)
+        .map(value=>value.trim()).filter(Boolean))].slice(0,24);
+      if(!port.allowedRelationships.length)delete port.allowedRelationships;
+    }else delete port.allowedRelationships;
+    result.push(port);
   }
   return result;
 }
@@ -211,7 +226,9 @@ function nodePortsForSide(n, side){
   const config = nodePortConfig(side);
   if (!config || !nodePortsEnabled(n)) return [];
   const stored = normalizedNodePortList(n[config.key], side);
-  if (stored.length) return stored;
+  if (stored.length) return stored.map((port,index)=>({port,index}))
+    .sort((a,b)=>(a.port.order??a.index)-(b.port.order??b.index)||a.index-b.index)
+    .map(item=>item.port);
   return [{id:config.id, label:cleanNodePortLabel(n[config.legacyKey], config.fallback)}];
 }
 function nodeInputPorts(n){ return nodePortsForSide(n, "input"); }
@@ -260,8 +277,8 @@ function setNodePortsEnabled(n, enabled){
     delete n.inputPorts;
     delete n.outputPorts;
     for (const edge of state.edges || []){
-      if (edge.from === n.id) delete edge.fromPort;
-      if (edge.to === n.id) delete edge.toPort;
+      if (edge.from === n.id && edge.fromPort) edge.fromPortUnresolved = true;
+      if (edge.to === n.id && edge.toPort) edge.toPortUnresolved = true;
     }
   }
   return true;
@@ -302,8 +319,8 @@ function removeNodePort(n, side, portId){
   if (index < 0) return false;
   ports.splice(index, 1);
   for (const edge of state.edges || []){
-    if (edge.from === n.id && edge.fromPort === portId) delete edge.fromPort;
-    if (edge.to === n.id && edge.toPort === portId) delete edge.toPort;
+    if (edge.from === n.id && edge.fromPort === portId) edge.fromPortUnresolved = true;
+    if (edge.to === n.id && edge.toPort === portId) edge.toPortUnresolved = true;
   }
   return true;
 }
@@ -347,11 +364,21 @@ function normalizeEdgePortBindings(e){
   ]){
     const id = cleanNodePortId(e[portKey]);
     const node = nodeById(e[nodeKey]);
-    if (!id || e[fieldKey] || !nodePortBinding(node, id, preferredSide)){
+    const unresolvedKey=portKey==="fromPort"?"fromPortUnresolved":"toPortUnresolved";
+    if (!id || e[fieldKey]){
       delete e[portKey];
+      delete e[unresolvedKey];
       continue;
     }
     e[portKey] = id;
-    delete e[anchorKey];
+    if(nodePortBinding(node,id,preferredSide)){
+      delete e[unresolvedKey];
+      delete e[anchorKey];
+    }else{
+      e[unresolvedKey]=true;
+      /* Preserve the exact named-port identity.  A missing or renamed port is
+         an unresolved binding, not permission to silently pick another port. */
+    }
   }
+  if(typeof routingUpdateEdgePortDiagnostic==="function")routingUpdateEdgePortDiagnostic(e);
 }

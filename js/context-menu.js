@@ -810,6 +810,8 @@ function nodeMenu(n, x, y){
       buildFormattingNodeContext(m, n, targets);
     if (typeof buildPagesNodeContext === "function")
       buildPagesNodeContext(m,n,targets);
+    if (typeof buildRoutingNodeContext === "function")
+      buildRoutingNodeContext(m,n,targets);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "node:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -987,6 +989,8 @@ function edgeMenu(e, x, y){
       buildFormattingEdgeContext(m, e);
     if (typeof buildPagesEdgeContext === "function")
       buildPagesEdgeContext(m,e);
+    if (typeof buildRoutingEdgeContext === "function")
+      buildRoutingEdgeContext(m,e);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "edge:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy link style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste link style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -1076,6 +1080,8 @@ function canvasMenu(w, x, y){
       buildFormattingCanvasContext(m);
     if (typeof buildPagesCanvasContext === "function")
       buildPagesCanvasContext(m);
+    if (typeof buildRoutingCanvasContext === "function")
+      buildRoutingCanvasContext(m);
   });
 }
 
@@ -1090,7 +1096,7 @@ board.addEventListener("contextmenu", ev => {
     nodeMenu(n, ev.clientX, ev.clientY);
   } else if (edgeEl){
     const e = edgeById(edgeEl.getAttribute("data-edge"));
-    setSelection("edge", e.id);
+    if(!isSelected("edge",e.id))setSelection("edge", e.id);
     render();
     edgeMenu(e, ev.clientX, ev.clientY);
   } else {

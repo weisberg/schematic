@@ -12,7 +12,7 @@ function el(tag, attrs, parent){
   return e;
 }
 
-let world, frameLayer, edgeLayer, nodeLayer, guideLayer, draftLayer, minimap, minimapDrag = false;
+let world, frameLayer, edgeLayer, bridgeLayer, nodeLayer, guideLayer, draftLayer, minimap, minimapDrag = false;
 const renderStats = { full:0, fast:0 };
 
 function buildScaffold(){
@@ -30,6 +30,7 @@ function buildScaffold(){
               "data-grid":"1"}, world);
   frameLayer = el("g", {id:"frameLayer"}, world);
   edgeLayer  = el("g", {id:"edgeLayer"}, world);
+  bridgeLayer = el("g", {id:"bridgeLayer"}, world);
   nodeLayer  = el("g", {id:"nodeLayer"}, world);
   guideLayer = el("g", {id:"guideLayer"}, world);
   draftLayer = el("g", {id:"draftLayer"}, world);
@@ -61,6 +62,7 @@ function render(){
   if (inlineStatusPicker) closeInlineStatusPicker();
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
+  bridgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
   guideLayer.innerHTML = "";
   draftLayer.innerHTML = "";
@@ -94,8 +96,11 @@ function render(){
   });
   for (const n of structuralNodes) drawStructuralNode(n);
   const edges = visibleCanvasEdges(hidden, proxies);
-  for (const e of typeof organizationSortRecords === "function" ? organizationSortRecords(edges) : edges)
+  const sortedEdges = typeof organizationSortRecords === "function" ? organizationSortRecords(edges) : edges;
+  if (typeof routingPrepareRender === "function") routingPrepareRender(sortedEdges, hidden, proxies);
+  for (const e of sortedEdges)
     drawEdge(e, hidden, proxies);
+  if (typeof routingDrawBridgeLayer === "function") routingDrawBridgeLayer(sortedEdges);
   const contentNodes = state.nodes.filter(n => !allHidden.has(n.id) && !isStructuralNode(n));
   for (const n of typeof organizationSortRecords === "function"
     ? organizationSortRecords(contentNodes) : contentNodes) drawNode(n);
@@ -105,6 +110,7 @@ function render(){
     editingRenderLayoutProposal();
   for (const n of state.nodes)
     if (!allHidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
+  if (typeof routingDrawOverlays === "function") routingDrawOverlays();
   drawEdgeGrips();
   const nodes = state.nodes.length - frames - lanes;
   const structural = [frames ? `${frames} frame${frames === 1 ? "" : "s"}` : "",
@@ -134,6 +140,8 @@ function fastDragRender(ids){
     if (n && overlay) overlay.setAttribute("transform", `translate(${n.x},${n.y})`);
   }
   const incident = state.edges.filter(e => moved.has(e.from) || moved.has(e.to));
+  if (typeof routingInvalidateEdges === "function")
+    routingInvalidateEdges(incident.map(edge => edge.id));
   for (const e of incident){
     const old = edgeLayer.querySelector(`[data-edge="${e.id}"]`);
     if (old) old.remove();
@@ -435,7 +443,7 @@ function hasCustomOrthoBend(e){
   return !!e && ["orthoX","orthoY","orthoFromStub","orthoToStub"]
     .some(key => Number.isFinite(e[key]));
 }
-function orthoEdgeRoute(e, pa, pb){
+function legacyOrthoEdgeRoute(e, pa, pb){
   const stubDistance = key => Number.isFinite(e && e[key]) ? Math.max(0, e[key]) : 12;
   const out = (p, stub) => {
     if (p.side === "e") return { x:p.x + stub, y:p.y };
@@ -473,7 +481,16 @@ function orthoEdgeRoute(e, pa, pb){
     ? squarePolylinePath(points) : roundedPolylinePath(points);
   return { d, points, pa, pb, a, b, bend, horizontal, auto:{x:b.x, y:my} };
 }
+function orthoEdgeRoute(e, pa, pb){
+  if (typeof routingResolveOrthoRoute === "function"){
+    const smart = routingResolveOrthoRoute(e, pa, pb);
+    if (smart) return smart;
+  }
+  return legacyOrthoEdgeRoute(e, pa, pb);
+}
 function orthoRouteCornerHandles(route){
+  if (route && route.smart && typeof routingCornerHandles === "function")
+    return routingCornerHandles(route) || [];
   if (!route) return [];
   const points = compactPolylinePoints(route.points);
   const corners = [];
@@ -513,6 +530,8 @@ function orthoRouteCornerHandles(route){
 }
 function setOrthoCornerPosition(e, route, corner, point){
   if (!e || !route || !corner || !point) return;
+  if (route.smart && typeof routingSetCornerPosition === "function" &&
+      routingSetCornerPosition(e, route, corner, point)) return;
   if (corner.key === "from-stub" || corner.key === "to-stub"){
     const from = corner.key === "from-stub";
     const endpoint = from ? route.pa : route.pb;
@@ -599,9 +618,17 @@ function edgeLabelCurveEndpoints(e, ep){
 }
 function edgeLabelPoint(e, ep){
   const position = edgeLabelPosition(e);
-  if (e && e.routing === "ortho") return polylinePointAt(orthoEdgeRoute(e, ep.pa, ep.pb).points, position);
+  if (e && e.routing === "ortho"){
+    const route = orthoEdgeRoute(e, ep.pa, ep.pb);
+    if (typeof routingLabelPoint === "function")
+      return routingLabelPoint(route.points, position, e.labelOffset);
+    return polylinePointAt(route.points, position);
+  }
   const {pa, pb} = edgeLabelCurveEndpoints(e, ep);
-  return curveEdgePointAt(pa, pb, position);
+  const point = curveEdgePointAt(pa, pb, position);
+  if (typeof routingCurveLabelPoint === "function")
+    return routingCurveLabelPoint(pa, pb, position, e.labelOffset, point);
+  return point;
 }
 function projectEdgeLabelToPath(e, ep, point){
   if (e && e.routing === "ortho"){
@@ -820,6 +847,8 @@ function drawEdge(e, hidden = null, proxies = null){
   }
   if (typeof formattingDecorateGroup === "function")
     formattingDecorateGroup(g,e);
+  if (typeof routingDrawEdgeDiagnostic === "function")
+    routingDrawEdgeDiagnostic(g,e);
 }
 
 /* ---- nodes ---- */
@@ -1168,16 +1197,18 @@ function drawConceptPorts(parent, n, r, layout, ink){
     "font-size":layout.portFs, "font-weight":600
   };
   for (const port of ports.inputs){
-    const maxWidth = Math.max(18, r.w/2 - port.x - middleGap);
-    const text = el("text", {...attrs, x:port.x+12, y:port.y+layout.portFs*.36,
-      "text-anchor":"start", "data-node-input-label":"1",
+    const left=port.side==="w";
+    const maxWidth = Math.max(18, left ? r.w/2-port.x-middleGap : port.x-r.w/2-middleGap);
+    const text = el("text", {...attrs, x:port.x+(left?12:-12), y:port.y+layout.portFs*.36,
+      "text-anchor":left?"start":"end", "data-node-input-label":"1",
       "data-port-label-id":port.id, "data-port-label-side":"input"}, parent);
     text.textContent = truncate(port.label, maxWidth, layout.portFont);
   }
   for (const port of ports.outputs){
-    const maxWidth = Math.max(18, port.x - r.w/2 - middleGap);
-    const text = el("text", {...attrs, x:port.x-12, y:port.y+layout.portFs*.36,
-      "text-anchor":"end", "data-node-output-label":"1",
+    const left=port.side==="w";
+    const maxWidth = Math.max(18, left ? r.w/2-port.x-middleGap : port.x-r.w/2-middleGap);
+    const text = el("text", {...attrs, x:port.x+(left?12:-12), y:port.y+layout.portFs*.36,
+      "text-anchor":left?"start":"end", "data-node-output-label":"1",
       "data-port-label-id":port.id, "data-port-label-side":"output"}, parent);
     text.textContent = truncate(port.label, maxWidth, layout.portFont);
   }

@@ -79,6 +79,7 @@ function drawEdgeGrips(){
       const direction = axes.length === 2 ? "" : axes[0] === "x" ? " horizontally" : " vertically";
       const cursor = axes.length === 2 ? "move" : axes[0] === "x" ? "ew-resize" : "ns-resize";
       const handle = el("g", {"data-edgebend":e.id, "data-edgecorner":key,
+                              "data-edgecorner-index":corner.pointIndex == null ? "" : corner.pointIndex,
                               "data-corner-axes":axes.join(""), cursor, role:"button", tabindex:0,
                               "aria-label":`Move orthogonal link corner ${index + 1}${direction} at ` +
                                 `${Math.round(point.x)}, ${Math.round(point.y)}`}, draftLayer);
@@ -109,6 +110,7 @@ function drawEdgeGrips(){
         });
       });
     }
+    if(typeof routingDrawConstraintHandles==="function")routingDrawConstraintHandles(e);
   }
 }
 /* hitTest, but tolerant of drops just outside a node's rect — attachment points
@@ -128,19 +130,21 @@ function looseHit(w, tol = 16){
   return null;
 }
 /* shared drop-target preview for connect and reattach drags */
-function drawDropPreview(hit, w){
+function drawDropPreview(hit, w, source=null){
   const r = nodeRect(hit.node);
   const group = el("g", {transform:nodeSvgTransform(hit.node,r)}, draftLayer);
+  const previewColor=typeof routingDropPreviewColor==="function"
+    ?routingDropPreviewColor(source,hit,w):"#2456E6";
   if (hit.field){
     const idx = (nodeRows(hit.node) || []).indexOf(hit.field);
     const mm = tableMetrics(hit.node);
     el("rect", {x:2, y:mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
-                fill:"#2456E6", opacity:.16}, group);
+                fill:previewColor, opacity:.16}, group);
   } else {
     el("rect", {x:-3, y:-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
-                stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, group);
+                stroke:previewColor, "stroke-width":1.5, "stroke-dasharray":"4 3"}, group);
     const na = nearestAnchorWithin(hit.node, w);
-    if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:"#2456E6"}, draftLayer);
+    if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:previewColor}, draftLayer);
   }
 }
 /* move one end of an existing edge to a new attachment point / row / node */
@@ -166,6 +170,12 @@ function reattachEdgeEnd(e, end, hit, w){
     return (of === nf && ot === nt) || (of === nt && ot === nf);
   });
   if (dup){ render(); return; }
+  const compatibility=typeof routingApproveConnection==="function"
+    ?routingApproveConnection(
+      {id:newFrom,portId:newFromPort||undefined},
+      {id:newTo,portId:newToPort||undefined},e.kind)
+    :{allowed:true,override:false};
+  if(!compatibility.allowed){render();return false;}
   pushHistory();
   if (isFrom) e.from = n.id; else e.to = n.id;
   const fieldKey = isFrom ? "fromField" : "toField";
@@ -193,6 +203,8 @@ function reattachEdgeEnd(e, end, hit, w){
   }
   const a = nodeById(e.from), b = nodeById(e.to);
   if (linkOnlyNode(a) || linkOnlyNode(b)) e.kind = "link";
+  if(compatibility.override)e.portCompatibilityOverride=true;
+  else delete e.portCompatibilityOverride;
   setSelection("edge", e.id);
   render();
 }
@@ -443,6 +455,8 @@ board.addEventListener("pointerdown", ev => {
   const edgeLabelEl = ev.target.closest("[data-edge-label-handle]");
   const statusBandHitEl = ev.target.closest("[data-status-band-hit]");
   const manualGuideEl = ev.target.closest("[data-manual-guide]");
+  const routeWaypointEl = ev.target.closest("[data-route-waypoint]");
+  const routeJunctionEl = ev.target.closest("[data-route-junction]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
@@ -459,6 +473,30 @@ board.addEventListener("pointerdown", ev => {
     }
   }
 
+  if(routeWaypointEl){
+    const edge=edgeById(routeWaypointEl.getAttribute("data-route-waypoint-edge"));
+    const waypoint=edge&&(edge.routeWaypoints||[])
+      .find(item=>item.id===routeWaypointEl.getAttribute("data-route-waypoint"));
+    if(!edge||!waypoint)return;
+    setSelection("edge",edge.id);
+    const start=clientToWorld(ev.clientX,ev.clientY);
+    drag={mode:"route-waypoint",edgeId:edge.id,waypointId:waypoint.id,start,
+      original:{x:waypoint.x,y:waypoint.y},
+      offset:{x:waypoint.x-start.x,y:waypoint.y-start.y},moved:false,snap:null};
+    return;
+  }
+  if(routeJunctionEl){
+    const id=routeJunctionEl.getAttribute("data-route-junction");
+    const record=typeof routingUniqueJunctions==="function"
+      ?routingUniqueJunctions().find(item=>item.junction.id===id):null;
+    if(!record)return;
+    setSelection("edge",record.edgeIds);
+    const start=clientToWorld(ev.clientX,ev.clientY);
+    drag={mode:"route-junction",junctionId:id,edgeId:record.edgeIds[0],start,
+      original:{x:record.junction.x,y:record.junction.y},
+      offset:{x:record.junction.x-start.x,y:record.junction.y-start.y},moved:false,snap:null};
+    return;
+  }
   if (manualGuideEl){
     const id = manualGuideEl.getAttribute("data-manual-guide");
     const guide = typeof editingGuideById === "function" ? editingGuideById(id) : null;
@@ -570,6 +608,7 @@ board.addEventListener("pointerdown", ev => {
     if (!corner) return;
     const start = clientToWorld(ev.clientX, ev.clientY);
     drag = { mode:"ortho-bend", edgeId:e.id, cornerKey, axes:corner.axes, start,
+             pointIndex:corner.pointIndex,
              offset:{x:corner.point.x-start.x, y:corner.point.y-start.y},
              original:{x:corner.point.x, y:corner.point.y}, moved:false, snap:null };
     return;
@@ -795,12 +834,26 @@ board.addEventListener("pointermove", ev => {
     if (!drag.moved){ pushHistory(); drag.moved = true; }
     const snapped = snapOrthoBend(e, target, ep, 10 / view.k, ev.shiftKey || snapToGrid);
     setOrthoCornerPosition(e, orthoEdgeRoute(e, ep.pa, ep.pb),
-      {key:drag.cornerKey, axes:drag.axes}, snapped);
+      {key:drag.cornerKey, axes:drag.axes,pointIndex:drag.pointIndex}, snapped);
     if (!drag.axes.includes("x")) snapped.snapX = null;
     if (!drag.axes.includes("y")) snapped.snapY = null;
     drag.snap = snapped;
     if (typeof editingShowSnapFeedback === "function") editingShowSnapFeedback(snapped);
     drawOnly();
+  } else if(drag.mode==="route-waypoint"||drag.mode==="route-junction"){
+    const edge=edgeById(drag.edgeId);
+    if(!edge)return;
+    const w=clientToWorld(ev.clientX,ev.clientY);
+    const target={x:w.x+drag.offset.x,y:w.y+drag.offset.y};
+    if(!drag.moved&&Math.hypot(target.x-drag.original.x,target.y-drag.original.y)<=1/view.k)return;
+    if(!drag.moved){pushHistory();drag.moved=true;}
+    const snapped=typeof routingSnapConstraintPoint==="function"
+      ?routingSnapConstraintPoint(edge,target,ev.shiftKey):target;
+    if(drag.mode==="route-waypoint")
+      routingMoveWaypoint(edge,drag.waypointId,snapped,{history:false,render:false});
+    else routingMoveJunction(drag.junctionId,snapped,{history:false,render:false});
+    drag.snap=snapped;render();
+    if(typeof editingShowSnapFeedback==="function")editingShowSnapFeedback(snapped);
   } else if (drag.mode === "edge-label"){
     const e = edgeById(drag.edgeId);
     const ep = e && edgeEndpoints(e);
@@ -814,6 +867,7 @@ board.addEventListener("pointermove", ev => {
     }
     const projected = projectEdgeLabelToPath(e, ep, w);
     setEdgeLabelPosition(e, edgeLabelDragPosition(e, projected));
+    delete e.labelOffset;
     drawOnly();
   } else if (drag.mode === "marquee"){
     const w = clientToWorld(ev.clientX, ev.clientY);
@@ -850,7 +904,7 @@ board.addEventListener("pointermove", ev => {
                 "stroke-width":1.8, "stroke-dasharray":"4 4", fill:"none"}, draftLayer);
     el("circle", {cx:w.x, cy:w.y, r:4, fill:"#2456E6"}, draftLayer);
     const hit = looseHit(w);
-    if (hit && hit.node.id !== drag.from.id) drawDropPreview(hit, w);
+    if (hit && hit.node.id !== drag.from.id) drawDropPreview(hit, w, drag.from);
   } else if (drag.mode === "reattach"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     draftLayer.innerHTML = "";
@@ -863,7 +917,14 @@ board.addEventListener("pointermove", ev => {
     el("circle", {cx:w.x, cy:w.y, r:4, fill:"#2456E6"}, draftLayer);
     const otherId = drag.end === "from" ? e.to : e.from;
     const hit = looseHit(w);
-    if (hit && hit.node.id !== otherId) drawDropPreview(hit, w);
+    if (hit && hit.node.id !== otherId){
+      const candidate={id:hit.node.id,fieldId:hit.field?.id,
+        portId:!hit.field?nearestAnchorWithin(hit.node,w)?.portId:undefined};
+      const connection=drag.end==="from"
+        ?{from:candidate,to:{id:e.to,fieldId:e.toField,portId:e.toPort},kind:e.kind}
+        :{from:{id:e.from,fieldId:e.fromField,portId:e.fromPort},to:candidate,kind:e.kind};
+      drawDropPreview(hit, w, connection);
+    }
   }
 });
 
@@ -881,7 +942,12 @@ board.addEventListener("pointerup", ev => {
     if (!drag.moved && drag.shiftToggle){
       toggleNodeSelection(drag.id);
       render();
-    } else if (drag.moved && (state.nodes.length > 150 || hadGuides)) render();
+    } else if (drag.moved){
+      if(typeof routingCommitAffectedNodeMove==="function")
+        routingCommitAffectedNodeMove(drag.starts.map(item=>item.id),drag.starts);
+      if(state.nodes.length > 150 || hadGuides)render();
+      else render();
+    }
     if (typeof editingClearSnapFeedback === "function") editingClearSnapFeedback();
   } else if (drag.mode === "guide"){
     render();
@@ -922,6 +988,9 @@ board.addEventListener("pointerup", ev => {
     drag.snap = null;
     if (typeof editingClearSnapFeedback === "function") editingClearSnapFeedback();
     render();
+  } else if(drag.mode==="route-waypoint"||drag.mode==="route-junction"){
+    if(typeof editingClearSnapFeedback==="function")editingClearSnapFeedback();
+    render();
   } else if (drag.mode === "edge-label"){
     render();
   }
@@ -934,6 +1003,7 @@ board.addEventListener("pointercancel", ev => {
   clearLongPress();
   if (activePointers.size < 2) touchGesture = null;
   const redrawDraft = drag && (drag.mode === "ortho-bend" || drag.mode === "edge-label" ||
+    drag.mode === "route-waypoint" || drag.mode === "route-junction" ||
     (drag.mode === "node" && drag.guides) || drag.mode === "guide");
   if (typeof historyFinalizePendingTransaction === "function") historyFinalizePendingTransaction();
   drag = null;

@@ -156,7 +156,7 @@ if (process.argv.includes("--api-surface")){
 
 (async () => {
   sameList(scriptSources, [
-    "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
+    "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/routing.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
     "js/style-system.js", "js/pages.js", "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
     "js/context-menu.js", "js/bootstrap.js"
@@ -3716,7 +3716,7 @@ if (process.argv.includes("--api-surface")){
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Create", "Layout", "Selection", "View", "Organize", "Model data",
-        "Styles and reuse", "Formatting & lenses", "Pages"],
+        "Styles and reuse", "Formatting & lenses", "Pages", "Smart routing"],
       "canvas menu groups creation, layout, selection, view, organization, model-data, styles, and formatting actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
@@ -5097,10 +5097,12 @@ if (process.argv.includes("--api-surface")){
     removeAudit.click();
     assert.strictEqual(T.nodePortById(source, "output", "audit"), null,
       "inspector can remove one named output");
-    assert.strictEqual(Object.hasOwn(bound, "fromPort"), false,
-      "removing a bound port safely returns its edge to automatic first-port routing");
+    assert.strictEqual(bound.fromPort, "audit",
+      "removing a bound port preserves the exact unresolved port identity");
+    assert.strictEqual(bound.fromPortUnresolved, true,
+      "removing a bound port marks the relationship binding unresolved");
     closeEnough(T.edgeEndpoints(bound).pa.y, T.nodePortPoints(source).outputs[0].y,
-      "an edge whose port was removed falls back to the first output");
+      "an unresolved port uses the first output only as a visual fallback");
 
     const resultHandle = doc.querySelector(
       '[data-node="source"] [data-node-port-id="result"]');
@@ -5152,8 +5154,11 @@ if (process.argv.includes("--api-surface")){
     const importedIds = T.nodeInputPorts(importedSource).map(port => port.id);
     assert.strictEqual(new Set(importedIds).size, importedIds.length,
       "duplicate and malformed imported port ids normalize safely");
-    assert.strictEqual(Object.hasOwn(T.state.edges.find(edge => edge.id === dragged.id), "fromPort"), false,
-      "dangling saved port bindings are removed on import");
+    const unresolvedImported=T.state.edges.find(edge => edge.id === dragged.id);
+    assert.strictEqual(unresolvedImported.fromPort,"missing",
+      "dangling saved port bindings preserve their exact identity on import");
+    assert.strictEqual(unresolvedImported.fromPortUnresolved,true,
+      "dangling saved port bindings import as visibly unresolved");
   }
 
   /* ---- SCH-064: custom color schemes in document JSON ---- */
@@ -5747,7 +5752,7 @@ if (process.argv.includes("--api-surface")){
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Content","Discover","Appearance","Arrange","Organization","Metadata","Styles","Formatting",
-        "Object & pages","Style transfer","Actions"],
+        "Object & pages","Attached links","Style transfer","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5772,7 +5777,7 @@ if (process.argv.includes("--api-surface")){
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Styles","Formatting",
-        "Relationship scope","Style transfer","Actions"],
+        "Relationship scope","Smart routing","Style transfer","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -7977,6 +7982,268 @@ if (process.argv.includes("--api-surface")){
     T.state.nodes = [];
     T.state.edges = [];
     window.close();
+  }
+
+  /* SCH-088 — smart link routing, preservation, dense-link treatments, and typed ports */
+  {
+    const { window } = makeDom();
+    const T=window.__T,doc=window.document;
+    T.importDocText(JSON.stringify({version:1,nextId:10,nodes:[
+      {id:"route-a",type:"concept",x:0,y:100,title:"Source",notes:"",color:"#CFE8FF",
+       portsEnabled:true,outputPorts:[{id:"events",label:"Events",type:"event",group:"Flow",placement:"right"}]},
+      {id:"route-block",type:"concept",x:205,y:110,title:"Obstacle",notes:"",color:"#FBE8EC"},
+      {id:"route-b",type:"concept",x:430,y:100,title:"Target",notes:"",color:"#D8F3DC",
+       portsEnabled:true,inputPorts:[{id:"control",label:"Control",type:"control",multiplicity:"one",placement:"left"}]}
+    ],edges:[
+      {id:"route-edge",from:"route-a",to:"route-b",fromPort:"events",toPort:"control",
+       kind:"link",label:"Triggers",routing:"ortho",endArrow:true,lineColor:"#007873",
+       lineWidth:2.5,lineStyle:"dash",labelPosition:.62,
+       routeMode:"manual",routePoints:[{x:155,y:132},{x:365,y:132}],
+       futureRouteField:{version:9}}
+    ]}));
+    const edge=T.state.edges[0],ep=T.edgeEndpoints(edge);
+    T.routingSetMode([edge],"automatic",{history:false,render:false});
+    const route=T.routingResolveOrthoRoute(edge,ep.pa,ep.pb,{force:true});
+    assert(route&&route.smart,"an obstructed orthogonal edge resolves through the smart router");
+    assert.strictEqual(T.routingPathCollisions(route.points,T.routingObstacleRects(edge)).length,0,
+      "automatic smart routes avoid visible inflated obstacles");
+    const second=T.routingResolveOrthoRoute(edge,ep.pa,ep.pb,{force:true});
+    assert.strictEqual(T.routingPathSignature(route.points),T.routingPathSignature(second.points),
+      "identical router inputs produce deterministic geometry");
+    const firstCorner=T.routingCornerHandles(route)[0];
+    assert(firstCorner&&firstCorner.axes.length===1,
+      "endpoint-adjacent smart corners expose only their geometry-safe movement axis");
+    const movedCorner={...firstCorner.point,
+      x:firstCorner.point.x+(firstCorner.axes.includes("x")?12:0),
+      y:firstCorner.point.y+(firstCorner.axes.includes("y")?12:0)};
+    assert(T.routingSetCornerPosition(edge,route,firstCorner,movedCorner),
+      "every visible smart corner can be converted to editable manual geometry");
+    const movedEndpoint=T.edgeEndpoints(edge);
+    const movedRoute=T.routingResolveOrthoRoute(edge,movedEndpoint.pa,movedEndpoint.pb);
+    const movedHandle=T.routingCornerHandles(movedRoute)
+      .find(item=>item.pointIndex===firstCorner.pointIndex);
+    assert(movedHandle&&
+      (firstCorner.axes.includes("x")?movedHandle.point.x===movedCorner.x:movedHandle.point.y===movedCorner.y),
+      "moving an endpoint-adjacent corner persists on its orthogonality-safe axis");
+    T.routingSetMode([edge],"automatic",{history:false,render:false});
+
+    const waypoint=T.routingAddWaypoint(edge,{x:205,y:40},{history:false});
+    assert(edge.routeWaypoints.some(item=>item.id===waypoint.id),
+      "explicit user waypoints become constrained route records");
+    const constrained=T.routingResolveOrthoRoute(edge,ep.pa,ep.pb,{force:true});
+    assert(constrained.points.some(point=>point.x===waypoint.x&&point.y===waypoint.y),
+      "automatic routing preserves explicit waypoints as hard constraints");
+    T.routingSetMode([edge],"locked",{history:false,render:false});
+    const lockedPoints=JSON.stringify(edge.routePoints);
+    T.state.nodes.find(node=>node.id==="route-block").y=35;
+    T.render();
+    assert.strictEqual(JSON.stringify(edge.routePoints),lockedPoints,
+      "locked route geometry is not silently rewritten by a moved obstacle");
+    assert.strictEqual(T.routingRouteMode(edge),"locked","locked ownership remains explicit");
+
+    T.setView({x:37,y:29,k:1.2});
+    T.setSelection("edge",edge.id);
+    const beforeCancel=T.serializeDocument({includeHistory:false});
+    const beforeCamera={...T.view};
+    const beforeUndo=T.undoDepth;
+    const proposal=T.routingOpenPreview([edge.id],{reset:true});
+    assert(proposal&&doc.getElementById("routingPreview").classList.contains("open"),
+      "broad rerouting opens a before/after review surface");
+    assert(doc.querySelector("[data-route-preview-after]"),
+      "changed routes render a non-serialized proposal overlay");
+    assert(!T.serializedSvg().includes("data-route-preview"),
+      "route proposal overlays never leak into SVG or PNG source");
+    assert.strictEqual(T.routingCancelPreview(),true,
+      "cancel verifies that the document remained byte-equivalent");
+    assert.strictEqual(T.serializeDocument({includeHistory:false}),beforeCancel,
+      "canceling a reroute preview makes zero document mutations");
+    assert.strictEqual(JSON.stringify(T.view),JSON.stringify(beforeCamera),
+      "canceling a reroute preview preserves the camera");
+    assert.strictEqual(T.undoDepth,beforeUndo,"canceling a reroute preview adds no history");
+
+    T.routingOpenPreview([edge.id],{reset:true});
+    assert.strictEqual(T.routingApplyPreview(),true,"a changed reroute proposal can be applied");
+    assert.strictEqual(T.undoDepth,beforeUndo+1,"preview apply is one undoable transaction");
+    assert.strictEqual(T.routingRouteMode(edge),"automatic","reset preview returns the route to automatic ownership");
+    assert.strictEqual(edge.fromPort,"events","rerouting preserves the exact source port");
+    assert.strictEqual(edge.toPort,"control","rerouting preserves the exact target port");
+    assert.strictEqual(edge.label,"Triggers","rerouting preserves custom relationship text");
+    assert(edge.endArrow&&edge.lineColor==="#007873"&&edge.lineStyle==="dash",
+      "rerouting preserves markers and line styling");
+    const persisted=JSON.parse(T.serializeDocument({includeHistory:false})).edges[0];
+    assert.strictEqual(persisted.futureRouteField.version,9,
+      "unknown newer route fields survive deterministic round trips");
+    assert.strictEqual(persisted.routeAlgorithm,"orthogonal-corridor",
+      "resolved automatic routes persist their deterministic algorithm");
+    assert.strictEqual(persisted.routeVersion,1,
+      "resolved automatic routes persist their router schema version");
+
+    const typed=T.routingPortCompatibility(
+      T.state.nodes.find(node=>node.id==="route-a"),"events",
+      T.state.nodes.find(node=>node.id==="route-b"),"control","link");
+    assert.strictEqual(typed.compatible,true,"documented event/control ports receive compatible feedback");
+    T.state.nodes.find(node=>node.id==="route-b").inputPorts[0].type="authentication";
+    const invalid=T.routingPortCompatibility(
+      T.state.nodes.find(node=>node.id==="route-a"),"events",
+      T.state.nodes.find(node=>node.id==="route-b"),"control","link");
+    assert.strictEqual(invalid.compatible,false,"incompatible semantic port types explain a warning");
+    assert.strictEqual(T.routingDropPreviewColor({
+      from:{id:"route-b",portId:"control"},to:{id:"route-a",portId:"events"},kind:"link"
+    },{node:T.state.nodes.find(node=>node.id==="route-b")},{x:430,y:132}),"#C20029",
+    "source-end reattachment previews the candidate against the unchanged destination");
+    assert.strictEqual(T.nodePortPoints(T.state.nodes.find(node=>node.id==="route-a")).outputs[0].side,"e",
+      "typed ports retain configured physical placement");
+
+    edge.fromPortUnresolved=true;
+    edge.labelOffset=18;
+    T.routingReverseDirection(edge,{history:false,render:false});
+    assert.strictEqual(edge.from,"route-b","reverse direction swaps semantic endpoints");
+    assert.strictEqual(edge.startArrow,true,"reverse direction carries the end marker to the new start");
+    assert.strictEqual(edge.futureRouteField.version,9,"reverse direction preserves unknown metadata");
+    assert.strictEqual(edge.toPortUnresolved,true,
+      "reverse direction carries unresolved named-port state with its endpoint");
+    assert.strictEqual(edge.labelOffset,-18,
+      "reverse direction preserves the label's physical normal-offset side");
+    const arrowBefore=[!!edge.startArrow,!!edge.endArrow];
+    T.routingSwapEndpoints(edge,{history:false,render:false});
+    assert.deepStrictEqual([!!edge.startArrow,!!edge.endArrow],arrowBefore,
+      "swap endpoints keeps marker configuration rather than reversing it");
+    assert.strictEqual(edge.fromPortUnresolved,true,
+      "swapping endpoints returns unresolved named-port state to the matching endpoint");
+    assert.strictEqual(edge.labelOffset,18,
+      "swapping endpoints keeps the label at its prior physical offset");
+
+    const edgesBeforeInsert=T.state.edges.length,nodesBeforeInsert=T.state.nodes.length;
+    const inserted=T.routingInsertNode(edge,{x:300,y:210},{confirm:false,title:"Review step"});
+    assert(inserted&&T.state.nodes.length===nodesBeforeInsert+1&&T.state.edges.length===edgesBeforeInsert+1,
+      "insert-node creates one node and two relationship segments in one operation");
+    const splitEdges=T.state.edges.filter(item=>item.from===inserted.id||item.to===inserted.id);
+    assert.strictEqual(splitEdges.length,2,"the inserted node owns both resulting relationship segments");
+    const incoming=splitEdges.find(item=>item.to===inserted.id);
+    const outgoing=splitEdges.find(item=>item.from===inserted.id);
+    assert.strictEqual(incoming.fromPort,"events",
+      "insert-node preserves the original source named-port binding");
+    assert.strictEqual(outgoing.toPort,"control",
+      "insert-node preserves the original target named-port binding");
+    assert.notStrictEqual(incoming.relationshipId,outgoing.relationshipId,
+      "split segments receive distinct canonical relationship identities");
+    assert(incoming.futureRouteField&&outgoing.futureRouteField,
+      "insert-node preserves custom metadata on both explicit relationship segments");
+
+    const fixture=T.routingBenchmarkFixture(1000,3000);
+    assert.deepStrictEqual([fixture.nodes.length,fixture.edges.length],[1000,3000],
+      "the deterministic dense release fixture covers 1,000 nodes and 3,000 links");
+    const benchmark=T.routingRunBenchmark({sampleLimit:2,announce:false});
+    assert.deepStrictEqual([benchmark.ordinary.nodes,benchmark.ordinary.links,
+      benchmark.dense.nodes,benchmark.dense.links],[500,1000,1000,3000],
+      "benchmark reporting distinguishes ordinary and dense release budgets");
+  }
+
+  {
+    const { window }=makeDom();
+    const T=window.__T,doc=window.document;
+    T.importDocText(JSON.stringify({version:1,nextId:20,nodes:[
+      {id:"left",type:"concept",x:0,y:180,title:"Left",notes:"",color:"#CFE8FF"},
+      {id:"right-a",type:"concept",x:420,y:80,title:"Right A",notes:"",color:"#D8F3DC"},
+      {id:"right-b",type:"concept",x:420,y:280,title:"Right B",notes:"",color:"#FFE9A8"},
+      {id:"top",type:"concept",x:210,y:0,title:"Top",notes:"",color:"#E9E2F8"},
+      {id:"bottom",type:"concept",x:210,y:400,title:"Bottom",notes:"",color:"#FBE8EC"}
+    ],edges:[
+      {id:"horizontal",from:"left",to:"right-a",kind:"link",routing:"ortho",
+       routeMode:"locked",routePoints:[{x:170,y:212},{x:350,y:212}],bridgeMode:"over"},
+      {id:"vertical",from:"top",to:"bottom",kind:"link",routing:"ortho",
+       routeMode:"locked",routePoints:[{x:250,y:80},{x:250,y:390}]},
+      {id:"parallel",from:"left",to:"right-b",kind:"link",routing:"ortho",
+       routeMode:"locked",routePoints:[{x:170,y:224},{x:350,y:312}]}
+    ]}));
+    const horizontal=T.state.edges.find(edge=>edge.id==="horizontal");
+    const parallel=T.state.edges.find(edge=>edge.id==="parallel");
+    T.render();
+    const renderedBridge=doc.querySelector('[data-edge-bridge="vertical"]');
+    assert(renderedBridge,
+      "crossing links render an explicit line bridge on the chosen over-link");
+    assert.strictEqual(renderedBridge.closest("g#bridgeLayer")?.id,"bridgeLayer",
+      "bridges render after every base link so over/under order is independent of edge draw order");
+    assert(renderedBridge.getAttribute("stroke-dasharray"),
+      "line bridges preserve the owning link's dashed or dotted treatment");
+    assert(T.serializedSvg().includes("data-edge-bridge"),
+      "SVG export serializes the same bridge geometry shown on canvas");
+
+    const edgeCount=T.state.edges.length;
+    const junction=T.routingAddJunction([horizontal,parallel],"junction",{x:170,y:250},{history:false});
+    assert(horizontal.routeJunctions.some(item=>item.id===junction.id)&&
+      parallel.routeJunctions.some(item=>item.id===junction.id),
+      "one stable junction id can constrain multiple preserved relationships");
+    assert(doc.querySelector(`[data-route-junction="${junction.id}"]`),
+      "shared junction membership has an accessible canvas affordance");
+    T.setSelection("edge",horizontal.id);
+    const transientWaypoint=T.routingAddWaypoint(horizontal,{x:190,y:160},{history:false});
+    assert(transientWaypoint&&doc.querySelector(`[data-route-waypoint="${transientWaypoint.id}"]`),
+      "selected route waypoints remain visible editing affordances on canvas");
+    assert(!T.serializedSvg().includes("data-route-waypoint"),
+      "SVG and PNG source omit transient waypoint editing controls");
+    T.routingRemoveWaypoint(horizontal,transientWaypoint.id,{history:false});
+    const junctionBeforeX=horizontal.routeJunctions.find(item=>item.id===junction.id).x;
+    doc.querySelector(`[data-route-junction="${junction.id}"]`).dispatchEvent(
+      new window.KeyboardEvent("keydown",{key:"ArrowRight",shiftKey:true,bubbles:true}));
+    assert.strictEqual(horizontal.routeJunctions.find(item=>item.id===junction.id).x,junctionBeforeX+12,
+      "keyboard junction movement uses half-grid resolution with Shift");
+    assert(doc.querySelector(`[data-route-junction="${junction.id}"]`)
+      .getAttribute("aria-label").includes(String(junctionBeforeX+12)),
+      "junction accessibility text reports its updated document coordinate");
+    T.routingRemoveJunction(junction.id,{history:false});
+    assert.strictEqual(T.state.edges.length,edgeCount,
+      "removing a junction view object never deletes underlying relationships");
+
+    const bundleId=T.routingSetBundle([horizontal,parallel],null,{history:false});
+    assert(bundleId&&horizontal.bundleId===parallel.bundleId,
+      "compatible parallel links receive shared view-only bundle membership");
+    assert.strictEqual(T.state.edges.length,edgeCount,"bundling never merges canonical relationships");
+    assert(doc.querySelector(`[data-route-bundle="${bundleId}"]`),
+      "collapsed bundle renders a count-bearing inspectable trunk");
+    T.routingRemoveBundle([horizontal,parallel],{history:false});
+    assert.strictEqual(T.state.edges.length,edgeCount,
+      "removing a bundle leaves every relationship independently intact");
+
+    T.setSelection("edge",[horizontal.id,parallel.id]);
+    T.render();
+    assert.strictEqual(doc.querySelector("#inspTitle .inspector-kind").textContent,"Multiple edges",
+      "multi-edge selection exposes a dedicated routing inspector");
+    assert(doc.querySelector('[data-inspector-section="multi-edge:routing"]'),
+      "bulk relationship and routing actions are available without a monolithic context menu");
+  }
+
+  {
+    const {window}=makeDom();
+    const T=window.__T;
+    T.importDocText(JSON.stringify({version:1,nextId:12,nodes:[
+      {id:"move-a",type:"concept",x:0,y:100,title:"A",notes:"",color:"#CFE8FF"},
+      {id:"move-b",type:"concept",x:430,y:100,title:"B",notes:"",color:"#D8F3DC"},
+      {id:"moving-obstacle",type:"concept",x:205,y:300,title:"Moving",notes:"",color:"#FBE8EC"},
+      {id:"stable-a",type:"concept",x:0,y:500,title:"C",notes:"",color:"#CFE8FF"},
+      {id:"stable-b",type:"concept",x:430,y:500,title:"D",notes:"",color:"#D8F3DC"}
+    ],edges:[
+      {id:"affected-edge",from:"move-a",to:"move-b",kind:"link",routing:"ortho",
+       routeAlgorithm:"orthogonal-corridor",routeVersion:1},
+      {id:"stable-edge",from:"stable-a",to:"stable-b",kind:"link",routing:"ortho",
+       routeAlgorithm:"orthogonal-corridor",routeVersion:1,
+       routePoints:[{x:155,y:524},{x:405,y:524}]}
+    ]}));
+    const moving=T.state.nodes.find(node=>node.id==="moving-obstacle");
+    const stable=T.state.edges.find(edge=>edge.id==="stable-edge");
+    const stableBefore=JSON.stringify(stable);
+    const before=[{id:moving.id,x:moving.x,y:moving.y}];
+    moving.y=100;
+    const changed=T.routingCommitAffectedNodeMove([moving.id],before);
+    const affected=T.state.edges.find(edge=>edge.id==="affected-edge");
+    const affectedEndpoints=T.edgeEndpoints(affected);
+    const affectedRoute=T.orthoEdgeRoute(affected,affectedEndpoints.pa,affectedEndpoints.pb);
+    assert(changed>=1&&Array.isArray(affected.routePoints),
+      "dropping a newly intersecting obstacle persists only the affected automatic reroute");
+    assert.strictEqual(T.routingPathCollisions(affectedRoute.points,T.routingObstacleRects(affected)).length,0,
+      "incremental obstacle invalidation settles to a collision-free route");
+    assert.strictEqual(JSON.stringify(stable),stableBefore,
+      "incremental node movement leaves unrelated valid link records byte-equivalent");
   }
 
   /* scheme theme overrides follow light/dark toggling */

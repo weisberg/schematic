@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.45.2";
+const APP_VERSION = "v1.46.0";
 const DEFAULT_GRID_SIZE = 24;
 const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
@@ -817,6 +817,7 @@ function cleanEdgeForDocument(e){
   if (lineWidth === 1.7) delete out.lineWidth; else out.lineWidth = lineWidth;
   if (!["solid","dash","dot"].includes(out.lineStyle) ||
       out.lineStyle === (out.kind === "link" ? "dash" : "solid")) delete out.lineStyle;
+  if (typeof routingCleanEdgeForDocument === "function") routingCleanEdgeForDocument(out);
   return out;
 }
 function cleanNodeForDocument(n){

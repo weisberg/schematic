@@ -6,7 +6,8 @@ const EDITING_ARTIFACT_SELECTOR = [
   "[data-align-guide-x]", "[data-align-guide-y]", "[data-distribute-guide-x]",
   "[data-distribute-guide-y]", "[data-text-selection]",
   "[data-frame-selection]", "[data-manual-guide]", "[data-layout-preview]",
-  "[data-lasso-preview]"
+  "[data-lasso-preview]", "[data-route-waypoint]", "[data-route-preview-before]",
+  "[data-route-preview-after]"
 ].join(", ");
 function removeEditingArtifacts(root){
   root.querySelectorAll(EDITING_ARTIFACT_SELECTOR).forEach(element => element.remove());

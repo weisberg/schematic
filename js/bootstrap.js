@@ -364,6 +364,7 @@ if (typeof pagesInitializeFromCurrent === "function") pagesInitializeFromCurrent
 ensureFieldIds();
 if (typeof initializeHistory === "function") initializeHistory();
 initializeCommands();
+if (typeof initializeRoutingCommands === "function") initializeRoutingCommands();
 if (typeof initializePagesCommands === "function") initializePagesCommands();
 if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
@@ -371,6 +372,7 @@ if (typeof initializeMetadataCommands === "function") initializeMetadataCommands
 if (typeof initializeStyleSystemCommands === "function") initializeStyleSystemCommands();
 if (typeof initializeFormattingCommands === "function") initializeFormattingCommands();
 setupRibbon();
+if (typeof initializeRoutingUi === "function") initializeRoutingUi();
 if (typeof initializePagesUi === "function") initializePagesUi();
 if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
@@ -396,11 +398,46 @@ window.addEventListener("resize", () => {/* view persists; nothing needed */});
 
 window.__T = {
   DOC_VERSION,
+  APP_VERSION,
   FSA,
   RECOVERY,
   get state(){ return state; },
   get doc(){ return doc; },
   serializeDocument,
+  routingFindPath,
+  routingPathCollisions,
+  routingPathSignature,
+  routingRouteMode,
+  routingObstacleRects,
+  routingResolveOrthoRoute,
+  routingCornerHandles,
+  routingSetCornerPosition,
+  routingCleanEdgeForDocument,
+  routingPortCompatibility,
+  routingDropPreviewColor,
+  routingProposeEdge,
+  routingPreviewSummary,
+  routingOpenPreview,
+  routingCancelPreview,
+  routingApplyPreview,
+  routingSetMode,
+  routingResetEdges,
+  routingAddWaypoint,
+  routingMoveWaypoint,
+  routingRemoveWaypoint,
+  routingSetBundle,
+  routingRemoveBundle,
+  routingAddJunction,
+  routingMoveJunction,
+  routingRemoveJunction,
+  routingReverseDirection,
+  routingSwapEndpoints,
+  routingApplyRelationshipType,
+  routingInsertNode,
+  routingCommitAffectedNodeMove,
+  routingBenchmarkFixture,
+  routingBenchmarkCase,
+  routingRunBenchmark,
   migrateDocument,
   importDocText,
   openDoc,
