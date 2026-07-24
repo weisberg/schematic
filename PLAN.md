@@ -49,9 +49,9 @@ The deployment story is:
 
 ---
 
-## 2. Architecture snapshot (as of 2026-07-23)
+## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, ten ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, twelve ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,7 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`context-menu` → `bootstrap`.
+`search` → `commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -1880,6 +1880,37 @@ preference after reload; narrow windows move low-priority groups into keyboard-a
 menus; selecting tabs changes no document data; content mutations retain their existing undo
 transactions; context menus and inspector workflows remain intact; automated tests and desktop
 plus narrow-viewport browser interaction, visual, and console QA pass.
+
+---
+
+**SCH-114 · Model-backed search and discovery · P0 · L · Done 2026-07-24**
+
+Add a non-modal Search panel backed by the diagram model rather than rendered SVG text. Search
+indexes node titles, subtitles, notes, rich content, to-do items, table fields and metadata, named
+ports, edge labels and semantics, statuses, tags, owner/type metadata, structural titles, stable
+identifiers, formulas, and unknown custom properties. Results retain the matching property,
+container context, effective hidden/collapsed/locked state, cached bounds, and owner identity so
+navigation does not rescan the DOM.
+
+The View ribbon, overflow menu, shortcuts, node/edge/canvas context menus, and command palette expose
+current-document search, next/previous result, reference discovery, connected-object discovery,
+hidden/off-canvas discovery, and duplicate-name discovery. Structured scope, object, property,
+match, visibility, status, relationship, owner, and custom-property filters form a reusable query
+model. Find and replace first builds an immutable proposal, rejects identifiers, formulas,
+relationship semantics, locked content, and source-controlled values, revalidates before applying,
+and records the compatible replacement set as one undo operation.
+
+AC: `Ctrl/Cmd+F` and `Ctrl/Cmd+G` work while text controls have focus without invoking browser find;
+partial, exact, case-sensitive, whole-word, and regular-expression matching report errors clearly;
+selection and container scopes are honored; result cards identify property and hierarchy context
+and distinguish hidden/collapsed state without color alone; activation selects and frames the owner,
+asks before expanding persisted collapsed content, and Back restores the exact prior camera and
+selection; closing search preserves the active result selection; keyboard result traversal and
+screen-reader announcements work; index state follows create/edit/delete/undo/redo; replace preview,
+locked-value skipping, semantic safety, one-step undo, and result-object selection are tested; a
+deterministic 10,000-node/20,000-edge fixture builds successfully and warm query time remains below
+150ms on the test machine; desktop and narrow-viewport browser interaction, visual, overlay, and
+console QA pass.
 
 ---
 

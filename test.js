@@ -144,7 +144,7 @@ if (process.argv.includes("--api-surface")){
 (async () => {
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
-    "js/interactions.js", "js/inspector.js", "js/io.js", "js/commands.js",
+    "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/commands.js",
     "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
@@ -3432,8 +3432,9 @@ if (process.argv.includes("--api-surface")){
       "canvas menu reuses every layout action");
     sameList([...menu.querySelectorAll('[data-ctx-group="canvas:view"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action")),
-      ["fit", "zoom-actual", "zoom-in", "zoom-out"],
-      "canvas menu exposes fit and direct zoom controls");
+      ["search", "search-hidden", "search-duplicates", "search-offcanvas",
+       "fit", "zoom-actual", "zoom-in", "zoom-out"],
+      "canvas menu exposes discovery, fit, and direct zoom controls");
 
     const beforeCreate = T.state.nodes.length;
     menu.querySelector('[data-ctx-action="add-text"]').click();
@@ -5412,7 +5413,8 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Appearance","Arrange","Actions"], "node menu groups all actions into task submenus");
+      ["Content","Discover","Appearance","Arrange","Actions"],
+      "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
     assert(menu.querySelector('[data-ctx-group="node:appearance"] [data-shape-option="decision"]'),
@@ -5435,7 +5437,8 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Actions"], "edge menu groups controls by task");
+      ["Relationship","Label","Line","Routing","Discover","Actions"],
+      "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
     assert(menu.querySelector('[data-ctx-group="edge:relationship"] [data-edge-relationship]'),
@@ -5603,6 +5606,287 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(edge.fromAnchor, "mr", "legacy whole-node anchor keys remain unchanged");
     assert.strictEqual(T.edgeEndpoints(edge).pa.y, T.nodeRect(T.state.nodes.find(n => n.id === "tbl")).cy,
       "legacy middle-right links keep their historical table midpoint");
+  }
+
+  /* SCH-114 / issue #80 — model-backed search, discovery, and safe replacement */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const query = options => T.querySearchIndex(options).results;
+    const by = (text, options = {}) => query({text, ...options});
+
+    const stats = T.refreshSearchIndex(true);
+    assert.strictEqual(stats.owners, T.state.nodes.length + T.state.edges.length,
+      "the search index owns one atomic record set per node and edge");
+    assert(stats.records > stats.owners,
+      "each model object contributes its searchable properties rather than one rendered label");
+
+    assert(by("repeat purchase rate").some(result =>
+      result.objectLabel === "Repeat purchase rate" && result.property === "Title"),
+    "search finds node titles");
+    assert(by("hypothesis").some(result =>
+      result.objectLabel === "Launch decision" && result.property === "Note content"),
+    "search finds rich-note body text");
+    assert(by("customer_id", {type:"table", property:"field"}).some(result =>
+      result.property === "Field name" && result.fieldId),
+    "structured filters find table fields");
+    assert(by("approve experiment design", {property:"item"}).some(result =>
+      result.objectLabel === "Launch readiness" && result.itemId === "i_release_design"),
+    "search finds to-do items");
+    assert(by("in progress", {property:"status"}).some(result =>
+      result.objectLabel === "Launch approval"),
+    "search finds status labels");
+    assert(by("events", {property:"port"}).some(result =>
+      result.objectLabel === "Measurement plan" && result.portId === "events"),
+    "search finds named ports");
+    assert(by("triggers", {type:"edge", property:"relationship"}).some(result =>
+      result.objectType === "edge" && result.property === "Relationship label"),
+    "search finds relationship labels and types");
+    assert(by("visual primitives", {type:"frame"}).some(result =>
+      result.objectType === "frame"),
+    "search finds container titles");
+    assert(by("legacy cohort analysis").some(result =>
+      result.hidden && result.collapsed && result.collapsedContainerId),
+    "collapsed-frame content remains indexed with its reveal context");
+
+    let metadataNode = T.state.nodes.find(node => node.title === "Tiered rewards");
+    metadataNode.owner = "Growth Platform";
+    metadataNode.tags = ["customer", "priority"];
+    metadataNode.customProperties = {risk:"High", reviewed:false, formula:{expression:"x+y"}};
+    T.render();
+    assert(by("Growth Platform", {property:"metadata", propertyName:"owner"}).length,
+      "owner metadata is indexed and filterable by property name");
+    assert(by("priority", {property:"metadata"}).length, "tags are indexed");
+    assert(by("High", {property:"metadata", propertyName:"customProperties.risk"}).length,
+      "user-defined property values are indexed");
+    assert(by("x+y", {property:"metadata"}).every(result => result.replaceable === false),
+      "formula metadata is discoverable but never plain-text replaceable");
+    const metadataEdge = T.state.edges.find(edge => edge.label === "Triggers");
+    metadataEdge.owner = "Growth Operations";
+    metadataEdge.tags = ["event-driven"];
+    metadataEdge.customProperties = {deliveryGuarantee:"at least once"};
+    T.render();
+    assert(by("Growth Operations", {type:"edge", property:"metadata", propertyName:"owner"}).length,
+      "relationship owner metadata is indexed");
+    assert(by("event-driven", {type:"edge", property:"metadata"}).length,
+      "relationship tags are indexed");
+    assert(by("at least once", {
+      type:"edge", property:"metadata", propertyName:"customProperties.deliveryGuarantee"
+    }).length, "relationship custom properties are indexed");
+    metadataNode.description = "Incremental index probe";
+    const incrementalStats = T.refreshSearchIndex();
+    assert.strictEqual(incrementalStats.changed, 1,
+      "one object edit replaces only that owner's indexed records");
+    assert(incrementalStats.durationMs < 100,
+      `one object index update stays below 100ms (${incrementalStats.durationMs.toFixed(1)}ms)`);
+
+    assert.strictEqual(by("Tiered rewards", {mode:"exact", caseSensitive:true}).length > 0, true,
+      "exact case-sensitive matching succeeds for the exact value");
+    assert.strictEqual(by("tiered rewards", {mode:"exact", caseSensitive:true}).length, 0,
+      "exact case-sensitive matching rejects a different case");
+    assert(by("^Tiered\\s+rewards$", {mode:"regex", property:"title"}).length,
+      "regular-expression matching works");
+    assert(T.querySearchIndex({text:"[", mode:"regex"}).error.startsWith("Invalid regular expression"),
+      "invalid regular expressions return a readable error instead of throwing");
+
+    T.setSelection("node", metadataNode.id);
+    assert(by("Tiered", {scope:"selection"}).every(result => result.ownerId === metadataNode.id),
+      "selection scope excludes unselected owners");
+    const strategyFrame = T.state.nodes.find(node => node.title === "Strategy & experiments");
+    T.setSelection("node", strategyFrame.id);
+    const containerResults = by("Measurement plan", {scope:"container"});
+    assert(containerResults.length && containerResults.every(result =>
+      result.containers.includes("Strategy & experiments")),
+    "container scope searches the selected container and its contents");
+
+    const dynamic = T.addNode("concept", 5000, 5000);
+    dynamic.title = "New searchable object";
+    dynamic.notes = "incremental needle";
+    T.render();
+    assert(by("incremental needle").some(result => result.ownerId === dynamic.id),
+      "index results update after create and edit without reloading");
+    T.setSelection("node", dynamic.id);
+    T.deleteSelection();
+    assert.strictEqual(by("incremental needle").length, 0,
+      "deleted objects disappear from the index");
+    T.undo();
+    assert(by("incremental needle").some(result => result.ownerId === dynamic.id),
+      "undo restores the corresponding index state");
+    T.redo();
+    assert.strictEqual(by("incremental needle").length, 0,
+      "redo restores the deletion in the index");
+    metadataNode = T.state.nodes.find(node => node.title === "Tiered rewards");
+
+    window.dispatchEvent(new window.KeyboardEvent("keydown", {
+      key:"f", ctrlKey:true, bubbles:true, cancelable:true
+    }));
+    assert(T.searchPanelOpen(), "Ctrl/Cmd+F opens application search instead of browser page-find");
+    const panel = doc.getElementById("searchPanel");
+    assert(panel && panel.getAttribute("role") === "dialog" && panel.getAttribute("aria-modal") === "false",
+      "the non-modal search panel exposes accessible dialog semantics");
+    const searchInput = panel.querySelector("#searchInput");
+    searchInput.value = "Legacy cohort analysis";
+    panel.querySelector("#searchProperty").value = "title";
+    T.runSearch();
+    assert.strictEqual(T.searchResults.length, 1, "the panel runs the same structured model query");
+    const archivedFrame = T.state.nodes.find(node => node.title === "Archived workstream");
+    assert.strictEqual(archivedFrame.collapsed, true, "search preview does not expand content");
+    const viewBeforeReveal = {...T.view};
+    assert(T.activateSearchResult(0), "activating a collapsed result succeeds after explicit confirmation");
+    assert.strictEqual(archivedFrame.collapsed, undefined,
+      "confirmed result navigation expands its collapsed frame");
+    assert.strictEqual(T.selectionIds("node")[0], T.searchResults[0].ownerId,
+      "result navigation selects the matching model object");
+    assert.notStrictEqual(JSON.stringify(T.view), JSON.stringify(viewBeforeReveal),
+      "result navigation frames the selected object");
+    assert(doc.querySelector(".search-hit-active"), "the active canvas result has a non-color-only focus treatment");
+    assert(T.searchRestoreNavigation(), "Back restores the previous search location");
+    assert.strictEqual(JSON.stringify(T.view), JSON.stringify(viewBeforeReveal),
+      "Back restores the exact prior camera state");
+
+    searchInput.value = "Tiered rewards";
+    panel.querySelector("#searchProperty").value = "title";
+    panel.querySelector("#searchMode").value = "exact";
+    panel.querySelector("#searchCase").checked = true;
+    T.runSearch();
+    panel.querySelector("#searchReplaceInput").value = "Tier benefits";
+    const historyBeforeReplace = T.undoDepth;
+    T.previewSearchReplace(false);
+    assert(panel.querySelector("#searchReplacePreview").hidden === false,
+      "find-and-replace renders an immutable before/after preview");
+    assert(panel.querySelector(".search-replace-row del").textContent === "Tiered rewards" &&
+           panel.querySelector(".search-replace-row ins").textContent === "Tier benefits",
+      "replacement preview shows both values");
+    assert(T.applySearchReplace(), "compatible previewed replacements apply");
+    assert.strictEqual(metadataNode.title, "Tier benefits", "replacement changes the intended text property");
+    assert.strictEqual(T.undoDepth, historyBeforeReplace + 1,
+      "multi-property replacement is one logical history transaction");
+    T.undo();
+    metadataNode = T.state.nodes.find(node => node.title === "Tiered rewards");
+    assert.strictEqual(metadataNode.title, "Tiered rewards", "one Undo restores the replacement set");
+
+    metadataNode.locked = true;
+    T.render();
+    searchInput.value = "Tiered rewards";
+    T.runSearch();
+    panel.querySelector("#searchReplaceInput").value = "Unsafe rename";
+    T.previewSearchReplace(false);
+    assert(panel.querySelector(".search-replace-row").classList.contains("skipped") &&
+           /Locked object/.test(panel.querySelector(".search-replace-row ins").textContent),
+      "locked results are visibly excluded from replacement");
+    assert.strictEqual(T.applySearchReplace(), false, "locked-only proposals cannot apply");
+    assert.strictEqual(metadataNode.title, "Tiered rewards", "locked text remains unchanged");
+    metadataNode.locked = false;
+
+    searchInput.value = "Triggers";
+    panel.querySelector("#searchType").value = "edge";
+    panel.querySelector("#searchProperty").value = "relationship";
+    panel.querySelector("#searchMode").value = "exact";
+    T.runSearch();
+    panel.querySelector("#searchReplaceInput").value = "Starts";
+    T.previewSearchReplace(false);
+    assert([...panel.querySelectorAll(".search-replace-row")].every(row => row.classList.contains("skipped")),
+      "relationship semantics remain searchable but are not plain-text replaced");
+
+    panel.querySelector("#searchType").value = "all";
+    panel.querySelector("#searchProperty").value = "all";
+    panel.querySelector("#searchMode").value = "partial";
+    searchInput.value = "customer_id";
+    T.runSearch();
+    const selectedResultIds = T.selectAllSearchResults();
+    assert(selectedResultIds.length >= 2 && T.selectionIds("node").length === selectedResultIds.length,
+      "Select result objects maps table-field matches back to unique canvas nodes");
+
+    const firstCustomer = T.state.nodes.find(node => node.title === "customers");
+    const secondCustomer = T.state.nodes.find(node => node.title === "orders");
+    secondCustomer.title = "customers";
+    T.render();
+    const duplicateIds = T.openDuplicateNameSearch();
+    assert(duplicateIds.includes(`node:${firstCustomer.id}`) &&
+           duplicateIds.includes(`node:${secondCustomer.id}`),
+    "duplicate-name discovery creates a filtered object result set");
+    T.setSelection("node", firstCustomer.id);
+    const directlyConnectedEdges = new Set(T.state.edges
+      .filter(edge => edge.from === firstCustomer.id || edge.to === firstCustomer.id)
+      .map(edge => edge.id));
+    const directlyConnectedNodes = new Set([firstCustomer.id]);
+    for (const edge of T.state.edges){
+      if (!directlyConnectedEdges.has(edge.id)) continue;
+      directlyConnectedNodes.add(edge.from);
+      directlyConnectedNodes.add(edge.to);
+    }
+    assert(T.openConnectedSearch(), "connected-object discovery opens from a selection");
+    assert(T.searchResults.some(result => result.ownerKind === "edge") &&
+           T.searchResults.some(result => result.ownerKind === "node" && result.ownerId !== firstCustomer.id),
+    "connected discovery includes relationships and adjacent nodes");
+    assert(T.searchResults.every(result => result.ownerKind === "edge"
+      ? directlyConnectedEdges.has(result.ownerId)
+      : directlyConnectedNodes.has(result.ownerId)),
+    "connected discovery remains one hop and independent of relationship iteration order");
+    assert(T.openSelectedReferencesSearch(), "reference discovery opens for one selected object");
+    assert(T.searchResults.some(result => result.ownerKind === "edge" &&
+      (result.property === "Source object" || result.property === "Target object")),
+    "reference discovery finds relationship endpoint references");
+    assert(T.searchResults.every(result => result.ownerKind === "edge" &&
+      directlyConnectedEdges.has(result.ownerId)),
+    "reference discovery excludes unrelated objects that merely share the selected title");
+    assert(by(firstCustomer.id, {type:"edge", property:"id"}).some(result =>
+      result.property === "Source object ID" || result.property === "Target object ID"),
+    "relationship endpoint IDs keep untitled objects reference-discoverable");
+
+    const selectionBeforeClose = T.selectionIds("node");
+    searchInput.dispatchEvent(new window.KeyboardEvent("keydown", {
+      key:"Escape", bubbles:true, cancelable:true
+    }));
+    assert.strictEqual(T.searchPanelOpen(), false, "Escape closes the search panel");
+    assert.deepStrictEqual(T.selectionIds("node"), selectionBeforeClose,
+      "closing search with Escape preserves the result selection");
+  }
+
+  /* Search performance fixture: 10k objects and 20k relationships. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const nodes = [];
+    for (let index = 0; index < 10000; index++){
+      nodes.push({
+        id:`bench-node-${index}`, type:"concept", x:(index % 100) * 180,
+        y:Math.floor(index / 100) * 90,
+        title:index === 9999 ? "benchmark needle" : `service ${index}`,
+        notes:index % 20 === 0 ? "owned by platform" : "", color:"#CFE8FF"
+      });
+    }
+    const edges = [];
+    for (let index = 0; index < 20000; index++){
+      edges.push({
+        id:`bench-edge-${index}`,
+        from:`bench-node-${index % 10000}`,
+        to:`bench-node-${(index * 17 + 13) % 10000}`,
+        kind:"link",
+        label:index % 11 === 0 ? "Depends on" : ""
+      });
+    }
+    T.state.nodes = nodes;
+    T.state.edges = edges;
+    T.state.nextId = 40000;
+    const buildStart = performance.now();
+    const stats = T.refreshSearchIndex(true);
+    const buildMs = performance.now() - buildStart;
+    const queryStart = performance.now();
+    const response = T.querySearchIndex({text:"benchmark needle", property:"title"});
+    const queryMs = performance.now() - queryStart;
+    nodes[5000].notes = "incremental benchmark edit";
+    const updateStats = T.refreshSearchIndex();
+    assert.strictEqual(stats.owners, 30000,
+      "large-model index covers every benchmark object and relationship");
+    assert.strictEqual(response.results.length, 1,
+      "large-model query returns the unique target");
+    assert(buildMs < 5000, `10k/20k model indexing stays bounded (${buildMs.toFixed(1)}ms)`);
+    assert(queryMs < 150, `warm indexed query meets the 150ms release budget (${queryMs.toFixed(1)}ms)`);
+    assert.strictEqual(updateStats.changed, 1,
+      "large-model single-object edits do not rebuild every owner's records");
+    assert(updateStats.durationMs < 100,
+      `large-model single-object index update meets the 100ms budget (${updateStats.durationMs.toFixed(1)}ms)`);
   }
 
   /* scheme theme overrides follow light/dark toggling */

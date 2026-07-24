@@ -310,6 +310,17 @@ function buildNodeSelectionDropdown(panel, primary, targets){
         {hint:"Tab", action:"add-linked"});
   });
 
+  menuSubmenu(panel, "selection-discover", "Discover", body => {
+    menuCommand(body, targets.length > 1 ? "Find references to primary" : "Find references",
+      () => {
+        setSelection("node", primary.id);
+        render();
+        executeCommand("searchReferences");
+      }, {action:"search-references"});
+    menuCommand(body, "Find connected objects", () => executeCommand("searchConnected"),
+      {action:"search-connected"});
+  });
+
   if (primary.type === "table") menuSubmenu(panel, "selection-table", "Table tools", body => {
     menuCommand(body, "Add related table (1:N)", () => addRelatedTable(primary.id), {action:"add-related-table"});
     menuCommand(body, primary.collapsed ? "Expand fields" : "Collapse fields", () => {
@@ -596,6 +607,15 @@ function nodeMenu(n, x, y){
         }
       });
     });
+    ctxGroup(m, "node:discover", "Discover", panel => {
+      ctxItem(panel, targets.length > 1 ? "Find references to primary" : "Find references", () => {
+        setSelection("node", n.id);
+        render();
+        executeCommand("searchReferences");
+      }, {action:"search-references"});
+      ctxItem(panel, "Find connected objects", () => executeCommand("searchConnected"),
+        {action:"search-connected"});
+    });
     ctxGroup(m, "node:appearance", "Appearance", panel => {
       const palette = [...new Set([...conceptColors(), ...tableColors()])];
       const fillLabel = n.type === "swimlane" ? "Body background" : n.type === "text" ? "Shape background"
@@ -851,6 +871,10 @@ function edgeMenu(e, x, y){
           ctxItem(panel, "Reset all to automatic", () => resetOrthoBend(e));
       }
     });
+    ctxGroup(m, "edge:discover", "Discover", panel => {
+      ctxItem(panel, "Find connected objects", () => executeCommand("searchConnected"),
+        {action:"search-connected"});
+    });
     ctxGroup(m, "edge:actions", "Actions", panel => {
       ctxItem(panel, "Swap direction", () => {
         pushHistory();
@@ -889,6 +913,13 @@ function canvasMenu(w, x, y){
         {action:"toggle-snap", pressed:snapToGrid});
     });
     ctxGroup(m, "canvas:view", "View", panel => {
+      ctxItem(panel, "Search diagram", () => executeCommand("search"), {kbd:"Ctrl/Cmd+F", action:"search"});
+      ctxSubmenu(panel, "canvas:view:discover", "Discover", sub => {
+        ctxItem(sub, "Find hidden or collapsed", () => executeCommand("searchHidden"), {action:"search-hidden"});
+        ctxItem(sub, "Find duplicate names", () => executeCommand("searchDuplicates"), {action:"search-duplicates"});
+        ctxItem(sub, "Find off-canvas objects", openOffCanvasSearch, {action:"search-offcanvas"});
+      });
+      ctxSep(panel);
       ctxItem(panel, "Fit diagram", () => executeCommand("fit"), {kbd:"F", action:"fit"});
       ctxItem(panel, "Actual size (100%)", () => executeCommand("actualSize"), {action:"zoom-actual"});
       ctxSep(panel);

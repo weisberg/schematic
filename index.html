@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.37.1">
+<link rel="stylesheet" href="styles.css?v=1.38.0">
 </head>
 <body>
 <noscript>
@@ -214,6 +214,14 @@
 
       <section class="ribbon-panel" id="ribbonPanelView" role="tabpanel" data-ribbon-panel="view"
                aria-labelledby="ribbonTabView" hidden>
+        <div class="ribbon-group" aria-label="Find and discover">
+          <span class="ribbon-group-label">Find</span>
+          <div class="ribbon-command-grid">
+            <button id="btnSearch" class="primary" data-command="search"><span data-command-label>Search</span></button>
+            <button id="btnSearchNext" data-command="searchNext"><span data-command-label>Next result</span></button>
+            <button id="btnSearchPrevious" data-command="searchPrevious"><span data-command-label>Previous result</span></button>
+          </div>
+        </div>
         <div class="ribbon-group" aria-label="Zoom">
           <span class="ribbon-group-label">Zoom</span>
           <div class="ribbon-command-grid">
@@ -221,6 +229,15 @@
             <button id="menuActualSize" data-command="actualSize"><span data-command-label>Actual size</span></button>
             <button id="menuZoomIn" data-command="zoomIn"><span data-command-label>Zoom in</span></button>
             <button id="menuZoomOut" data-command="zoomOut"><span data-command-label>Zoom out</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Discovery">
+          <span class="ribbon-group-label">Discovery</span>
+          <div class="ribbon-command-grid">
+            <button id="btnSearchReferences" data-command="searchReferences"><span data-command-label>References</span></button>
+            <button id="btnSearchConnected" data-command="searchConnected"><span data-command-label>Connected</span></button>
+            <button id="btnSearchHidden" data-command="searchHidden"><span data-command-label>Hidden</span></button>
+            <button id="btnSearchDuplicates" data-command="searchDuplicates"><span data-command-label>Duplicates</span></button>
           </div>
         </div>
         <div class="ribbon-group ribbon-low-priority" aria-label="Workspace">
@@ -233,6 +250,10 @@
         <details class="ribbon-overflow">
           <summary aria-label="More View commands">More</summary>
           <div class="ribbon-overflow-panel">
+            <button data-command="searchReferences"><span data-command-label>Find references</span></button>
+            <button data-command="searchConnected"><span data-command-label>Find connected</span></button>
+            <button data-command="searchHidden"><span data-command-label>Find hidden</span></button>
+            <button data-command="searchDuplicates"><span data-command-label>Find duplicates</span></button>
             <button data-command="toggleInspector"><span data-command-label>Inspector</span></button>
             <button data-command="toggleTheme"><span data-command-label>Dark theme</span></button>
           </div>
@@ -311,16 +332,17 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.37.1"></script>
-<script src="js/icon-catalog.js?v=1.37.1"></script>
-<script src="js/geometry.js?v=1.37.1"></script>
-<script src="js/render.js?v=1.37.1"></script>
-<script src="js/model.js?v=1.37.1"></script>
-<script src="js/interactions.js?v=1.37.1"></script>
-<script src="js/inspector.js?v=1.37.1"></script>
-<script src="js/io.js?v=1.37.1"></script>
-<script src="js/commands.js?v=1.37.1"></script>
-<script src="js/context-menu.js?v=1.37.1"></script>
-<script src="js/bootstrap.js?v=1.37.1"></script>
+<script src="js/core.js?v=1.38.0"></script>
+<script src="js/icon-catalog.js?v=1.38.0"></script>
+<script src="js/geometry.js?v=1.38.0"></script>
+<script src="js/render.js?v=1.38.0"></script>
+<script src="js/model.js?v=1.38.0"></script>
+<script src="js/interactions.js?v=1.38.0"></script>
+<script src="js/inspector.js?v=1.38.0"></script>
+<script src="js/io.js?v=1.38.0"></script>
+<script src="js/search.js?v=1.38.0"></script>
+<script src="js/commands.js?v=1.38.0"></script>
+<script src="js/context-menu.js?v=1.38.0"></script>
+<script src="js/bootstrap.js?v=1.38.0"></script>
 </body>
 </html>
