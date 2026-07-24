@@ -158,7 +158,7 @@ function edgeStyleSelect(e, id, opts = {}){
   }
   s.addEventListener("change", () => {
     pushHistory();
-    e.lineStyle = s.value;
+    formattingSetManualValue(e,"lineStyle",s.value);
     if (opts.close) opts.close();
     render();
   });
@@ -486,6 +486,7 @@ function renderInspector(){
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(n);
     if (typeof renderEditingInspectorForNode === "function") renderEditingInspectorForNode(n);
+    if (typeof renderFormattingInspectorForObject === "function") renderFormattingInspectorForObject(n);
 
     if (n.type === "swimlane"){
       inspectorSection("swimlane:basics", "Basics", () => {
@@ -511,13 +512,21 @@ function renderInspector(){
         const palette = [...new Set([...conceptColors(), ...tableColors()])];
         frow("Body background", () => {
           const control = swatches(palette, n.color || SWIMLANE_DEFAULT.bodyColor,
-            (c, commit) => { pushHistory("lane-body:"+n.id); n.color = c; commit ? render() : drawOnly(); });
+            (c, commit) => {
+              pushHistory("lane-body:"+n.id);
+              formattingSetManualValue(n,"fill",c);
+              commit ? render() : drawOnly();
+            });
           control.id = "swimlaneBodyColor";
           return control;
         });
         frow("Title background", () => {
           const control = swatches(palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
-            (c, commit) => { pushHistory("lane-title:"+n.id); n.titleColor = c; commit ? render() : drawOnly(); });
+            (c, commit) => {
+              pushHistory("lane-title:"+n.id);
+              formattingSetManualValue(n,"titleBandColor",c);
+              commit ? render() : drawOnly();
+            });
           control.id = "swimlaneTitleColor";
           return control;
         });
@@ -537,7 +546,11 @@ function renderInspector(){
       });
       inspectorSection("frame:appearance", "Appearance", () => {
         frow("Color", () => swatches(tableColors(), n.color || frameColorDefault(),
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         const enabled = frameBorderEnabled(n);
         frow("Border", () => mkFlag(enabled ? "On" : "Off", enabled, on => {
           setFrameBorderEnabled(n, on);
@@ -548,12 +561,13 @@ function renderInspector(){
             FRAME_BORDER_MAX_WIDTH, 1, (v, commit) => {
               pushHistory("frame-border-width:"+n.id);
               setFrameBorderWidth(n, v);
+              formattingMarkManualOverride(n,"borderWidth",true);
               commit ? render() : drawOnly();
             }, {ariaLabel:"Frame border width"}));
           frow("Border color", () => {
             const control = swatches(tableColors(), frameBorderColor(n), (c, commit) => {
               pushHistory("frame-border-color:"+n.id);
-              n.borderColor = c;
+              formattingSetManualValue(n,"borderColor",c);
               commit ? render() : drawOnly();
             }, {key:"frame-border-color:"+n.id});
             control.id = "frameBorderColor";
@@ -588,11 +602,19 @@ function renderInspector(){
         {open:nodePortsEnabled(n)});
       inspectorSection("concept:appearance", "Appearance", () => {
         frow("Color", () => swatches(conceptColors(), n.color,
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         frow("Text size", () => sizeStepper(conceptFont(n), 9, 48, 1,
           (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("fc:"+n.id);
+            formattingSetManualValue(n,"textColor",c);
+            commit ? render() : drawOnly();
+          }));
       });
       inspectorSection("concept:notes", "Notes", () => renderNodeNotesField(n), {open:false});
     } else if (n.type === "text"){
@@ -621,7 +643,11 @@ function renderInspector(){
       inspectorSection("text:appearance", "Appearance", () => {
         frow("Shape background", () => {
           const control = swatches(conceptColors(), n.color || conceptColors()[1],
-            (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); });
+            (c, commit) => {
+              pushHistory("color:"+n.id);
+              formattingSetManualValue(n,"fill",c);
+              commit ? render() : drawOnly();
+            });
           control.id = "textBoxBackground";
           return control;
         });
@@ -630,7 +656,11 @@ function renderInspector(){
           {ariaLabel:"Text size"}));
         frow("Text color", () => {
           const control = swatches(fontColors(), n.fontColor || themeColors().ink,
-            (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); });
+            (c, commit) => {
+              pushHistory("fc:"+n.id);
+              formattingSetManualValue(n,"textColor",c);
+              commit ? render() : drawOnly();
+            });
           control.id = "textBoxTextColor";
           return control;
         });
@@ -740,12 +770,20 @@ function renderInspector(){
       });
       inspectorSection("status:appearance", "Appearance", () => {
         frow("Background", () => swatches(conceptColors(), n.color || conceptColors()[1],
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         frow("Text size", () => sizeStepper(statusNodeFont(n), 10, 72, 1,
           (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); },
           {ariaLabel:"Text size"}));
         frow("Text color", () => swatches(fontColors(), n.fontColor || themeColors().ink,
-          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("fc:"+n.id);
+            formattingSetManualValue(n,"textColor",c);
+            commit ? render() : drawOnly();
+          }));
       });
       inspectorSection("status:layout", "Layout", () => {
         frow("Width", () => sizeStepper(n.w || STATUS_W_DEFAULT, 180, 720, 20,
@@ -771,13 +809,21 @@ function renderInspector(){
       });
       inspectorSection("note:appearance", "Appearance", () => {
         frow("Color", () => swatches(conceptColors(), n.color || conceptColors()[0],
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         frow("Width", () => sizeStepper(n.w || NOTE_W_DEFAULT, 220, 720, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
         frow("Text size", () => sizeStepper(noteFont(n), 10, 28, 1,
           (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("fc:"+n.id);
+            formattingSetManualValue(n,"textColor",c);
+            commit ? render() : drawOnly();
+          }));
       });
     } else if (n.type === "todo"){
       inspectorSection("todo:basics", "Basics", () => {
@@ -787,11 +833,19 @@ function renderInspector(){
       });
       inspectorSection("todo:appearance", "Appearance", () => {
         frow("Color", () => swatches(conceptColors(), n.color || todoColorDefault(),
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
           (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("fc:"+n.id);
+            formattingSetManualValue(n,"textColor",c);
+            commit ? render() : drawOnly();
+          }));
       });
       inspectorSection("todo:notes", "Notes", () => renderNodeNotesField(n), {open:false});
       inspectorSection("todo:items", "Items", () => renderItemEditor(n));
@@ -803,11 +857,19 @@ function renderInspector(){
       });
       inspectorSection("table:appearance", "Appearance", () => {
         frow("Header color", () => swatches(tableColors(), n.color,
-          (c, commit) => { pushHistory("color:"+n.id); n.color = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("color:"+n.id);
+            formattingSetManualValue(n,"fill",c);
+            commit ? render() : drawOnly();
+          }));
         frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
           (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
-          (c, commit) => { pushHistory("fc:"+n.id); n.fontColor = c; commit ? render() : drawOnly(); }));
+          (c, commit) => {
+            pushHistory("fc:"+n.id);
+            formattingSetManualValue(n,"textColor",c);
+            commit ? render() : drawOnly();
+          }));
       });
       inspectorSection("table:notes", "Notes", () => renderNodeNotesField(n), {open:false});
       inspectorSection("table:fields", "Fields", () => renderFieldEditor(n));
@@ -830,6 +892,7 @@ function renderInspector(){
     setInspectorHeader("Edge", `${a.title} → ${b.title}`, {kind:"edge"});
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(e);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(e);
+    if (typeof renderFormattingInspectorForObject === "function") renderFormattingInspectorForObject(e);
     const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
       const rows = fid ? nodeRows(n) : null;
@@ -923,14 +986,14 @@ function renderInspector(){
       frow("Line width", () => sizeStepper(edgeLineWidth(e), 1, 8, .5,
         (v, commit) => {
           pushHistory("edge-width:"+e.id);
-          e.lineWidth = v;
+          formattingSetManualValue(e,"lineWidth",v);
           commit ? render() : drawOnly();
         }, { ariaLabel:"Line width" }));
       frow("Line color", () => {
         const control = swatches(tableColors(), edgeLineColor(e),
           (c, commit) => {
             pushHistory("edge-color:"+e.id);
-            e.lineColor = c;
+            formattingSetManualValue(e,"lineColor",c);
             commit ? render() : drawOnly();
           });
         control.id = "edgeLineColor";
@@ -954,12 +1017,13 @@ function renderInspector(){
         const control = colorOverrideControl(fontColors(), e.labelTextColor, edgeLineColor(e),
           (c, commit) => {
             pushHistory("edge-label-text:"+e.id);
-            e.labelTextColor = c;
+            formattingSetManualValue(e,"labelTextColor",c);
             commit ? render() : drawOnly();
           }, () => {
             if (!normalizeHex(e.labelTextColor)) return;
             pushHistory();
             delete e.labelTextColor;
+            formattingClearManualOverride(e,"labelTextColor");
             render();
           }, {inheritLabel:"link color", key:"label-text"});
         control.id = "edgeLabelTextColor";
@@ -969,12 +1033,13 @@ function renderInspector(){
         const control = colorOverrideControl(conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
           (c, commit) => {
             pushHistory("edge-label-background:"+e.id);
-            e.labelBackgroundColor = c;
+            formattingSetManualValue(e,"labelBackgroundColor",c);
             commit ? render() : drawOnly();
           }, () => {
             if (!normalizeHex(e.labelBackgroundColor)) return;
             pushHistory();
             delete e.labelBackgroundColor;
+            formattingClearManualOverride(e,"labelBackgroundColor");
             render();
           }, {inheritLabel:"canvas background", key:"label-background"});
         control.id = "edgeLabelBackgroundColor";
@@ -1027,7 +1092,7 @@ function renderMultiInspector(){
     frow("Color", () => swatches([...conceptColors(), ...tableColors()], nodes[0].color,
       (c, commit) => {
         pushHistory("color:multi");
-        for (const n of nodes) n.color = c;
+        for (const n of nodes) formattingSetManualValue(n,"fill",c);
         commit ? render() : drawOnly();
       }));
     if (nonStructural.length === nodes.length){
@@ -1062,7 +1127,7 @@ function renderMultiInspector(){
       frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
         (c, commit) => {
           pushHistory("fc:multi");
-          for (const n of nodes) n.fontColor = c;
+          for (const n of nodes) formattingSetManualValue(n,"textColor",c);
           commit ? render() : drawOnly();
         }));
     }

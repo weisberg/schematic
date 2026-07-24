@@ -421,7 +421,7 @@ function historyDiffSnapshots(before, after){
   };
   compareCollection("node",left.nodes,right.nodes);
   compareCollection("edge",left.edges,right.edges);
-  for (const section of ["organization","metadata","editing","meta"]){
+  for (const section of ["organization","metadata","formatting","editing","meta"]){
     if (!historyEqual(left[section],right[section])){
       items.push(historyDiffItem("changed",section,"document",section,
         section[0].toUpperCase()+section.slice(1),left[section],right[section]));
@@ -567,6 +567,8 @@ function historyRecordTransaction(before, after, meta = {}){
     summary:diff.summary
   });
   historyCommittedSnapshot = historyClone(after);
+  if (typeof formattingInvalidateTransaction === "function")
+    formattingInvalidateTransaction(transaction);
   if (historyPanelOpen) renderHistoryPanel();
   return transaction;
 }

@@ -27,11 +27,12 @@ requires no bundler, package installation, or server runtime.
 | 9 | `js/search.js` | Model-backed search index, structured queries, result navigation, discovery, and safe replacement previews |
 | 10 | `js/organization.js` | Object Explorer, layers, explicit groups, effective visibility/locking, organization commands, and export filtering |
 | 11 | `js/metadata.js` | Typed property/type registry, formulas, validation, metadata inspector, schema manager, and object table |
-| 12 | `js/editing.js` | Capability-driven transforms, style transfer, selection queries, grid/guides, shortcut preferences, and layout preview |
-| 13 | `js/history.js` | Durable transactions, portable checkpoints, local automatic retention, visual diff, and restoration |
-| 14 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
-| 15 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
-| 16 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
+| 12 | `js/conditional-formatting.js` | Typed visual rules, deterministic cascade and provenance, saved lenses, legends, and semantic zoom |
+| 13 | `js/editing.js` | Capability-driven transforms, style transfer, selection queries, grid/guides, shortcut preferences, and layout preview |
+| 14 | `js/history.js` | Durable transactions, portable checkpoints, local automatic retention, visual diff, and restoration |
+| 15 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
+| 16 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
+| 17 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
 
 The order is an architectural contract. Earlier files may declare functions that call later-file
 functions, but those calls must not execute until `bootstrap.js` runs after every declaration has

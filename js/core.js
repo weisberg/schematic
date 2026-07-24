@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.42.0";
+const APP_VERSION = "v1.43.2";
 const DEFAULT_GRID_SIZE = 24;
 const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
@@ -714,6 +714,8 @@ function snapshot(){ return JSON.stringify({
     ? cleanOrganizationForDocument(state.organization) : state.organization,
   metadata:typeof cleanMetadataForDocument === "function"
     ? cleanMetadataForDocument(state.metadata) : state.metadata,
+  formatting:typeof cleanConditionalFormattingForDocument === "function"
+    ? cleanConditionalFormattingForDocument(state.formatting) : state.formatting,
   meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}
 }); }
 let coalesce = { key:null, t:0 };
@@ -743,6 +745,8 @@ function restore(json){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = s.metadata;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  state.formatting = s.formatting;
+  if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
   setCustomStatuses(s.meta ? s.meta.customStatuses : []);
   for (const n of state.nodes) if (n && n.type === "status") normalizeNodeStatus(n);
   applyColorScheme(s.meta ? s.meta.colorScheme : null);
@@ -939,6 +943,10 @@ function documentObject(opts = {}){
     const editing = cleanEditingForDocument(state.editing);
     if (editing) d.editing = editing;
   }
+  if (typeof cleanConditionalFormattingForDocument === "function"){
+    const formatting = cleanConditionalFormattingForDocument(state.formatting);
+    if (formatting) d.formatting = formatting;
+  }
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
   if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
@@ -981,6 +989,7 @@ function migrateDocument(d){
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
   if (out.editing && typeof out.editing === "object") result.editing = out.editing;
+  if (out.formatting && typeof out.formatting === "object") result.formatting = out.formatting;
   if (out.history && typeof out.history === "object") result.history = out.history;
   return result;
 }
@@ -997,6 +1006,8 @@ function applyDocument(d, opts = {}){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = migrated.metadata;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  state.formatting = migrated.formatting;
+  if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
   setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
   for (const n of state.nodes){
     if (!n) continue;
