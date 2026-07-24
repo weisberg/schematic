@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, fourteen ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, fifteen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,7 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `organization` → `metadata` → `commands` → `context-menu` → `bootstrap`.
+`search` → `organization` → `metadata` → `editing` → `commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -73,6 +73,14 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "version": 1,
   "meta": { "theme": "light", "dialect": "ansi", "recentColors": ["#ab12cd"] },
   "nextId": 42,
+  "editing": {
+    "gridSize": 32,
+    "rulers": false,
+    "guides": [
+      { "id": "g1", "axis": "x", "position": 480, "name": "Service boundary",
+        "locked": true }
+    ]
+  },
   "organization": {
     "page": { "id": "page-default", "name": "Current canvas" },
     "layers": [
@@ -143,7 +151,9 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   "textMarginTop":12, "textMarginRight":16, "textMarginBottom":12,
   "textMarginLeft":16 }`. Wrapping defaults on and therefore writes no key; only the explicit
   off state writes `wrapText:false`. Margins are optional 0–400px text insets, with zero omitted.
-  `manualHeight:true` makes `h` the exact rendered height (20–4000px) and is valid only for text.
+  `manualHeight:true` makes `h` the exact rendered height (20–4000px for text,
+  36–4000px for concepts, status nodes, and rich notes). Rendering may use an ellipsis
+  when forced height cannot display every wrapped line; stored source text is never truncated.
 - Status nodes (v1.17): `{ "id":"n15", "type":"status", "x":0, "y":0,
   "title":"Launch approval", "status":"In progress", "statusSide":"right",
   "color":"#CFE8FF", "fontSize":18, "w":320 }`. `statusSide` is `left|right`;
@@ -159,6 +169,15 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   Text, note, frame, and
   swimlane nodes may also carry `widthBeforeMatch` so Reset size can restore their prior configured
   width; it is absent for content-sized concepts, tables, and to-dos.
+- Every non-structural node may include additive `rotation` (document degrees normalized to
+  0–359.999), `flipX:true`, `flipY:true`, and `pinned:true`. Rotation and flip transform visible
+  geometry, ports, row anchors, and link endpoints while counter-transforming text and upright icons.
+  Frames and swimlanes omit these fields. `pinned` excludes a node from safe layout proposals.
+- The optional document-level `editing` object owns grid size, ruler visibility, and manual guides.
+  Grid size clamps to 8–128px. Guides have a stable `id`, `axis:"x"|"y"`, document-coordinate
+  `position`, and optional `name`, `locked:true`, or `hidden:true`. Default grid/ruler settings and an
+  empty guide set are omitted. Persistent grid snap, selection gesture, and shortcut overrides are
+  guarded application preferences in `localStorage`, never document data.
 - Concept nodes may include optional `shape` ∈ `process|rectangle|decision|terminator|data|document|manualInput|triangle|circle|square`.
   It is presentation-only, applies only to concept nodes, and is absent for the default
   rounded-corner `process` rectangle so all older documents render unchanged. The explicit
@@ -2008,6 +2027,43 @@ sensitive fields stay out of search and default CSV; legacy custom properties ar
 an open-time rewrite; unknown registry fields and deleted values remain recoverable; repeated save
 is deterministic; a 10,000-object, 50-definition, 100,000-value fixture, full automated suite, and
 browser interaction, visual, keyboard, persistence, undo, and console QA pass.
+
+---
+
+**SCH-117 · Editing fundamentals · P0 · XL · Done 2026-07-24**
+
+Add one capability-driven editing subsystem for conventional geometry, presentation transfer,
+selection, precision, shortcut, and layout-safety workflows. Match width, height, or complete size
+from immutable selection measurements; reset dimensions independently; rotate and flip supported
+content nodes; copy/paste typed appearance payloads; use one-shot or persistent format painter;
+query by model properties or connectivity; choose containment, intersection, or lasso gestures; and
+configure document grid, rulers, and exact manual guides.
+
+The unified drag resolver uses deterministic per-axis precedence: explicit Shift grid/half-grid,
+locked manual guide, compatible link-route constraint, smart alignment/equal spacing, unlocked
+manual guide, persistent grid, then the legacy 4px fine movement. Shift+Alt subtracts from a spatial
+selection, Shift adds, and Ctrl/Cmd toggles. Hidden objects do not participate in spatial selection;
+locked objects remain selectable but are skipped by supported bulk mutations with an announced
+reason.
+
+Shortcut overrides are guarded application preferences with conflict/reserved-chord checks,
+platform display, per-command/global reset, and JSON import/export. Grid size, ruler visibility, and
+guides are additive document state; transient snap feedback, format-painter sessions, lasso points,
+and layout proposals never serialize. Layout preview computes a model overlay, preserves pinned and
+locked objects, can constrain maximum movement and container membership, rejects stale proposals,
+and applies as exactly one history transaction.
+
+AC: capability requirements and preview/locked-subset policy live in the shared command catalog;
+mixed locked selections safely mutate only compatible unlocked objects; width/height changes reflow
+text without source loss; transformed text/icons stay readable and named/table-row anchors remain
+bound; style payloads preserve direct versus inherited/default origin and exclude content, identity,
+metadata, relationships, geometry, containment, and icon identity; query results are stable-ID
+ordered and a 10,000-object property query remains model-backed; guides remain accurate at zoom and
+stay out of print/export; shortcut conflicts, reserved keys, import, and reset are tested; layout
+cancel is byte-equivalent for document, camera, selection, and history; Apply, every bulk mutation,
+and snap-selection each undo in one step; legacy documents, direct `file://`, the full automated
+suite, and desktop/narrow browser interaction, visual, persistence, accessibility, and console QA
+pass.
 
 ---
 

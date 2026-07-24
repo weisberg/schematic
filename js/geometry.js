@@ -114,8 +114,24 @@ function richNoteLayout(n){
       lines[79] = { runs:[{text:"…", italic:true}], prefix:"", size:base, weight:400,
                     italic:true, indent:0, h:Math.ceil(base*1.4), truncated:true };
   }
-  const h = Math.max(96, titleH + lines.reduce((sum, line) => sum + line.h, 0) + 14);
-  return { w, h, base, titleH, lines };
+  const naturalHeight = Math.max(96, titleH + lines.reduce((sum, line) => sum + line.h, 0) + 14);
+  const fixedHeight = manualNodeHeight(n);
+  const h = fixedHeight == null ? naturalHeight : fixedHeight;
+  if (fixedHeight != null){
+    const available = Math.max(0, h - titleH - 14);
+    let used = 0, count = 0;
+    while (count < lines.length && used + lines[count].h <= available){
+      used += lines[count].h;
+      count++;
+    }
+    if (count < lines.length && count > 0){
+      const last = lines[count - 1];
+      lines[count - 1] = {...last, runs:[{text:"…", italic:true}], prefix:"",
+        italic:true, truncated:true};
+    }
+    lines.length = Math.max(0, count);
+  }
+  return { w, h, naturalHeight, base, titleH, lines, manualHeight:fixedHeight != null };
 }
 /* Concept shape is intentionally optional in the document model: old documents and a
    selected Process both render as the conventional rectangular process symbol. */
@@ -419,7 +435,68 @@ function conceptPortLayout(n, base){
 }
 function conceptWrappedLayout(n){
   const base = baseConceptWrappedLayout(n);
-  return nodePortsEnabled(n) ? conceptPortLayout(n, base) : base;
+  const natural = nodePortsEnabled(n) ? conceptPortLayout(n, base) : base;
+  const fixedHeight = manualNodeHeight(n);
+  if (fixedHeight == null) return natural;
+  const shape = conceptShape(n);
+  const shapeCenterY = shape === "triangle" ? fixedHeight * .64
+    : shape === "document" ? (fixedHeight - 12) / 2 : fixedHeight / 2;
+  const constrained = shape === "decision" || WRAPPED_CONCEPT_SHAPES.has(shape);
+  const contentCenterY = natural.ports
+    ? constrained ? shapeCenterY - natural.portAreaH*.42
+      : Math.max(12,(fixedHeight-natural.footerH-(shape === "document" ? 10 : 0))/2)
+    : shapeCenterY;
+  let fitted = shiftConceptContent(natural, contentCenterY - natural.centerY);
+  const ratio = shape === "triangle" ? .38 : shape === "circle" ? .58
+    : shape === "square" ? .72 : shape === "decision" ? .62 : 1;
+  const available = Math.max(fitted.lineH,
+    constrained ? fixedHeight*ratio - (fitted.ports ? fitted.portAreaH*.18 : 0)
+      : fixedHeight - (fitted.ports ? fitted.footerH : 0) - (shape === "document" ? 28 : 22));
+  if (fitted.decoration){
+    const decoration = {...fitted.decoration};
+    const stacked = fitted.mode === "stacked";
+    if (decoration.icon)
+      decoration.iconSize = Math.min(decoration.iconSize,
+        Math.max(14,available-(stacked ? fitted.lineH+decoration.iconGap : 0)));
+    const iconReserve = stacked && decoration.icon
+      ? decoration.iconSize+decoration.iconGap : 0;
+    const subtitleReserve = decoration.subtitle
+      ? decoration.subtitleLineH+decoration.subtitleGap : 0;
+    const titleCapacity = Math.max(1,Math.floor(
+      (available-iconReserve-subtitleReserve)/fitted.lineH));
+    const titleLines = limitedWrappedLines(n.title || "Untitled",fitted.font,
+      fitted.maxWidth,titleCapacity);
+    const remaining = Math.max(0,available-iconReserve-titleLines.length*fitted.lineH-
+      (decoration.subtitle ? decoration.subtitleGap : 0));
+    const subtitleLines = decoration.subtitle && remaining >= decoration.subtitleLineH
+      ? limitedWrappedLines(decoration.subtitle,decoration.subtitleFont,fitted.maxWidth,
+        Math.max(1,Math.floor(remaining/decoration.subtitleLineH))) : [];
+    const textH = titleLines.length*fitted.lineH +
+      (subtitleLines.length ? decoration.subtitleGap+
+        subtitleLines.length*decoration.subtitleLineH : 0);
+    fitted = {...fitted,decoration,lines:titleLines,titleLines,subtitleLines,
+      text:{titleLines,subtitleLines,textH},truncated:
+        titleLines.length < wrapConceptTitle(n.title || "Untitled",fitted.font,fitted.maxWidth).length ||
+        subtitleLines.length < (decoration.subtitle
+          ? wrapConceptTitle(decoration.subtitle,decoration.subtitleFont,fitted.maxWidth).length : 0)};
+    fitted = positionDecoratedContent(fitted,fitted.mode,contentCenterY);
+  } else {
+    const capacity = Math.max(1,Math.floor(available/fitted.lineH));
+    const fullLines = wrapConceptTitle(n.title || "Untitled",fitted.font,fitted.maxWidth);
+    fitted.lines = limitedWrappedLines(n.title || "Untitled",fitted.font,fitted.maxWidth,capacity);
+    fitted.truncated = fitted.lines.length < fullLines.length;
+  }
+  fitted.h = fixedHeight;
+  fitted.naturalHeight = natural.h;
+  fitted.centerY = contentCenterY;
+  fitted.manualHeight = true;
+  if (fitted.ports){
+    fitted.portCenterY = shape === "triangle" ? fixedHeight * .77
+      : shape === "decision" ? fixedHeight * .69
+      : WRAPPED_CONCEPT_SHAPES.has(shape) ? fixedHeight * .72
+      : fixedHeight - fitted.portAreaH/2 - (shape === "document" ? 10 : 0);
+  }
+  return fitted;
 }
 function conceptTextWidth(shape, w){
   return Math.max(44, w - (shape === "decision" ? 42 : shape === "data" || shape === "manualInput" ? 48 : 34));
@@ -527,21 +604,42 @@ function statusNodeLayout(n){
   const reserve = decoration.icon ? decoration.iconSize + decoration.iconGap : 0;
   const titleMaxWidth = Math.max(16, mainW - 28 - reserve);
   const statusMaxWidth = Math.max(20, bandW - 18);
-  const titleLines = wrapConceptTitle(n.title || "Status item", font, titleMaxWidth);
-  const subtitleLines = decoration.subtitle
+  let titleLines = wrapConceptTitle(n.title || "Status item", font, titleMaxWidth);
+  let subtitleLines = decoration.subtitle
     ? wrapConceptTitle(decoration.subtitle, decoration.subtitleFont, titleMaxWidth) : [];
-  const statusLines = wrapConceptTitle(status, statusFont, statusMaxWidth);
-  const textH = titleLines.length * lineH +
+  let statusLines = wrapConceptTitle(status, statusFont, statusMaxWidth);
+  let textH = titleLines.length * lineH +
     (subtitleLines.length ? decoration.subtitleGap + subtitleLines.length * decoration.subtitleLineH : 0);
-  const h = Math.max(60, Math.max(textH, decoration.iconSize) + 26,
+  const naturalHeight = Math.max(60, Math.max(textH, decoration.iconSize) + 26,
     statusLines.length * statusLineH + 22);
+  const h = manualNodeHeight(n) ?? naturalHeight;
+  if (manualNodeHeight(n) != null){
+    const mainAvailable = Math.max(lineH,h-22);
+    const subtitleReserve = decoration.subtitle
+      ? decoration.subtitleLineH+decoration.subtitleGap : 0;
+    titleLines = limitedWrappedLines(n.title || "Status item",font,titleMaxWidth,
+      Math.max(1,Math.floor((mainAvailable-subtitleReserve)/lineH)));
+    const subtitleAvailable = Math.max(0,mainAvailable-titleLines.length*lineH-
+      (decoration.subtitle ? decoration.subtitleGap : 0));
+    subtitleLines = decoration.subtitle && subtitleAvailable >= decoration.subtitleLineH
+      ? limitedWrappedLines(decoration.subtitle,decoration.subtitleFont,titleMaxWidth,
+        Math.max(1,Math.floor(subtitleAvailable/decoration.subtitleLineH))) : [];
+    statusLines = limitedWrappedLines(status,statusFont,statusMaxWidth,
+      Math.max(1,Math.floor(Math.max(statusLineH,h-18)/statusLineH)));
+    if (decoration.icon)
+      decoration.iconSize = Math.min(decoration.iconSize,Math.max(14,h-20));
+    textH = titleLines.length*lineH +
+      (subtitleLines.length ? decoration.subtitleGap+
+        subtitleLines.length*decoration.subtitleLineH : 0);
+  }
   const side = n.statusSide === "left" ? "left" : "right";
   const mainX = side === "left" ? bandW : 0;
   const mainCenter = mainX + mainW/2;
   const textTop = h/2 - textH/2;
   const iconX = decoration.icon ? mainX + 14 : null;
   const textX = decoration.icon ? iconX + decoration.iconSize + decoration.iconGap : mainCenter;
-  return {w, h, fs, font, lineH, titleLines, subtitleLines, titleMaxWidth,
+  return {w, h, naturalHeight, manualHeight:manualNodeHeight(n) != null,
+          fs, font, lineH, titleLines, subtitleLines, titleMaxWidth,
           status, statusFs, statusFont, statusLineH, statusLines, statusMaxWidth,
           bandW, mainW, side, decoration, iconX,
           iconY:decoration.icon ? (h - decoration.iconSize)/2 : null,
@@ -553,10 +651,11 @@ function statusNodeLayout(n){
 function statusBandContainsPoint(n, point){
   if (!n || n.type !== "status" || !point) return false;
   const r = nodeRect(n);
+  const localPoint = nodeTransformActive(n) ? inverseTransformNodePoint(n, point) : point;
   const layout = statusNodeLayout(n);
   const left = layout.side === "left" ? r.x : r.x + layout.mainW;
-  return point.x >= left && point.x <= left + layout.bandW &&
-         point.y >= r.y && point.y <= r.y + r.h;
+  return localPoint.x >= left && localPoint.x <= left + layout.bandW &&
+         localPoint.y >= r.y && localPoint.y <= r.y + r.h;
 }
 /* one source of truth for table geometry at a given font size */
 function tableMetrics(n){
@@ -642,6 +741,42 @@ function nodeSize(n){
   return { w, h };
 }
 function nodeRect(n){ const s = nodeSize(n); return { x:n.x, y:n.y, w:s.w, h:s.h, cx:n.x+s.w/2, cy:n.y+s.h/2 }; }
+function transformNodePoint(n, point, inverse = false){
+  const r = nodeRect(n);
+  const cx = r.cx, cy = r.cy;
+  let x = point.x - cx, y = point.y - cy;
+  const angle = nodeRotation(n) * Math.PI / 180;
+  const fx = nodeFlipX(n) ? -1 : 1, fy = nodeFlipY(n) ? -1 : 1;
+  if (inverse){
+    const cos = Math.cos(-angle), sin = Math.sin(-angle);
+    const rx = x*cos - y*sin, ry = x*sin + y*cos;
+    x = rx * fx;
+    y = ry * fy;
+  } else {
+    x *= fx;
+    y *= fy;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const rx = x*cos - y*sin, ry = x*sin + y*cos;
+    x = rx;
+    y = ry;
+  }
+  return {x:cx + x, y:cy + y};
+}
+function inverseTransformNodePoint(n, point){ return transformNodePoint(n, point, true); }
+function nodeTransformActive(n){ return nodeRotation(n) !== 0 || nodeFlipX(n) || nodeFlipY(n); }
+function nodeVisualRect(n){
+  const r = nodeRect(n);
+  if (!nodeTransformActive(n)) return r;
+  const points = [
+    {x:r.x, y:r.y}, {x:r.x+r.w, y:r.y},
+    {x:r.x+r.w, y:r.y+r.h}, {x:r.x, y:r.y+r.h}
+  ].map(point => transformNodePoint(n, point));
+  const x0 = Math.min(...points.map(point => point.x));
+  const y0 = Math.min(...points.map(point => point.y));
+  const x1 = Math.max(...points.map(point => point.x));
+  const y1 = Math.max(...points.map(point => point.y));
+  return {x:x0, y:y0, w:x1-x0, h:y1-y0, cx:(x0+x1)/2, cy:(y0+y1)/2};
+}
 function rectFromPoints(a, b){
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
   return { x, y, w:Math.abs(a.x - b.x), h:Math.abs(a.y - b.y) };
@@ -744,7 +879,7 @@ function documentBounds(nodes = null){
   if (!boundedNodes.length) return null;
   let x0=Infinity, y0=Infinity, x1=-Infinity, y1=-Infinity;
   for (const n of boundedNodes){
-    const r = nodeRect(n);
+    const r = nodeVisualRect(n);
     x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
     x1 = Math.max(x1, r.x + r.w); y1 = Math.max(y1, r.y + r.h);
   }
@@ -879,7 +1014,9 @@ function nodePortAnchor(n, preferredSide, portId, r = nodeRect(n)){
   const candidates = side === "input" ? points.inputs : side === "output" ? points.outputs
     : points.inputs.concat(points.outputs);
   const point = candidates.find(candidate => candidate.id === portId) || candidates[0];
-  return point ? {...point} : null;
+  if (!point) return null;
+  const transformed = transformNodePoint(n, point);
+  return {...point, ...transformed, side:transformNodeSide(n, point.side)};
 }
 function anchorPointsForNode(n, r = nodeRect(n), shape = visualNodeShape(n)){
   const pts = anchorPointsForRect(r);
@@ -913,34 +1050,54 @@ function anchorSideFor(key, p, ref){
   if (key === "br") return horiz ? "e" : "s";
   return horiz ? (ref.x - p.x > 0 ? "e" : "w") : (ref.y - p.y > 0 ? "s" : "n"); // mc
 }
+function transformNodeSide(n, side){
+  const vectors = {n:{x:0,y:-1}, e:{x:1,y:0}, s:{x:0,y:1}, w:{x:-1,y:0}};
+  const vector = vectors[side] || vectors.e;
+  const r = nodeRect(n);
+  const center = {x:r.cx, y:r.cy};
+  const transformed = transformNodePoint(n, {x:center.x + vector.x, y:center.y + vector.y});
+  const dx = transformed.x - center.x, dy = transformed.y - center.y;
+  return Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n");
+}
 function nodeAnchor(n, key, ref){
   const r = nodeRect(n);
   const shape = visualNodeShape(n);
   const pts = anchorPointsForNode(n, r, shape);
+  const localRef = nodeTransformActive(n) ? inverseTransformNodePoint(n, ref) : ref;
   let k = key && pts[key] ? key : null;
   /* Unpinned non-rectangular concepts use their actual silhouette intersection. */
   if (!k && CUSTOM_BOUNDARY_CONCEPT_SHAPES.has(shape)){
-    const p = conceptBoundaryPoint(n, r, ref, shape);
-    const dx = ref.x - r.cx, dy = ref.y - r.cy;
+    const raw = conceptBoundaryPoint(n, r, localRef, shape);
+    const p = transformNodePoint(n, raw);
+    const dx = localRef.x - r.cx, dy = localRef.y - r.cy;
     const horiz = Math.abs(dx) / r.w >= Math.abs(dy) / r.h;
-    return { x:p.x, y:p.y, side:horiz ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n"), key:null };
+    const rawSide = horiz ? (dx >= 0 ? "e" : "w") : (dy >= 0 ? "s" : "n");
+    return { x:p.x, y:p.y, side:transformNodeSide(n, rawSide), key:null };
   }
   if (!k){
     let bd = Infinity;
     for (const cand of PERIMETER_ANCHORS){
       const p = pts[cand];
-      const d = (p.x - ref.x)**2 + (p.y - ref.y)**2;
+      const d = (p.x - localRef.x)**2 + (p.y - localRef.y)**2;
       if (d < bd){ bd = d; k = cand; }
     }
   }
-  const p = pts[k];
-  return { x:p.x, y:p.y, side:anchorSideFor(k, p, ref), key:k };
+  const raw = pts[k];
+  const p = transformNodePoint(n, raw);
+  return { x:p.x, y:p.y,
+    side:transformNodeSide(n, anchorSideFor(k, raw, localRef)), key:k };
 }
 /* nearest visible attachment point within tolerance — used to pin a drag's drop end */
 function nearestAnchorWithin(n, w, tol = 16){
-  const pts = anchorPointsForNode(n);
+  const rawPoints = anchorPointsForNode(n);
+  const pts = Object.fromEntries(Object.entries(rawPoints)
+    .map(([key, point]) => [key, transformNodePoint(n, point)]));
   let best = null, bd = tol*tol;
-  const ports = nodePortPoints(n);
+  const rawPorts = nodePortPoints(n);
+  const ports = rawPorts ? {
+    inputs:rawPorts.inputs.map(point => ({...point, ...transformNodePoint(n, point)})),
+    outputs:rawPorts.outputs.map(point => ({...point, ...transformNodePoint(n, point)}))
+  } : null;
   if (ports){
     for (const p of ports.inputs.concat(ports.outputs)){
       const d = (p.x - w.x)**2 + (p.y - w.y)**2;

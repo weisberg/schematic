@@ -319,6 +319,39 @@ function buildNodeSelectionDropdown(panel, primary, targets){
       }, {action:"search-references"});
     menuCommand(body, "Find connected objects", () => executeCommand("searchConnected"),
       {action:"search-connected"});
+    if (typeof openEditingSelectionStudio === "function")
+      menuCommand(body, "Select by…", () => executeCommand("selectionStudio"),
+        {action:"selection-studio"});
+    if (targets.length){
+      menuCommand(body, "Add predecessors", () => executeCommand("selectPredecessors"),
+        {action:"select-predecessors"});
+      menuCommand(body, "Add successors", () => executeCommand("selectSuccessors"),
+        {action:"select-successors"});
+      menuCommand(body, "Select attached links", () => executeCommand("selectAttachedLinks"),
+        {action:"select-attached-links"});
+    }
+  });
+
+  if (typeof editingCopyStyle === "function") menuSubmenu(panel, "selection-editing", "Edit appearance & geometry", body => {
+    menuCommand(body, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
+    menuCommand(body, "Paste style", () => executeCommand("pasteStyle"), {action:"paste-style"});
+    menuCommand(body, "Format painter", () => executeCommand("formatPainter"), {action:"format-painter"});
+    if (!isStructuralNode(primary)){
+      menuSeparator(body);
+      menuCommand(body, "Rotate left 90°", () => executeCommand("rotateLeft"), {action:"rotate-left"});
+      menuCommand(body, "Rotate right 90°", () => executeCommand("rotateRight"), {action:"rotate-right"});
+      menuCommand(body, "Exact rotation…", () => executeCommand("rotateExact"), {action:"rotate-exact"});
+      menuCommand(body, "Flip horizontally", () => executeCommand("flipHorizontal"), {action:"flip-horizontal"});
+      menuCommand(body, "Flip vertically", () => executeCommand("flipVertical"), {action:"flip-vertical"});
+      menuCommand(body, primary.pinned === true ? "Unpin from layout" : "Pin for layout",
+        () => executeCommand("togglePin"), {action:"toggle-pin"});
+    }
+    if (targets.length >= 2){
+      menuSeparator(body);
+      menuCommand(body, "Preview layout…", () => executeCommand("layoutPreview"), {action:"layout-preview"});
+    }
+    menuCommand(body, "Snap selection to grid", () => executeCommand("snapSelectionGrid"),
+      {action:"snap-selection-grid"});
   });
 
   if (primary.type === "table") menuSubmenu(panel, "selection-table", "Table tools", body => {
@@ -482,6 +515,11 @@ function buildEdgeSelectionDropdown(panel, edge){
           {action:"reset-waypoint"});
       }
     }
+  });
+  if (typeof editingCopyStyle === "function") menuSubmenu(panel, "selection-edge-style-transfer", "Style transfer", body => {
+    menuCommand(body, "Copy link style", () => executeCommand("copyStyle"), {action:"copy-style"});
+    menuCommand(body, "Paste link style", () => executeCommand("pasteStyle"), {action:"paste-style"});
+    menuCommand(body, "Format painter", () => executeCommand("formatPainter"), {action:"format-painter"});
   });
 
   menuSeparator(panel);
@@ -696,6 +734,31 @@ function nodeMenu(n, x, y){
             {action:"width-largest"});
           ctxItem(sub, "Scale to average", () => matchSelectionWidths("average"),
             {action:"width-average"});
+          if (typeof matchSelectionHeights === "function"){
+            ctxSep(sub);
+            ctxLabel(sub, "Match selected heights");
+            ctxItem(sub, "Smallest height", () => matchSelectionHeights("smallest"),
+              {action:"height-smallest"});
+            ctxItem(sub, "Largest height", () => matchSelectionHeights("largest"),
+              {action:"height-largest"});
+            ctxItem(sub, "Average height", () => matchSelectionHeights("average"),
+              {action:"height-average"});
+            ctxSep(sub);
+            ctxLabel(sub, "Match complete size");
+            ctxItem(sub, "Smallest full size", () => matchSelectionSizes("smallest"),
+              {action:"size-smallest"});
+            ctxItem(sub, "Largest full size", () => matchSelectionSizes("largest"),
+              {action:"size-largest"});
+            ctxItem(sub, "Average full size", () => matchSelectionSizes("average"),
+              {action:"size-average"});
+          }
+        }
+        if (typeof resetNodeHeight === "function"){
+          ctxSep(sub);
+          ctxItem(sub, "Reset width", () => resetSelectionSizes("width"),
+            {action:"reset-width", disabled:!targets.some(target => manualNodeWidth(target) != null)});
+          ctxItem(sub, "Reset height", () => resetSelectionSizes("height"),
+            {action:"reset-height", disabled:!targets.some(target => manualNodeHeight(target) != null)});
         }
       });
       if (targets.length >= 2){
@@ -716,11 +779,33 @@ function nodeMenu(n, x, y){
         ctxItem(sub, "Bring to front", () => reorderNode(n.id, true));
         ctxItem(sub, "Send to back",   () => reorderNode(n.id, false));
       });
+      if (typeof editingRotateSelection === "function" && !isStructuralNode(n))
+        ctxSubmenu(panel, "node:arrange:transform", "Transform", sub => {
+          ctxItem(sub, "Rotate left 90°", () => executeCommand("rotateLeft"), {action:"rotate-left"});
+          ctxItem(sub, "Rotate right 90°", () => executeCommand("rotateRight"), {action:"rotate-right"});
+          ctxItem(sub, "Exact rotation…", () => executeCommand("rotateExact"), {action:"rotate-exact"});
+          ctxItem(sub, "Flip horizontally", () => executeCommand("flipHorizontal"), {action:"flip-horizontal"});
+          ctxItem(sub, "Flip vertically", () => executeCommand("flipVertical"), {action:"flip-vertical"});
+          ctxItem(sub, n.pinned === true ? "Unpin from layout" : "Pin for layout",
+            () => executeCommand("togglePin"), {action:"toggle-pin"});
+          if (targets.length >= 2)
+            ctxItem(sub, "Preview layout…", () => executeCommand("layoutPreview"), {action:"layout-preview"});
+        });
+      if (typeof editingSnapSelectionToGrid === "function")
+        ctxItem(panel, "Snap selection to grid", () => executeCommand("snapSelectionGrid"),
+          {action:"snap-selection-grid"});
     });
     if (typeof buildOrganizationNodeContext === "function")
       buildOrganizationNodeContext(m, n, targets);
     if (typeof buildMetadataNodeContext === "function")
       buildMetadataNodeContext(m, n, targets);
+    if (typeof editingCopyStyle === "function") ctxGroup(m, "node:style-transfer", "Style transfer", panel => {
+      ctxItem(panel, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
+      ctxItem(panel, "Paste style", () => executeCommand("pasteStyle"), {action:"paste-style"});
+      ctxItem(panel, "Format painter", () => executeCommand("formatPainter"), {action:"format-painter"});
+      ctxItem(panel, "Persistent painter", () => executeCommand("formatPainterPersistent"),
+        {action:"format-painter-persistent"});
+    });
     ctxGroup(m, "node:actions", "Actions", panel => {
       ctxItem(panel, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
       ctxItem(panel, targets.length > 1 ? "Delete selected nodes" : "Delete node",
@@ -883,6 +968,13 @@ function edgeMenu(e, x, y){
       buildOrganizationEdgeContext(m, e);
     if (typeof buildMetadataEdgeContext === "function")
       buildMetadataEdgeContext(m, e);
+    if (typeof editingCopyStyle === "function") ctxGroup(m, "edge:style-transfer", "Style transfer", panel => {
+      ctxItem(panel, "Copy link style", () => executeCommand("copyStyle"), {action:"copy-style"});
+      ctxItem(panel, "Paste link style", () => executeCommand("pasteStyle"), {action:"paste-style"});
+      ctxItem(panel, "Format painter", () => executeCommand("formatPainter"), {action:"format-painter"});
+      ctxItem(panel, "Persistent painter", () => executeCommand("formatPainterPersistent"),
+        {action:"format-painter-persistent"});
+    });
     ctxGroup(m, "edge:actions", "Actions", panel => {
       ctxItem(panel, "Swap direction", () => {
         pushHistory();
@@ -919,6 +1011,27 @@ function canvasMenu(w, x, y){
       ctxItem(panel, "Clean up to grid", () => executeCommand("cleanupGrid"), {action:"cleanup-grid"});
       ctxItem(panel, "Snap to grid", () => executeCommand("toggleSnap"),
         {action:"toggle-snap", pressed:snapToGrid});
+      if (typeof openEditingLayoutPreview === "function")
+        ctxItem(panel, "Preview layout…", () => executeCommand("layoutPreview"),
+          {action:"layout-preview", disabled:selectedNodes().length < 2});
+      if (typeof openEditingGuideManager === "function"){
+        ctxItem(panel, "Grid, rulers & guides…", () => executeCommand("guideManager"),
+          {action:"guide-manager"});
+        ctxItem(panel, "Show rulers", () => executeCommand("toggleRulers"),
+          {action:"toggle-rulers", pressed:editingRulersVisible()});
+        ctxItem(panel, "Clear manual guides", () => executeCommand("clearGuides"),
+          {action:"clear-guides", disabled:editingGuides(true).length === 0});
+      }
+    });
+    if (typeof openEditingSelectionStudio === "function") ctxGroup(m, "canvas:selection", "Selection", panel => {
+      ctxItem(panel, "Select by…", () => executeCommand("selectionStudio"), {action:"selection-studio"});
+      ctxItem(panel, "Invert visible selection", () => executeCommand("invertSelection"),
+        {action:"invert-selection"});
+      ctxSubmenu(panel, "canvas:selection:gesture", "Drag selection mode", sub => {
+        for (const [mode,label] of [["contain","Full containment"],["intersect","Intersecting objects"],["lasso","Freeform lasso"]])
+          ctxItem(sub, label, () => setEditingSelectionMode(mode),
+            {action:"selection-mode-"+mode, pressed:editingSelectionMode === mode});
+      });
     });
     ctxGroup(m, "canvas:view", "View", panel => {
       ctxItem(panel, "Search diagram", () => executeCommand("search"), {kbd:"Ctrl/Cmd+F", action:"search"});

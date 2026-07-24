@@ -99,8 +99,9 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.40.0";
-const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
+const APP_VERSION = "v1.41.1";
+const DEFAULT_GRID_SIZE = 24;
+const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
 const THEME = {
@@ -281,25 +282,51 @@ function setTextBoxMargin(n, side, value){
   if (next === 0) delete n[key]; else n[key] = next;
   return true;
 }
+function nodeSupportsManualHeight(n){
+  return !!n && ["concept","text","status","note"].includes(n.type);
+}
 function manualNodeHeight(n){
   const height = n ? Number(n.h) : NaN;
-  if (!n || n.type !== "text" || n.manualHeight !== true || !Number.isFinite(height)) return null;
-  return clampSize(height, TEXT_H_MIN, TEXT_H_MAX);
+  if (!nodeSupportsManualHeight(n) || n.manualHeight !== true || !Number.isFinite(height)) return null;
+  return clampSize(height, n.type === "text" ? TEXT_H_MIN : 36, TEXT_H_MAX);
 }
-function setTextBoxHeight(n, height){
-  if (!n || n.type !== "text") return false;
-  n.h = clampSize(height, TEXT_H_MIN, TEXT_H_MAX);
+function setNodeHeight(n, height){
+  if (!nodeSupportsManualHeight(n)) return false;
+  n.h = clampSize(height, n.type === "text" ? TEXT_H_MIN : 36, TEXT_H_MAX);
   n.manualHeight = true;
   return true;
 }
-function resetTextBoxHeight(n){
+function resetNodeHeight(n){
   if (manualNodeHeight(n) == null) return false;
   delete n.manualHeight;
   delete n.h;
   return true;
 }
+function setTextBoxHeight(n, height){ return n && n.type === "text" ? setNodeHeight(n, height) : false; }
+function resetTextBoxHeight(n){ return n && n.type === "text" ? resetNodeHeight(n) : false; }
 function hasForcedNodeSize(n){
   return manualNodeWidth(n) != null || manualNodeHeight(n) != null;
+}
+function nodeRotation(n){
+  if (!n || isStructuralNode(n)) return 0;
+  const value = Number(n.rotation);
+  if (!Number.isFinite(value)) return 0;
+  const normalized = ((value % 360) + 360) % 360;
+  return Math.abs(normalized) < 1e-9 || Math.abs(normalized - 360) < 1e-9 ? 0 : normalized;
+}
+function setNodeRotation(n, value){
+  if (!n || isStructuralNode(n)) return false;
+  const normalized = nodeRotation({...n, rotation:value});
+  if (normalized === 0) delete n.rotation; else n.rotation = normalized;
+  return true;
+}
+function nodeFlipX(n){ return !!n && !isStructuralNode(n) && n.flipX === true; }
+function nodeFlipY(n){ return !!n && !isStructuralNode(n) && n.flipY === true; }
+function setNodeFlip(n, axis, enabled){
+  if (!n || isStructuralNode(n) || !["x","y"].includes(axis)) return false;
+  const key = axis === "x" ? "flipX" : "flipY";
+  if (enabled === true) n[key] = true; else delete n[key];
+  return true;
 }
 function nodeTitleSupportsLineBreaks(n){ return !!n && (n.type === "concept" || n.type === "text" || n.type === "status"); }
 function insertTextLineBreak(control){
@@ -645,14 +672,16 @@ function hitTest(w){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i], r = nodeRect(n);
     if (isStructuralNode(n) || hidden.has(n.id)) continue;
-    if (w.x < r.x || w.x > r.x + r.w || w.y < r.y || w.y > r.y + r.h) continue;
-    if (!nodeContainsPoint(n, r, w)) continue;
+    const point = typeof inverseTransformNodePoint === "function"
+      ? inverseTransformNodePoint(n, w) : w;
+    if (point.x < r.x || point.x > r.x + r.w || point.y < r.y || point.y > r.y + r.h) continue;
+    if (!nodeContainsPoint(n, r, point)) continue;
     let field = null;
     const rows = n.collapsed ? null : nodeRows(n);
     if (rows && rows.length){
       const m = tableMetrics(n);
-      if (w.y > r.y + m.headerH){
-        const idx = Math.floor((w.y - r.y - m.headerH) / m.rowH);
+      if (point.y > r.y + m.headerH){
+        const idx = Math.floor((point.y - r.y - m.headerH) / m.rowH);
         if (idx >= 0 && idx < rows.length) field = rows[idx];
       }
     }
@@ -679,6 +708,8 @@ function snapshot(){ return JSON.stringify({
   nodes:state.nodes,
   edges:state.edges,
   nextId:state.nextId,
+  editing:typeof cleanEditingForDocument === "function"
+    ? cleanEditingForDocument(state.editing) : state.editing,
   organization:typeof cleanOrganizationForDocument === "function"
     ? cleanOrganizationForDocument(state.organization) : state.organization,
   metadata:typeof cleanMetadataForDocument === "function"
@@ -705,6 +736,8 @@ function pushHistory(coalesceKey){
 function restore(json){
   const s = JSON.parse(json);
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
+  state.editing = s.editing;
+  if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
   state.organization = s.organization;
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = s.metadata;
@@ -842,6 +875,23 @@ function cleanNodeForDocument(n){
       ? clampSize(out.w, 80, 4000)
       : clampSize(out.w || STATUS_W_DEFAULT, 180, 720);
   }
+  if (nodeSupportsManualHeight(out)){
+    const height = manualNodeHeight(out);
+    if (height == null){ delete out.manualHeight; delete out.h; }
+    else { out.manualHeight = true; out.h = height; }
+  }
+  if (!isStructuralNode(out)){
+    const rotation = nodeRotation(out);
+    if (rotation) out.rotation = rotation; else delete out.rotation;
+    if (out.flipX !== true) delete out.flipX;
+    if (out.flipY !== true) delete out.flipY;
+    if (out.pinned !== true) delete out.pinned;
+  } else {
+    delete out.rotation;
+    delete out.flipX;
+    delete out.flipY;
+    delete out.pinned;
+  }
   if (!out.notes) out.notes = out.notes || "";
   return out;
 }
@@ -863,6 +913,10 @@ function documentObject(){
   if (typeof cleanMetadataForDocument === "function"){
     const metadata = cleanMetadataForDocument(state.metadata);
     if (metadata) d.metadata = metadata;
+  }
+  if (typeof cleanEditingForDocument === "function"){
+    const editing = cleanEditingForDocument(state.editing);
+    if (editing) d.editing = editing;
   }
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
@@ -901,12 +955,18 @@ function migrateDocument(d){
   if (out.meta && typeof out.meta === "object") result.meta = out.meta;
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
+  if (out.editing && typeof out.editing === "object") result.editing = out.editing;
   return result;
 }
 function applyDocument(d, opts = {}){
   const migrated = migrateDocument(d);
+  if (typeof editingCancelFormatPainter === "function") editingCancelFormatPainter();
+  if (typeof editingLayoutProposal !== "undefined") editingLayoutProposal = null;
   state.nodes = migrated.nodes;
   state.edges = migrated.edges;
+  state.editing = migrated.editing;
+  if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
+  if (typeof editingUpdateGridPattern === "function") editingUpdateGridPattern();
   state.organization = migrated.organization;
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = migrated.metadata;
@@ -973,6 +1033,17 @@ function applyDocument(d, opts = {}){
       n.w = n.manualWidth === true
         ? clampSize(n.w, 80, 4000)
         : clampSize(Number(n.w) || STATUS_W_DEFAULT, 180, 720);
+    }
+    if (nodeSupportsManualHeight(n)){
+      const height = manualNodeHeight(n);
+      if (height == null){ delete n.manualHeight; delete n.h; }
+      else { n.manualHeight = true; n.h = height; }
+    }
+    if (!isStructuralNode(n)){
+      setNodeRotation(n, n.rotation);
+      setNodeFlip(n, "x", n.flipX === true);
+      setNodeFlip(n, "y", n.flipY === true);
+      if (n.pinned !== true) delete n.pinned;
     }
   }
   for (const e of state.edges){
