@@ -13,177 +13,258 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.36.2">
+<link rel="stylesheet" href="styles.css?v=1.37.1">
 </head>
 <body>
 <noscript>
   <div class="banner danger">Schematic needs JavaScript enabled to run.</div>
 </noscript>
 
-<header>
-  <div class="brand"><b>SCHEMATIC</b><span id="docLabel">untitled.schematic.json</span></div>
+<header id="appHeader">
+  <div class="ribbon-titlebar">
+    <div class="brand"><b>SCHEMATIC</b><span id="docLabel">untitled.schematic.json</span></div>
+    <div class="quick-access" role="toolbar" aria-label="Quick access">
+      <button id="btnSave" class="primary" data-command="save"><span data-command-label>Save</span></button>
+      <button id="btnUndo" data-command="undo"><span data-command-label>Undo</span></button>
+      <button id="btnRedo" data-command="redo"><span data-command-label>Redo</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="quick-access" role="toolbar" aria-label="Canvas controls">
+      <button id="btnFit" data-command="fit"><span data-command-label>Fit</span></button>
+      <button id="btnInspector" data-command="toggleInspector" aria-pressed="true"><span data-command-label>Inspector</span></button>
+      <button id="btnRibbonToggle" class="ribbon-toggle" type="button" aria-controls="ribbonPanels"
+              aria-expanded="true" title="Collapse the ribbon">Collapse ribbon</button>
+    </div>
+  </div>
 
-  <nav class="menubar" aria-label="Application menu">
-    <div class="menu" id="fileMenu">
-      <button class="menubtn" title="File menu" aria-haspopup="true" aria-expanded="false">File</button>
-      <div class="menupanel">
-        <button id="btnNew" title="Start a new diagram">New</button>
-        <button id="btnOpen" title="Open a diagram from disk (Ctrl/Cmd+O)">Open…</button>
-        <button id="menuSave" title="Save the current diagram (Ctrl/Cmd+S)">Save</button>
-        <button id="btnSaveAs" title="Save this diagram as a new file (Ctrl/Cmd+Shift+S)">Save As…</button>
-        <div class="menusep"></div>
-        <button id="btnImportJSON" title="Load a diagram from JSON">Import JSON…</button>
-        <button id="btnImportDDL" title="Import a SQL DDL subset">Import SQL DDL…</button>
-        <button id="btnImportCSV" title="Create a table from CSV headers">Import CSV…</button>
-        <div class="menusep"></div>
-        <button id="btnClear" class="dangerbtn" title="Clear the canvas">Clear canvas</button>
-      </div>
+  <nav id="appRibbon" class="ribbon" aria-label="Application ribbon">
+    <div class="ribbon-tabs" role="tablist" aria-label="Ribbon tabs">
+      <button id="ribbonTabHome" role="tab" data-ribbon-tab="home" aria-controls="ribbonPanelHome"
+              aria-selected="true" tabindex="0">Home</button>
+      <button id="ribbonTabInsert" role="tab" data-ribbon-tab="insert" aria-controls="ribbonPanelInsert"
+              aria-selected="false" tabindex="-1">Insert</button>
+      <button id="btnArrangeMenu" role="tab" data-ribbon-tab="arrange" aria-controls="arrangeMenu"
+              aria-selected="false" tabindex="-1">Arrange</button>
+      <button id="ribbonTabModel" role="tab" data-ribbon-tab="model" aria-controls="ribbonPanelModel"
+              aria-selected="false" tabindex="-1">Model</button>
+      <button id="ribbonTabView" role="tab" data-ribbon-tab="view" aria-controls="ribbonPanelView"
+              aria-selected="false" tabindex="-1">View</button>
+      <button id="ribbonTabExport" role="tab" data-ribbon-tab="export" aria-controls="ribbonPanelExport"
+              aria-selected="false" tabindex="-1">Export</button>
+      <button id="btnSelectionMenu" class="contextual" role="tab" data-ribbon-tab="selection"
+              aria-controls="selectionMenuPanel" aria-selected="false" tabindex="-1" hidden disabled>Selection</button>
     </div>
-    <div class="menu" id="editMenu">
-      <button class="menubtn" title="Edit menu" aria-haspopup="true" aria-expanded="false">Edit</button>
-      <div class="menupanel">
-        <button id="menuUndo" title="Undo (Ctrl/Cmd+Z)">Undo <kbd>⌘Z</kbd></button>
-        <button id="menuRedo" title="Redo (Ctrl/Cmd+Shift+Z)">Redo <kbd>⇧⌘Z</kbd></button>
-        <div class="menusep"></div>
-        <button id="menuCut" title="Cut selected nodes (Ctrl/Cmd+X)">Cut <kbd>⌘X</kbd></button>
-        <button id="menuCopy" title="Copy selected nodes (Ctrl/Cmd+C)">Copy <kbd>⌘C</kbd></button>
-        <button id="menuPaste" title="Paste copied nodes (Ctrl/Cmd+V)">Paste <kbd>⌘V</kbd></button>
-        <div class="menusep"></div>
-        <button id="menuDuplicate" title="Duplicate selected nodes (Ctrl/Cmd+D)">Duplicate <kbd>⌘D</kbd></button>
-        <button id="menuDelete" class="dangerbtn" title="Delete the selection">Delete <kbd>Del</kbd></button>
-      </div>
-    </div>
-    <div class="menu" id="insertMenu">
-      <button class="menubtn" title="Insert menu" aria-haspopup="true" aria-expanded="false">Insert</button>
-      <div class="menupanel">
-        <div class="menulabel">Ideas and content</div>
-        <button id="menuAddConcept" title="Add a concept node (C)">Concept <kbd>C</kbd></button>
-        <button id="menuAddText" title="Add plain text (X)">Plain text <kbd>X</kbd></button>
-        <button id="menuAddStatus" title="Add a status node (S)">Status <kbd>S</kbd></button>
-        <button id="menuAddNote" title="Add a rich note (N)">Rich note <kbd>N</kbd></button>
-        <div class="menulabel">Data and work</div>
-        <button id="menuAddTable" title="Add a table / entity node (T)">Table <kbd>T</kbd></button>
-        <button id="menuAddTodo" title="Add a to-do list (D)">To-do list <kbd>D</kbd></button>
-        <div class="menulabel">Containers</div>
-        <button id="menuAddFrame" title="Add a subject-area frame">Frame</button>
-        <button id="menuAddHorizontalLane" title="Add a wide swimlane with its title on the left">Horizontal swimlane</button>
-        <button id="menuAddVerticalLane" title="Add a tall swimlane with its title at the top">Vertical swimlane</button>
-      </div>
-    </div>
-    <div class="menu" id="arrangeMenu">
-      <button class="menubtn" id="btnArrangeMenu" title="Arrange menu" aria-haspopup="true" aria-expanded="false">Arrange</button>
-      <div class="menupanel wide">
-        <div class="menulabel">Diagram layout</div>
-        <button id="btnLayoutTree" title="Lay out the selected concept tree">Tree layout</button>
-        <button id="btnLayoutSchema" title="Lay out table relations in layers">Schema layout</button>
-        <button id="btnCleanup" title="Snap every node to the dot grid now">Clean up to grid</button>
-        <button id="btnSnap" title="Always snap dragged items to the dot grid; hold Shift for temporary snapping" aria-pressed="false">Snap to grid</button>
-        <div class="menusep"></div>
-        <details class="menusubmenu" data-menu-submenu="align">
-          <summary><span>Align selected items</span></summary>
-          <div class="menusubbody">
-            <div class="menulabel">Vertical position</div>
-            <button id="btnAlignTop" title="Align selected items to the top">Top</button>
-            <button id="btnAlignMiddle" title="Align selected items through the middle">Middle</button>
-            <button id="btnAlignBottom" title="Align selected items to the bottom">Bottom</button>
-            <div class="menulabel">Horizontal position</div>
-            <button id="btnAlignLeft" title="Align selected items to the left">Left</button>
-            <button id="btnAlignCenter" title="Align selected items through the center">Center</button>
-            <button id="btnAlignRight" title="Align selected items to the right">Right</button>
+
+    <div class="ribbon-panels" id="ribbonPanels">
+      <section class="ribbon-panel" id="ribbonPanelHome" role="tabpanel" data-ribbon-panel="home"
+               aria-labelledby="ribbonTabHome">
+        <div class="ribbon-group" aria-label="File">
+          <span class="ribbon-group-label">File</span>
+          <div class="ribbon-command-grid">
+            <button id="btnNew" data-command="new"><span data-command-label>New</span></button>
+            <button id="btnOpen" data-command="open"><span data-command-label>Open</span></button>
+            <button id="menuSave" data-command="save"><span data-command-label>Save</span></button>
+            <button id="btnSaveAs" data-command="saveAs"><span data-command-label>Save As</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" aria-label="History">
+          <span class="ribbon-group-label">History</span>
+          <div class="ribbon-command-grid">
+            <button id="menuUndo" data-command="undo"><span data-command-label>Undo</span></button>
+            <button id="menuRedo" data-command="redo"><span data-command-label>Redo</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" aria-label="Clipboard">
+          <span class="ribbon-group-label">Clipboard</span>
+          <div class="ribbon-command-grid">
+            <button id="menuCut" data-command="cut"><span data-command-label>Cut</span></button>
+            <button id="menuCopy" data-command="copy"><span data-command-label>Copy</span></button>
+            <button id="menuPaste" data-command="paste"><span data-command-label>Paste</span></button>
+            <button id="menuDuplicate" data-command="duplicate"><span data-command-label>Duplicate</span></button>
+            <button id="menuDelete" class="dangerbtn" data-command="delete"><span data-command-label>Delete</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Document">
+          <span class="ribbon-group-label">Document</span>
+          <div class="ribbon-command-grid">
+            <button id="btnImportJSON" data-command="importJson"><span data-command-label>Import JSON</span></button>
+            <button id="btnCommandPalette" data-command="commandPalette"><span data-command-label>Quick jump</span></button>
+            <button id="btnShortcuts" data-command="shortcuts"><span data-command-label>Shortcuts</span></button>
+            <button id="btnClear" class="dangerbtn" data-command="clear"><span data-command-label>Clear</span></button>
+          </div>
+        </div>
+        <details class="ribbon-overflow">
+          <summary aria-label="More Home commands">More</summary>
+          <div class="ribbon-overflow-panel">
+            <button data-command="importJson"><span data-command-label>Import JSON</span></button>
+            <button data-command="commandPalette"><span data-command-label>Quick jump</span></button>
+            <button data-command="shortcuts"><span data-command-label>Shortcuts</span></button>
+            <button class="dangerbtn" data-command="clear"><span data-command-label>Clear</span></button>
           </div>
         </details>
-        <details class="menusubmenu" data-menu-submenu="distribute">
-          <summary><span>Distribute selected items</span></summary>
-          <div class="menusubbody">
-            <button id="menuDistributeHorizontal">Horizontally</button>
-            <button id="menuDistributeVertical">Vertically</button>
+      </section>
+
+      <section class="ribbon-panel" id="ribbonPanelInsert" role="tabpanel" data-ribbon-panel="insert"
+               aria-labelledby="ribbonTabInsert" hidden>
+        <div class="ribbon-group" aria-label="Ideas and content">
+          <span class="ribbon-group-label">Ideas and content</span>
+          <div class="ribbon-command-grid">
+            <button id="btnAddConcept" class="primary" data-command="addConcept"><span data-command-label>Concept</span></button>
+            <button id="btnAddText" data-command="addText"><span data-command-label>Text</span></button>
+            <button id="btnAddStatus" data-command="addStatus"><span data-command-label>Status</span></button>
+            <button id="btnAddNote" data-command="addNote"><span data-command-label>Rich note</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" aria-label="Data and work">
+          <span class="ribbon-group-label">Data and work</span>
+          <div class="ribbon-command-grid">
+            <button id="btnAddTable" data-command="addTable"><span data-command-label>Table</span></button>
+            <button id="btnAddTodo" data-command="addTodo"><span data-command-label>To-do list</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Containers">
+          <span class="ribbon-group-label">Containers</span>
+          <div class="ribbon-command-grid">
+            <button id="btnAddFrame" data-command="addFrame"><span data-command-label>Frame</span></button>
+            <button id="btnAddHorizontalLane" data-command="addHorizontalLane"><span data-command-label>Horizontal lane</span></button>
+            <button id="btnAddVerticalLane" data-command="addVerticalLane"><span data-command-label>Vertical lane</span></button>
+          </div>
+        </div>
+        <details class="ribbon-overflow">
+          <summary aria-label="More Insert commands">More</summary>
+          <div class="ribbon-overflow-panel">
+            <button data-command="addFrame"><span data-command-label>Frame</span></button>
+            <button data-command="addHorizontalLane"><span data-command-label>Horizontal lane</span></button>
+            <button data-command="addVerticalLane"><span data-command-label>Vertical lane</span></button>
           </div>
         </details>
-        <details class="menusubmenu" data-menu-submenu="size">
-          <summary><span>Size selected items</span></summary>
-          <div class="menusubbody">
-            <button id="menuResetSize">Reset forced sizing</button>
-            <div class="menusep"></div>
-            <button id="menuWidthSmallest">Match smallest width</button>
-            <button id="menuWidthLargest">Match largest width</button>
-            <button id="menuWidthAverage">Match average width</button>
+      </section>
+
+      <section class="ribbon-panel" id="arrangeMenu" role="tabpanel" data-ribbon-panel="arrange"
+               aria-labelledby="btnArrangeMenu" hidden>
+        <div class="ribbon-group" aria-label="Layout">
+          <span class="ribbon-group-label">Layout</span>
+          <div class="ribbon-command-grid">
+            <button id="btnLayoutTree" data-command="layoutTree"><span data-command-label>Tree</span></button>
+            <button id="btnLayoutSchema" data-command="layoutSchema"><span data-command-label>Schema</span></button>
+            <button id="btnCleanup" data-command="cleanupGrid"><span data-command-label>Clean up</span></button>
+            <button id="btnSnap" data-command="toggleSnap" aria-pressed="false"><span data-command-label>Snap to grid</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" data-ribbon-group="align" aria-label="Align">
+          <span class="ribbon-group-label">Align</span>
+          <div class="ribbon-command-grid compact">
+            <button id="btnAlignTop" data-command="alignTop"><span data-command-label>Top</span></button>
+            <button id="btnAlignMiddle" data-command="alignMiddle"><span data-command-label>Middle</span></button>
+            <button id="btnAlignBottom" data-command="alignBottom"><span data-command-label>Bottom</span></button>
+            <button id="btnAlignLeft" data-command="alignLeft"><span data-command-label>Left</span></button>
+            <button id="btnAlignCenter" data-command="alignCenter"><span data-command-label>Center</span></button>
+            <button id="btnAlignRight" data-command="alignRight"><span data-command-label>Right</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Distribute and size">
+          <span class="ribbon-group-label">Distribute and size</span>
+          <div class="ribbon-command-grid">
+            <button id="menuDistributeHorizontal" data-command="distributeHorizontal"><span data-command-label>Distribute H</span></button>
+            <button id="menuDistributeVertical" data-command="distributeVertical"><span data-command-label>Distribute V</span></button>
+            <button id="menuResetSize" data-command="resetSize"><span data-command-label>Reset size</span></button>
+            <button id="menuWidthSmallest" data-command="widthSmallest"><span data-command-label>Smallest width</span></button>
+            <button id="menuWidthLargest" data-command="widthLargest"><span data-command-label>Largest width</span></button>
+            <button id="menuWidthAverage" data-command="widthAverage"><span data-command-label>Average width</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Order">
+          <span class="ribbon-group-label">Order</span>
+          <div class="ribbon-command-grid">
+            <button id="menuBringFront" data-command="bringFront"><span data-command-label>Bring to front</span></button>
+            <button id="menuSendBack" data-command="sendBack"><span data-command-label>Send to back</span></button>
+          </div>
+        </div>
+        <details class="ribbon-overflow">
+          <summary aria-label="More Arrange commands">More</summary>
+          <div class="ribbon-overflow-panel">
+            <button data-command="distributeHorizontal"><span data-command-label>Distribute horizontally</span></button>
+            <button data-command="distributeVertical"><span data-command-label>Distribute vertically</span></button>
+            <button data-command="resetSize"><span data-command-label>Reset size</span></button>
+            <button data-command="widthSmallest"><span data-command-label>Smallest width</span></button>
+            <button data-command="widthLargest"><span data-command-label>Largest width</span></button>
+            <button data-command="widthAverage"><span data-command-label>Average width</span></button>
+            <button data-command="bringFront"><span data-command-label>Bring to front</span></button>
+            <button data-command="sendBack"><span data-command-label>Send to back</span></button>
           </div>
         </details>
-        <details class="menusubmenu" data-menu-submenu="layer">
-          <summary><span>Layer order</span></summary>
-          <div class="menusubbody">
-            <button id="menuBringFront">Bring to front</button>
-            <button id="menuSendBack">Send to back</button>
+      </section>
+
+      <section class="ribbon-panel" id="ribbonPanelModel" role="tabpanel" data-ribbon-panel="model"
+               aria-labelledby="ribbonTabModel" hidden>
+        <div class="ribbon-group" aria-label="Import model">
+          <span class="ribbon-group-label">Import model</span>
+          <div class="ribbon-command-grid">
+            <button id="btnImportDDL" data-command="importDDL"><span data-command-label>SQL DDL</span></button>
+            <button id="btnImportCSV" data-command="importCSV"><span data-command-label>CSV headers</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" aria-label="Validate">
+          <span class="ribbon-group-label">Validate</span>
+          <div class="ribbon-command-grid">
+            <button id="btnLint" data-command="lint"><span data-command-label>Lint schema</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="ribbon-panel" id="ribbonPanelView" role="tabpanel" data-ribbon-panel="view"
+               aria-labelledby="ribbonTabView" hidden>
+        <div class="ribbon-group" aria-label="Zoom">
+          <span class="ribbon-group-label">Zoom</span>
+          <div class="ribbon-command-grid">
+            <button id="menuFit" data-command="fit"><span data-command-label>Fit diagram</span></button>
+            <button id="menuActualSize" data-command="actualSize"><span data-command-label>Actual size</span></button>
+            <button id="menuZoomIn" data-command="zoomIn"><span data-command-label>Zoom in</span></button>
+            <button id="menuZoomOut" data-command="zoomOut"><span data-command-label>Zoom out</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group ribbon-low-priority" aria-label="Workspace">
+          <span class="ribbon-group-label">Workspace</span>
+          <div class="ribbon-command-grid">
+            <button id="menuInspector" data-command="toggleInspector" aria-pressed="true"><span data-command-label>Inspector</span></button>
+            <button id="menuTheme" data-command="toggleTheme" aria-pressed="false"><span data-command-label>Dark theme</span></button>
+          </div>
+        </div>
+        <details class="ribbon-overflow">
+          <summary aria-label="More View commands">More</summary>
+          <div class="ribbon-overflow-panel">
+            <button data-command="toggleInspector"><span data-command-label>Inspector</span></button>
+            <button data-command="toggleTheme"><span data-command-label>Dark theme</span></button>
           </div>
         </details>
-        <div class="menusep"></div>
-        <button id="btnLint" title="Run schema lint checks">Lint schema…</button>
-      </div>
-    </div>
-    <div class="menu" id="selectionMenu">
-      <button class="menubtn" id="btnSelectionMenu" title="Commands for the current selection"
-              aria-haspopup="true" aria-expanded="false" disabled>Selection</button>
-      <div class="menupanel wide" id="selectionMenuPanel">
+      </section>
+
+      <section class="ribbon-panel" id="ribbonPanelExport" role="tabpanel" data-ribbon-panel="export"
+               aria-labelledby="ribbonTabExport" hidden>
+        <div class="ribbon-group" aria-label="Images and documents">
+          <span class="ribbon-group-label">Images and documents</span>
+          <div class="ribbon-command-grid">
+            <button id="btnExportPNG" data-command="exportPNG"><span data-command-label>PNG</span></button>
+            <button id="btnExportSVG" data-command="exportSVG"><span data-command-label>SVG</span></button>
+            <button id="btnExportJSON" data-command="exportJSON"><span data-command-label>JSON</span></button>
+          </div>
+        </div>
+        <div class="ribbon-group" aria-label="Model formats">
+          <span class="ribbon-group-label">Model formats</span>
+          <div class="ribbon-command-grid">
+            <button id="btnExportSQL" data-command="exportSQL"><span data-command-label>SQL DDL</span></button>
+            <button id="btnExportMermaid" data-command="exportMermaid"><span data-command-label>Mermaid ER</span></button>
+            <button id="btnExportMarkdown" data-command="exportMarkdown"><span data-command-label>Markdown</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="ribbon-panel selection-ribbon-panel" id="selectionMenuPanel" role="tabpanel"
+               data-ribbon-panel="selection" aria-labelledby="btnSelectionMenu" hidden>
         <div class="menuempty">Select a node or link to see its commands.</div>
-      </div>
-    </div>
-    <div class="menu" id="viewMenu">
-      <button class="menubtn" title="View menu" aria-haspopup="true" aria-expanded="false">View</button>
-      <div class="menupanel">
-        <button id="menuFit" title="Fit diagram in view (F)">Fit diagram <kbd>F</kbd></button>
-        <button id="menuActualSize" title="Show the diagram at 100%">Actual size</button>
-        <button id="menuZoomIn" title="Zoom in">Zoom in</button>
-        <button id="menuZoomOut" title="Zoom out">Zoom out</button>
-        <div class="menusep"></div>
-        <button id="menuInspector" title="Show or hide the inspector">Inspector</button>
-        <button id="menuTheme" title="Toggle light/dark theme">Dark theme</button>
-      </div>
-    </div>
-    <div class="menu" id="exportMenu">
-      <button class="menubtn" title="Export menu" aria-haspopup="true" aria-expanded="false">Export</button>
-      <div class="menupanel align-right">
-        <button id="btnExportPNG" title="Download diagram as PNG">PNG image</button>
-        <button id="btnExportSVG" title="Download diagram as SVG">SVG vector</button>
-        <button id="btnExportJSON" title="Download diagram as JSON">JSON document</button>
-        <div class="menusep"></div>
-        <button id="btnExportSQL" title="Generate SQL DDL from table nodes">SQL DDL…</button>
-        <button id="btnExportMermaid" title="Export Mermaid ER diagram">Mermaid ER…</button>
-        <button id="btnExportMarkdown" title="Export mind map as Markdown">Markdown outline…</button>
-      </div>
+      </section>
     </div>
   </nav>
-
-  <div class="tgroup">
-    <button id="btnAddConcept" class="primary" title="Add a concept node (C)">+ Concept</button>
-    <button id="btnAddText" title="Add plain text (X)">+ Text</button>
-    <button id="btnAddStatus" title="Add a status node (S)">+ Status</button>
-    <button id="btnAddNote" title="Add a rich note (N)">+ Note</button>
-    <button id="btnAddTable" title="Add a table / entity node (T)">+ Table</button>
-    <button id="btnAddTodo" title="Add a to-do list (D)">+ To-do</button>
-    <button id="btnAddFrame" title="Add a subject-area frame">+ Frame</button>
-    <div class="menu" id="swimlaneMenu">
-      <button class="menubtn lane-add-btn" id="btnAddSwimlane" title="Add a swimlane"
-              aria-haspopup="true" aria-expanded="false">+ Lane</button>
-      <div class="menupanel">
-        <div class="menulabel">Orientation</div>
-        <button id="btnAddHorizontalLane" title="Add a wide swimlane with its title on the left">Horizontal lane</button>
-        <button id="btnAddVerticalLane" title="Add a tall swimlane with its title at the top">Vertical lane</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="spacer"></div>
-
-  <div class="tgroup">
-    <button id="btnUndo" title="Undo (Ctrl+Z)">Undo</button>
-    <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">Redo</button>
-    <button id="btnFit" title="Fit diagram in view (F)">Fit</button>
-    <button id="btnInspector" aria-label="Show or hide the inspector" aria-pressed="true"
-            title="Auto-hide the inspector when nothing is selected (I)">Inspector</button>
-  </div>
-  <div class="tgroup">
-    <button id="btnSave" class="primary" title="Save the current diagram (Ctrl/Cmd+S)">Save</button>
-  </div>
   <input type="file" id="fileInput" accept="application/json,.json,.schematic" hidden>
 </header>
 
@@ -211,7 +292,7 @@
   <span id="countLabel">0 nodes · 0 edges</span>
   <label class="statuscheck" title="SQL dialect"><span>SQL</span><select id="dialectSelect"><option value="ansi">ANSI</option><option value="postgres">Postgres</option><option value="mysql">MySQL</option><option value="athena">Athena</option></select></label>
   <label class="statuscheck" title="Automatically save every change to the open file"><input type="checkbox" id="autoSaveToggle"> Auto-save</label>
-  <button id="btnTheme" class="statusbtn" title="Toggle light/dark theme">Dark</button>
+  <button id="btnTheme" class="statusbtn" data-command="toggleTheme"><span data-command-label>Dark theme</span></button>
   <label class="statuscheck" title="Export PNG using the current theme"><input type="checkbox" id="pngAsShown"> PNG as shown</label>
   <span class="hint spacer">Drag near items to align or space evenly · Shift+drag to grid-snap · scroll to pan · Shift+scroll vertically to zoom · drag ○ to connect · double-click to edit · Shift+Enter for a new line · right-click blank canvas to create or arrange</span>
   <span id="appVersion" class="appversion"></span>
@@ -230,15 +311,16 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.36.2"></script>
-<script src="js/icon-catalog.js?v=1.36.2"></script>
-<script src="js/geometry.js?v=1.36.2"></script>
-<script src="js/render.js?v=1.36.2"></script>
-<script src="js/model.js?v=1.36.2"></script>
-<script src="js/interactions.js?v=1.36.2"></script>
-<script src="js/inspector.js?v=1.36.2"></script>
-<script src="js/io.js?v=1.36.2"></script>
-<script src="js/context-menu.js?v=1.36.2"></script>
-<script src="js/bootstrap.js?v=1.36.2"></script>
+<script src="js/core.js?v=1.37.1"></script>
+<script src="js/icon-catalog.js?v=1.37.1"></script>
+<script src="js/geometry.js?v=1.37.1"></script>
+<script src="js/render.js?v=1.37.1"></script>
+<script src="js/model.js?v=1.37.1"></script>
+<script src="js/interactions.js?v=1.37.1"></script>
+<script src="js/inspector.js?v=1.37.1"></script>
+<script src="js/io.js?v=1.37.1"></script>
+<script src="js/commands.js?v=1.37.1"></script>
+<script src="js/context-menu.js?v=1.37.1"></script>
+<script src="js/bootstrap.js?v=1.37.1"></script>
 </body>
 </html>

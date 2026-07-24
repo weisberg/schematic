@@ -306,7 +306,8 @@ function buildNodeSelectionDropdown(panel, primary, targets){
       menuCommand(body, "Edit note content", () => { setSelection("node", primary.id); render(); focusNoteInput(); },
         {action:"edit-note-content"});
     if (!isStructuralNode(primary))
-      menuCommand(body, "Add linked concept", addChildConcept, {hint:"Tab", action:"add-linked"});
+      menuCommand(body, "Add linked concept", () => executeCommand("addChild"),
+        {hint:"Tab", action:"add-linked"});
   });
 
   if (primary.type === "table") menuSubmenu(panel, "selection-table", "Table tools", body => {
@@ -500,36 +501,20 @@ function updateDropdownMenus(){
   const primaryNode = nodes[0] || null;
   const primaryEdge = edgeIds.length ? edgeById(edgeIds[0]) : null;
 
-  setMenuDisabled("menuUndo", !undoStack.length);
-  setMenuDisabled("menuRedo", !redoStack.length);
-  setMenuDisabled("menuCut", !hasNodeSelection);
-  setMenuDisabled("menuCopy", !hasNodeSelection);
-  setMenuDisabled("menuPaste", !(clipboardData && clipboardData.nodes && clipboardData.nodes.length));
-  setMenuDisabled("menuDuplicate", !hasNodeSelection);
-  setMenuDisabled("menuDelete", !hasSelection);
-
-  const multi = nodes.length >= 2;
-  for (const id of ["btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
-                    "menuDistributeHorizontal","menuDistributeVertical","menuWidthSmallest","menuWidthLargest","menuWidthAverage"])
-    setMenuDisabled(id, !multi);
-  setMenuDisabled("menuResetSize", !nodes.some(hasForcedNodeSize));
-  setMenuDisabled("menuBringFront", !primaryNode);
-  setMenuDisabled("menuSendBack", !primaryNode);
-  setMenuSubmenuDisabled("align", !multi);
-  setMenuSubmenuDisabled("distribute", !multi);
-  setMenuSubmenuDisabled("size", !hasNodeSelection);
-  setMenuSubmenuDisabled("layer", !primaryNode);
-
-  const inspector = document.getElementById("menuInspector");
-  const theme = document.getElementById("menuTheme");
-  if (inspector) inspector.setAttribute("aria-pressed", String(inspectorPinned));
-  if (theme) theme.setAttribute("aria-pressed", String(docTheme === "dark"));
+  if (typeof updateCommandStates === "function") updateCommandStates();
 
   const selectionButton = document.getElementById("btnSelectionMenu");
   const selectionPanel = document.getElementById("selectionMenuPanel");
   if (!selectionButton || !selectionPanel) return;
-  selectionButton.disabled = !hasSelection;
-  selectionButton.setAttribute("aria-disabled", String(!hasSelection));
+  const selectionCount = nodes.length || edgeIds.length;
+  const nodeKind = primaryNode && ({
+    concept:"Concept", text:"Text", status:"Status", note:"Note", table:"Table",
+    todo:"To-do", frame:"Frame", swimlane:"Swimlane"
+  }[primaryNode.type] || "Node");
+  const selectionKind = primaryEdge ? "Link" : selectionCount > 1 ? `${selectionCount} items` :
+    nodeKind || "Selection";
+  if (typeof setRibbonSelectionAvailable === "function")
+    setRibbonSelectionAvailable(hasSelection, `Selection · ${selectionKind}`);
   selectionPanel.innerHTML = "";
   if (primaryNode) buildNodeSelectionDropdown(selectionPanel, primaryNode, nodes);
   else if (primaryEdge) buildEdgeSelectionDropdown(selectionPanel, primaryEdge);
@@ -538,8 +523,6 @@ function updateDropdownMenus(){
     empty.className = "menuempty";
     empty.textContent = "Select a node or link to see its commands.";
     selectionPanel.appendChild(empty);
-    const menu = document.getElementById("selectionMenu");
-    if (menu){ menu.classList.remove("open"); selectionButton.setAttribute("aria-expanded", "false"); }
   }
 }
 
@@ -556,7 +539,7 @@ function nodeMenu(n, x, y){
       if (n.type === "note")
         ctxItem(panel, "Edit note content", () => { setSelection("node", n.id); render(); focusNoteInput(); });
       if (!isStructuralNode(n))
-        ctxItem(panel, "Add linked concept", addChildConcept, {kbd:"Tab"});
+        ctxItem(panel, "Add linked concept", () => executeCommand("addChild"), {kbd:"Tab"});
       if (n.type === "table") ctxSubmenu(panel, "node:content:table", "Table tools", sub => {
         ctxItem(sub, "Add related table (1:N)", () => addRelatedTable(n.id));
         ctxItem(sub, n.collapsed ? "Expand fields" : "Collapse fields", () => {
@@ -899,17 +882,18 @@ function canvasMenu(w, x, y){
       });
     });
     ctxGroup(m, "canvas:layout", "Layout", panel => {
-      ctxItem(panel, "Tree layout", layoutMindMapTree, {action:"layout-tree"});
-      ctxItem(panel, "Schema layout", layoutSchemaTables, {action:"layout-schema"});
-      ctxItem(panel, "Clean up to grid", cleanUpToGrid, {action:"cleanup-grid"});
-      ctxItem(panel, "Snap to grid", toggleSnapToGrid, {action:"toggle-snap", pressed:snapToGrid});
+      ctxItem(panel, "Tree layout", () => executeCommand("layoutTree"), {action:"layout-tree"});
+      ctxItem(panel, "Schema layout", () => executeCommand("layoutSchema"), {action:"layout-schema"});
+      ctxItem(panel, "Clean up to grid", () => executeCommand("cleanupGrid"), {action:"cleanup-grid"});
+      ctxItem(panel, "Snap to grid", () => executeCommand("toggleSnap"),
+        {action:"toggle-snap", pressed:snapToGrid});
     });
     ctxGroup(m, "canvas:view", "View", panel => {
-      ctxItem(panel, "Fit diagram", fitView, {kbd:"F", action:"fit"});
-      ctxItem(panel, "Actual size (100%)", () => zoomAtClient(1, x, y), {action:"zoom-actual"});
+      ctxItem(panel, "Fit diagram", () => executeCommand("fit"), {kbd:"F", action:"fit"});
+      ctxItem(panel, "Actual size (100%)", () => executeCommand("actualSize"), {action:"zoom-actual"});
       ctxSep(panel);
-      ctxItem(panel, "Zoom in", () => zoomAtClient(view.k * 1.2, x, y), {action:"zoom-in"});
-      ctxItem(panel, "Zoom out", () => zoomAtClient(view.k / 1.2, x, y), {action:"zoom-out"});
+      ctxItem(panel, "Zoom in", () => executeCommand("zoomIn"), {action:"zoom-in"});
+      ctxItem(panel, "Zoom out", () => executeCommand("zoomOut"), {action:"zoom-out"});
     });
   });
 }

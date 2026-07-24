@@ -396,8 +396,7 @@ function drawAlignmentGuides(guides){
   }
 }
 function updateSnapControl(){
-  const b = document.getElementById("btnSnap");
-  if (b) b.setAttribute("aria-pressed", String(snapToGrid));
+  if (typeof updateCommandStates === "function") updateCommandStates();
 }
 function toggleSnapToGrid(){
   snapToGrid = !snapToGrid;
@@ -863,51 +862,32 @@ function matchShortcut(ev, typing){
   if (mod && key === "o") return "open";
   if (mod && key === "s") return "save";
   if (mod && key === "z") return "undo";
-  if (mod && key === "y") return "redoAlt";
+  if (mod && key === "y") return "redo";
   if (mod && key === "c") return "copy";
   if (mod && key === "x") return "cut";
   if (mod && key === "v") return "paste";
   if (mod && key === "d") return "duplicate";
-  if (mod && key === "k") return "palette";
-  if (ev.key === "?") return "help";
+  if (mod && key === "k") return "commandPalette";
+  if (ev.key === "?") return "shortcuts";
   if (ev.key === "Delete" || ev.key === "Backspace") return "delete";
-  if (ev.key === "Tab") return "child";
+  if (ev.key === "Tab") return "addChild";
   if (ev.key === "Escape") return "escape";
-  if (!mod && key === "c") return "concept";
-  if (!mod && key === "x") return "text";
-  if (!mod && key === "s") return "status";
-  if (!mod && key === "n") return "note";
-  if (!mod && key === "t") return "table";
-  if (!mod && key === "d") return "todo";
+  if (!mod && key === "c") return "addConcept";
+  if (!mod && key === "x") return "addText";
+  if (!mod && key === "s") return "addStatus";
+  if (!mod && key === "n") return "addNote";
+  if (!mod && key === "t") return "addTable";
+  if (!mod && key === "d") return "addTodo";
   if (!mod && key === "f") return "fit";
-  if (!mod && key === "i") return "inspector";
+  if (!mod && key === "i") return "toggleInspector";
   if (ev.key.startsWith("Arrow")) return "nudge";
   return null;
 }
 function runShortcut(id, ev){
-  if (id === "open") return openDoc();
-  if (id === "save") return saveDoc();
-  if (id === "saveAs") return saveAsDoc();
-  if (id === "undo") return undo();
-  if (id === "redo" || id === "redoAlt") return redo();
-  if (id === "copy") return copySelection(false);
-  if (id === "cut") return copySelection(true);
-  if (id === "paste") return pasteSelection();
-  if (id === "duplicate") return duplicateSelection();
-  if (id === "palette") return openCommandPalette();
-  if (id === "help") return openShortcutModal();
-  if (id === "delete") return deleteSelection();
-  if (id === "child") return addChildConcept();
   if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
-  if (id === "concept"){ const c = viewCenter(); addNode("concept", c.x-65, c.y-24); return; }
-  if (id === "text"){ const c = viewCenter(); addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20); return; }
-  if (id === "status"){ const c = viewCenter(); addNode("status", c.x-STATUS_W_DEFAULT/2, c.y-30); return; }
-  if (id === "note"){ const c = viewCenter(); addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60); return; }
-  if (id === "table"){ const c = viewCenter(); addNode("table", c.x-95, c.y-40); return; }
-  if (id === "todo"){ const c = viewCenter(); addNode("todo", c.x-90, c.y-30); return; }
-  if (id === "fit") return fitView();
-  if (id === "inspector") return toggleInspector();
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
+  if (typeof executeCommand === "function")
+    return executeCommand(id, {source:"shortcut", event:ev});
 }
 function cycleNodeSelection(reverse = false){
   const hidden = collapsedFrameHiddenNodeIds();
@@ -1236,23 +1216,7 @@ function paletteItems(){
     if (n.type === "note" && String(n.content || "").trim())
       items.push({ type:"note", label:`${n.title || "note"}.${String(n.content).replace(/\s+/g, " ").slice(0, 120)}`, nodeId:n.id });
   }
-  for (const c of [
-    ["addConcept", "Add concept"],
-    ["addText", "Add plain text"],
-    ["addStatus", "Add status node"],
-    ["addNote", "Add rich note"],
-    ["addTable", "Add table"],
-    ["addTodo", "Add to-do list"],
-    ["addFrame", "Add frame"],
-    ["addHorizontalLane", "Add horizontal swimlane"],
-    ["addVerticalLane", "Add vertical swimlane"],
-    ["layoutTree", "Layout concept tree"],
-    ["layoutSchema", "Layout table schema"],
-    ["exportSQL", "Export SQL"],
-    ["fit", "Fit diagram"],
-    ["open", "Open"],
-    ["save", "Save"]
-  ]) items.push({ type:"command", command:c[0], label:c[1] });
+  if (typeof commandPaletteItems === "function") items.push(...commandPaletteItems());
   return items;
 }
 function paletteMatches(query, items){
@@ -1260,7 +1224,7 @@ function paletteMatches(query, items){
   const commandOnly = raw.startsWith(">");
   const q = commandOnly ? raw.slice(1).trim() : raw;
   return items.filter(item => (!commandOnly ? item.type !== "command" : item.type === "command") &&
-    fuzzyMatch(item.label, q));
+    fuzzyMatch(`${item.label} ${item.description || ""}`, q));
 }
 function centerNode(id){
   const n = nodeById(id);
@@ -1272,6 +1236,10 @@ function centerNode(id){
 }
 function activatePaletteItem(item){
   if (!item) return;
+  if (item.type === "command" && item.enabled === false){
+    announce(item.disabledReason || "This command is unavailable in the current context.");
+    return;
+  }
   closeCommandPalette();
   if (item.type === "node" || item.type === "field" || item.type === "item" || item.type === "note"){
     setSelection("node", item.nodeId);
@@ -1279,22 +1247,7 @@ function activatePaletteItem(item){
     render();
     return;
   }
-  const c = viewCenter();
-  if (item.command === "addConcept") addNode("concept", c.x-65, c.y-24);
-  if (item.command === "addText") addNode("text", c.x-TEXT_W_DEFAULT/2, c.y-20);
-  if (item.command === "addStatus") addNode("status", c.x-STATUS_W_DEFAULT/2, c.y-30);
-  if (item.command === "addNote") addNode("note", c.x-NOTE_W_DEFAULT/2, c.y-60);
-  if (item.command === "addTable") addNode("table", c.x-95, c.y-40);
-  if (item.command === "addTodo") addNode("todo", c.x-90, c.y-30);
-  if (item.command === "addFrame") addNode("frame", c.x-FRAME_DEFAULT.w/2, c.y-FRAME_DEFAULT.h/2);
-  if (item.command === "addHorizontalLane") addSwimlane("horizontal", c.x-SWIMLANE_DEFAULT.horizontal.w/2, c.y-SWIMLANE_DEFAULT.horizontal.h/2);
-  if (item.command === "addVerticalLane") addSwimlane("vertical", c.x-SWIMLANE_DEFAULT.vertical.w/2, c.y-SWIMLANE_DEFAULT.vertical.h/2);
-  if (item.command === "layoutTree") layoutMindMapTree();
-  if (item.command === "layoutSchema") layoutSchemaTables();
-  if (item.command === "exportSQL") document.getElementById("btnExportSQL").click();
-  if (item.command === "fit") fitView();
-  if (item.command === "open") openDoc();
-  if (item.command === "save") saveDoc();
+  if (item.type === "command" && typeof executeCommand === "function") executeCommand(item.command);
 }
 function openCommandPalette(){
   closeCommandPalette();
@@ -1317,7 +1270,11 @@ function openCommandPalette(){
     matches.forEach((item, idx) => {
       const b = document.createElement("button");
       b.className = "palette-item" + (idx === selected ? " on" : "");
-      b.innerHTML = `<span>${escapeHtml(item.label)}</span><small>${item.type}</small>`;
+      if (item.enabled === false) b.classList.add("command-unavailable");
+      b.setAttribute("aria-disabled", String(item.enabled === false));
+      const meta = item.enabled === false ? item.disabledReason
+        : item.shortcut || item.type;
+      b.innerHTML = `<span>${escapeHtml(item.label)}</span><small>${escapeHtml(meta || item.type)}</small>`;
       b.addEventListener("mousedown", ev => ev.preventDefault());
       b.addEventListener("click", () => activatePaletteItem(item));
       list.appendChild(b);
@@ -1344,7 +1301,7 @@ function openShortcutModal(){
   closeShortcutModal();
   const modal = document.createElement("div");
   modal.className = "modal open shortcut-modal";
-  const rows = SHORTCUTS.map(s =>
+  const rows = shortcutCatalog().map(s =>
     `<div class="shortcut-row"><kbd>${escapeHtml(s.keys)}</kbd><span>${escapeHtml(s.title)}</span></div>`).join("");
   modal.innerHTML = `<div class="card"><h3>Shortcuts</h3><div class="shortcut-list">${rows}</div><div class="actions"><button class="primary" id="btnCloseShortcuts">Close</button></div></div>`;
   modal.addEventListener("click", ev => { if (ev.target === modal) closeShortcutModal(); });

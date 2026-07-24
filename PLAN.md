@@ -1861,6 +1861,28 @@ suite and first-load browser visual, interaction, Fit, and console checks pass.
 
 ---
 
+**SCH-113 · Office-style application ribbon · P1 · L · Done 2026-07-24**
+
+Replace the growing collection of toolbar buttons and dropdown menus with one compact, tabbed
+command ribbon. Home, Insert, Arrange, Model, View, and Export organize the complete existing
+command set by user intent; a contextual Selection tab appears only for selected nodes or links.
+Quick-access Save/Undo/Redo and canvas controls stay available above the ribbon.
+
+Commands use stable definitions for their label, description, shortcut, availability, pressed
+state, and action. The ribbon, quick-access controls, responsive overflow copies, command palette,
+and shared blank-canvas actions resolve through those definitions so they cannot drift.
+
+AC: all existing non-color/non-font commands remain discoverable; single, multi-node, and edge
+selection states expose the correct contextual commands; unavailable actions explain themselves
+through disabled state and tooltips; tablist arrow/Home/End/Down navigation and visible focus work;
+the ribbon collapses to tabs, peeks without changing the persisted preference, and restores that
+preference after reload; narrow windows move low-priority groups into keyboard-accessible More
+menus; selecting tabs changes no document data; content mutations retain their existing undo
+transactions; context menus and inspector workflows remain intact; automated tests and desktop
+plus narrow-viewport browser interaction, visual, and console QA pass.
+
+---
+
 ## 5. Explicit non-goals (do not build, even if they seem helpful)
 
 - Real-time collaboration, multi-user anything, CRDTs, WebSockets.

@@ -144,7 +144,8 @@ if (process.argv.includes("--api-surface")){
 (async () => {
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
-    "js/interactions.js", "js/inspector.js", "js/io.js", "js/context-menu.js", "js/bootstrap.js"
+    "js/interactions.js", "js/inspector.js", "js/io.js", "js/commands.js",
+    "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -1298,15 +1299,19 @@ if (process.argv.includes("--api-surface")){
     const values = fn => T.selectedNodes().map(T.nodeRect).map(fn);
     const allEqual = list => list.every(value => Math.abs(value - list[0]) < 1e-9);
 
-    const alignSubmenu = window.document.querySelector('#arrangeMenu [data-menu-submenu="align"]');
-    assert(alignSubmenu.classList.contains("disabled"),
-      "Arrange menu starts with alignment disabled without a multi-selection");
+    const alignGroup = window.document.querySelector('#arrangeMenu [data-ribbon-group="align"]');
+    assert([...alignGroup.querySelectorAll("button")]
+      .every(button => button.getAttribute("aria-disabled") === "true"),
+      "Arrange ribbon starts with alignment disabled without a multi-selection");
     selectAll();
     const menuButton = window.document.getElementById("btnArrangeMenu");
-    assert(!alignSubmenu.classList.contains("disabled"), "alignment enables for two or more selected nodes");
+    assert([...alignGroup.querySelectorAll("button")]
+      .every(button => button.getAttribute("aria-disabled") === "false"),
+      "alignment enables for two or more selected nodes");
     menuButton.click();
-    assert(window.document.getElementById("arrangeMenu").classList.contains("open"),
-      "Arrange menu opens from the toolbar");
+    assert.strictEqual(T.activeRibbonTab, "arrange", "Arrange tab activates from the ribbon");
+    assert.strictEqual(window.document.getElementById("arrangeMenu").hidden, false,
+      "Arrange ribbon panel becomes visible");
 
     const cases = [
       ["btnAlignTop", r => r.y, "top"],
@@ -1326,7 +1331,9 @@ if (process.argv.includes("--api-surface")){
 
     T.clearSelection();
     T.render();
-    assert(alignSubmenu.classList.contains("disabled"), "alignment disables below two selected nodes");
+    assert([...alignGroup.querySelectorAll("button")]
+      .every(button => button.getAttribute("aria-disabled") === "true"),
+      "alignment disables below two selected nodes");
 
     selectAll();
     T.alignSelection("distributeX");
@@ -3080,8 +3087,8 @@ if (process.argv.includes("--api-surface")){
   {
     const { window } = makeDom();
     const T = window.__T, doc = window.document;
-    for (const id of ["btnAddSwimlane","btnAddHorizontalLane","btnAddVerticalLane"])
-      assert(doc.getElementById(id), `swimlane toolbar control #${id} exists`);
+    for (const id of ["btnAddHorizontalLane","btnAddVerticalLane"])
+      assert(doc.getElementById(id), `swimlane ribbon control #${id} exists`);
     const before = T.state.nodes.filter(n => n.type === "swimlane").length;
     doc.getElementById("btnAddHorizontalLane").click();
     doc.getElementById("btnAddVerticalLane").click();
@@ -3829,8 +3836,9 @@ if (process.argv.includes("--api-surface")){
     const board = window.document.getElementById("board");
     assert.strictEqual(board.getAttribute("role"), "application", "board has application role");
     assert.strictEqual(board.getAttribute("tabindex"), "0", "board is keyboard focusable");
-    assert.strictEqual(window.document.getElementById("btnSave").getAttribute("aria-label"),
-      window.document.getElementById("btnSave").title, "toolbar titles mirror to aria-label");
+    assert(window.document.getElementById("btnSave").getAttribute("aria-label").includes("Ctrl/Cmd+S") &&
+      window.document.getElementById("btnSave").title.includes("Ctrl/Cmd+S"),
+    "shared commands expose their shortcut in the accessible name and tooltip");
     board.focus();
     assert.strictEqual(window.document.activeElement, board, "board receives focus");
     window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"Tab", bubbles:true, cancelable:true }));
@@ -4940,53 +4948,152 @@ if (process.argv.includes("--api-surface")){
       "schemeless documents do not write a colorScheme key");
   }
 
-  /* ---- SCH-065: toolbar menus + auto-contrast node ink ---- */
+  /* ---- SCH-065/SCH-113: Office-style ribbon + auto-contrast node ink ---- */
   {
-    const { window } = makeDom();
+    const { window, storage } = makeDom();
     const T = window.__T;
     const doc = window.document;
 
-    // every historical toolbar action keeps its id (handlers bind by id)
+    // Existing command controls retain stable ids while the ribbon replaces dropdowns.
     for (const id of ["btnNew","btnOpen","btnSave","btnSaveAs","btnExportJSON","btnImportJSON",
                       "btnExportSQL","btnImportDDL","btnExportMermaid","btnExportMarkdown",
                       "btnExportSVG","btnImportCSV","btnExportPNG","btnClear","btnAddConcept","btnAddText","btnAddStatus","btnAddNote",
-                      "btnAddTable","btnAddTodo","btnAddFrame","btnAddSwimlane","btnAddHorizontalLane",
+                      "btnAddTable","btnAddTodo","btnAddFrame","btnAddHorizontalLane",
                       "btnAddVerticalLane","btnUndo","btnRedo","btnFit",
                       "btnLayoutTree","btnLayoutSchema","btnLint","btnSnap","btnCleanup","btnArrangeMenu",
                       "btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
                       "menuSave","menuUndo","menuRedo","menuCut","menuCopy","menuPaste","menuDuplicate","menuDelete",
-                      "menuAddConcept","menuAddText","menuAddStatus","menuAddNote","menuAddTable","menuAddTodo","menuAddFrame",
-                      "menuAddHorizontalLane","menuAddVerticalLane","menuDistributeHorizontal","menuDistributeVertical",
+                      "menuDistributeHorizontal","menuDistributeVertical",
                       "menuResetSize","menuWidthSmallest","menuWidthLargest","menuWidthAverage","menuBringFront","menuSendBack",
-                      "btnSelectionMenu","menuFit","menuActualSize","menuZoomIn","menuZoomOut","menuInspector","menuTheme"])
-      assert(doc.getElementById(id), `toolbar button #${id} still exists`);
+                      "btnSelectionMenu","menuFit","menuActualSize","menuZoomIn","menuZoomOut","menuInspector","menuTheme",
+                      "btnRibbonToggle","btnCommandPalette","btnShortcuts"])
+      assert(doc.getElementById(id), `ribbon control #${id} exists`);
 
-    // menus: open, switch, outside-close, Escape-close without nuking selection
-    const menus = [...doc.querySelectorAll("header .menu")];
-    assert.strictEqual(menus.length, 8,
-      "toolbar exposes File / Edit / Insert / Arrange / Selection / View / Export / Lane menus");
-    const fileMenu = doc.getElementById("fileMenu"), exportMenu = doc.getElementById("exportMenu");
-    fileMenu.querySelector(".menubtn").click();
-    assert(fileMenu.classList.contains("open"), "clicking a menu trigger opens its panel");
-    assert.strictEqual(fileMenu.querySelector(".menubtn").getAttribute("aria-expanded"), "true",
-      "open menu reflects aria-expanded");
-    exportMenu.querySelector(".menubtn").click();
-    assert(!fileMenu.classList.contains("open") && exportMenu.classList.contains("open"),
-      "only one menu panel is open at a time");
+    const tabs = [...doc.querySelectorAll("#appRibbon [role=tab]")];
+    sameList(tabs.map(tab => tab.dataset.ribbonTab),
+      ["home","insert","arrange","model","view","export","selection"],
+      "ribbon exposes task-oriented tabs plus a contextual Selection tab");
+    assert.strictEqual(T.activeRibbonTab, "home", "Home ribbon starts active");
+    assert.strictEqual(doc.getElementById("ribbonPanelHome").hidden, false,
+      "active Home panel is visible");
+    assert(doc.getElementById("btnSelectionMenu").hidden,
+      "Selection tab stays out of the tab order without a selection");
+
+    const dirtyBefore = T.doc.dirty;
+    const undoBefore = T.undoDepth;
+    doc.getElementById("ribbonTabExport").click();
+    assert.strictEqual(T.activeRibbonTab, "export", "clicking a tab switches the ribbon panel");
+    assert.strictEqual(doc.getElementById("ribbonPanelExport").hidden, false,
+      "the chosen tab owns the only visible panel");
+    assert.strictEqual(T.doc.dirty, dirtyBefore, "switching ribbon tabs does not dirty the document");
+    assert.strictEqual(T.undoDepth, undoBefore, "switching ribbon tabs creates no history entry");
+
+    const insertTab = doc.getElementById("ribbonTabInsert");
+    insertTab.focus();
+    insertTab.dispatchEvent(new window.KeyboardEvent("keydown", {key:"ArrowRight", bubbles:true}));
+    assert.strictEqual(T.activeRibbonTab, "arrange", "ArrowRight advances across ribbon tabs");
+    doc.getElementById("btnArrangeMenu").dispatchEvent(
+      new window.KeyboardEvent("keydown", {key:"Home", bubbles:true}));
+    assert.strictEqual(T.activeRibbonTab, "home", "Home key activates the first ribbon tab");
+
+    T.setRibbonCollapsed(true);
+    assert(doc.getElementById("appHeader").classList.contains("ribbon-collapsed"),
+      "ribbon collapses to its tab row");
+    assert.strictEqual(storage.getItem("schematic.ribbonCollapsed"), "1",
+      "collapsed preference persists locally");
+    doc.getElementById("ribbonTabView").click();
+    assert(doc.getElementById("appHeader").classList.contains("ribbon-peek"),
+      "a collapsed ribbon peeks the chosen panel");
     firePointer(window, doc.getElementById("inspector"), "pointerdown");
-    assert(!exportMenu.classList.contains("open"), "pointer outside the menu closes it");
+    assert(!doc.getElementById("appHeader").classList.contains("ribbon-peek"),
+      "outside pointer closes a ribbon peek without changing the preference");
+    assert.strictEqual(T.ribbonCollapsed, true, "closing a peek leaves the ribbon collapsed");
+    T.setRibbonCollapsed(false);
 
-    const concept = T.state.nodes.find(n => n.type === "concept");
-    T.selectNode(concept.id);
-    fileMenu.querySelector(".menubtn").click();
-    doc.body.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert(!fileMenu.classList.contains("open"), "Escape closes an open menu");
-    assert(T.selection && T.selection.ids.includes(concept.id),
-      "Escape that closes a menu does not clear the canvas selection");
-    doc.body.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.strictEqual(T.selection, null, "with no menu open, Escape clears selection as before");
+    const commandIds = T.COMMANDS.map(command => command.id);
+    assert.strictEqual(new Set(commandIds).size, commandIds.length,
+      "shared command definitions use unique stable ids");
+    for (const command of T.COMMANDS){
+      assert(command.category && command.icon && command.scope && command.owner,
+        `${command.id} exposes category, icon, scope, and owner metadata`);
+      assert.strictEqual(typeof command.mutatesDocument, "boolean",
+        `${command.id} declares whether it mutates the document`);
+      if (command.mutatesDocument)
+        assert(command.transaction, `${command.id} declares an undo/history transaction name`);
+    }
+    assert([...doc.querySelectorAll('[data-command="save"]')].length >= 2,
+      "quick access and Home reuse the same Save command");
+    assert(doc.querySelector('.ribbon-overflow [data-command="toggleTheme"]'),
+      "responsive overflow copies reuse shared commands");
+    assert(styles.includes("@media (max-width:1180px)") && styles.includes(".ribbon-low-priority{display:none}"),
+      "narrow layouts move low-priority groups into More menus");
+    assert(doc.getElementById("btnOpen").title.includes("Ctrl/Cmd+O"),
+      "command tooltips include active shortcuts");
+    assert(doc.getElementById("btnOpen").hasAttribute("aria-keyshortcuts"),
+      "command shortcuts are exposed to assistive technology");
 
-    // snap toggle state is visible on the menu item
+    const unavailableCut = doc.getElementById("menuCut");
+    assert.strictEqual(unavailableCut.disabled, false,
+      "unavailable commands remain keyboard focusable");
+    assert.strictEqual(unavailableCut.getAttribute("aria-disabled"), "true",
+      "unavailable commands expose aria-disabled");
+    assert(/select at least one node/i.test(unavailableCut.title),
+      "unavailable command tooltips explain what is required");
+    unavailableCut.focus();
+    unavailableCut.click();
+    assert(/select at least one node/i.test(doc.getElementById("liveStatus").textContent),
+      "invoking an unavailable command announces its disabled reason");
+
+    T.activateRibbonTab("home");
+    doc.getElementById("btnNew").focus();
+    doc.getElementById("btnNew").dispatchEvent(
+      new window.KeyboardEvent("keydown", {key:"ArrowRight", bubbles:true}));
+    assert.strictEqual(doc.activeElement, doc.getElementById("btnOpen"),
+      "ArrowRight moves through commands in the active ribbon group");
+    doc.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", {key:"Escape", bubbles:true}));
+    assert.strictEqual(doc.activeElement, doc.getElementById("ribbonTabHome"),
+      "Escape returns command focus to the active ribbon tab");
+
+    // Shortcuts and visible controls resolve through the same command handler.
+    const countBeforeShortcut = T.state.nodes.length;
+    window.dispatchEvent(new window.KeyboardEvent("keydown", {key:"c", bubbles:true}));
+    assert.strictEqual(T.state.nodes.length, countBeforeShortcut + 1,
+      "the C shortcut executes the registered Add concept command exactly once");
+    T.undo();
+    doc.getElementById("ribbonTabInsert").click();
+    const depthBeforeControl = T.undoDepth;
+    doc.getElementById("btnAddConcept").click();
+    assert.strictEqual(T.state.nodes.length, countBeforeShortcut + 1,
+      "the Insert control executes the same Add concept behavior exactly once");
+    assert.strictEqual(T.undoDepth, depthBeforeControl + 1,
+      "creating and auto-focusing a node remains one logical undo operation");
+    T.undo();
+    assert.strictEqual(T.state.nodes.length, countBeforeShortcut,
+      "one Undo completely reverses the ribbon creation command");
+
+    // Future domain packs can contribute a command without editing ribbon markup.
+    let extensionRuns = 0;
+    T.registerCommand({
+      id:"test.inspect",
+      label:"Inspect extension",
+      description:"Test a contributed Model command",
+      category:"model",
+      owner:"test-extension",
+      scope:"application",
+      ribbon:{tab:"model", group:"Extension tools"},
+      action:() => { extensionRuns++; }
+    });
+    const extensionButton = doc.querySelector('[data-command="test.inspect"]');
+    assert(extensionButton && extensionButton.closest('[data-command-contribution-group="Extension tools"]'),
+      "registered extensions create their declared ribbon group dynamically");
+    extensionButton.click();
+    assert.strictEqual(extensionRuns, 1, "a contributed ribbon command executes once");
+    assert.strictEqual(T.unregisterCommandsByOwner("test-extension"), 1,
+      "an extension can unregister all of its commands");
+    assert(!doc.querySelector('[data-command="test.inspect"]'),
+      "unregistering removes the contributed ribbon UI");
+
+    // Shared state propagates to every command surface.
     assert.strictEqual(doc.getElementById("btnSnap").getAttribute("aria-pressed"), "false",
       "snap toggle starts off");
     doc.getElementById("btnSnap").click();
@@ -5013,7 +5120,17 @@ if (process.argv.includes("--api-surface")){
       "table headers flip to dark ink on light header colors");
   }
 
-  /* ---- SCH-093: complete dropdown command parity ---- */
+  {
+    const { window } = makeDom({storageSeed:{"schematic.ribbonCollapsed":"1"}});
+    assert.strictEqual(window.__T.ribbonCollapsed, true,
+      "the collapsed ribbon preference restores on reload");
+    assert(window.document.getElementById("appHeader").classList.contains("ribbon-collapsed"),
+      "restored collapsed state applies before interaction");
+    assert.strictEqual(window.document.getElementById("liveStatus").textContent, "",
+      "restoring the ribbon preference does not announce an unsolicited startup change");
+  }
+
+  /* ---- SCH-093/SCH-113: complete ribbon and contextual command parity ---- */
   {
     const { window } = makeDom();
     const T = window.__T;
@@ -5023,21 +5140,32 @@ if (process.argv.includes("--api-surface")){
     const action = name => selectionPanel.querySelector(`[data-menu-action="${name}"]`);
     const submenu = name => selectionPanel.querySelector(`[data-menu-submenu="${name}"]`);
 
-    assert(selectionButton.disabled, "Selection menu is disabled when the canvas selection is empty");
-    for (const id of ["menuAddConcept","menuAddText","menuAddStatus","menuAddNote","menuAddTable",
-                      "menuAddTodo","menuAddFrame","menuAddHorizontalLane","menuAddVerticalLane"])
-      assert(doc.getElementById(id), `Insert menu exposes ${id}`);
+    assert(selectionButton.disabled && selectionButton.hidden,
+      "Selection ribbon tab is unavailable when the canvas selection is empty");
+    for (const id of ["btnAddConcept","btnAddText","btnAddStatus","btnAddNote","btnAddTable",
+                      "btnAddTodo","btnAddFrame","btnAddHorizontalLane","btnAddVerticalLane"])
+      assert(doc.getElementById(id), `Insert ribbon exposes ${id}`);
     for (const id of ["btnLayoutTree","btnLayoutSchema","btnCleanup","btnSnap",
                       "menuFit","menuActualSize","menuZoomIn","menuZoomOut"])
-      assert(doc.getElementById(id), `layout and view dropdowns expose ${id}`);
-    assert(!doc.querySelector(".menubar .color-picker, .menubar input[type=color]"),
-      "dropdown menus intentionally omit color controls");
-    assert(!doc.querySelector('.menubar [aria-label="Font size"]'),
-      "dropdown menus intentionally omit font-size controls");
+      assert(doc.getElementById(id), `layout and view ribbon tabs expose ${id}`);
+    assert(!doc.querySelector("#appRibbon .color-picker, #appRibbon input[type=color]"),
+      "ribbon intentionally omits color controls");
+    assert(!doc.querySelector('#appRibbon [aria-label="Font size"]'),
+      "ribbon intentionally omits font-size controls");
 
     const concept = T.state.nodes.find(n => n.type === "concept");
     T.selectNode(concept.id);
-    assert(!selectionButton.disabled, "selecting a node enables the Selection menu");
+    assert(!selectionButton.disabled && !selectionButton.hidden,
+      "selecting a node reveals the contextual Selection tab");
+    T.activateRibbonTab("selection", {focus:true});
+    selectionButton.focus();
+    T.clearSelection();
+    T.render();
+    assert.strictEqual(T.activeRibbonTab, "home",
+      "removing the selection exits an invalid contextual tab");
+    assert.strictEqual(doc.activeElement, doc.getElementById("ribbonTabHome"),
+      "contextual-tab removal returns focus to a stable tab");
+    T.selectNode(concept.id);
     assert(action("edit-primary") && action("add-linked"), "concept dropdown exposes content commands");
     assert(submenu("selection-shape"), "concept dropdown exposes flowchart shapes");
     for (const shape of T.FLOWCHART_SHAPES.map(option => option.id))
@@ -5090,10 +5218,13 @@ if (process.argv.includes("--api-surface")){
     T.render();
     for (const id of ["btnAlignTop","btnAlignMiddle","btnAlignBottom","btnAlignLeft","btnAlignCenter","btnAlignRight",
                       "menuDistributeHorizontal","menuDistributeVertical","menuWidthSmallest","menuWidthLargest","menuWidthAverage"])
-      assert(!doc.getElementById(id).disabled, `multi-selection enables ${id}`);
-    assert(!doc.getElementById("menuResetSize").disabled, "forced sizing enables Reset size");
-    assert(!doc.querySelector('#arrangeMenu [data-menu-submenu="align"]').classList.contains("disabled"),
-      "multi-selection enables the Align submenu");
+      assert.strictEqual(doc.getElementById(id).getAttribute("aria-disabled"), "false",
+        `multi-selection enables ${id}`);
+    assert.strictEqual(doc.getElementById("menuResetSize").getAttribute("aria-disabled"), "false",
+      "forced sizing enables Reset size");
+    assert([...doc.querySelectorAll('#arrangeMenu [data-ribbon-group="align"] button')]
+      .every(button => button.getAttribute("aria-disabled") === "false"),
+      "multi-selection enables the Align ribbon group");
 
     const edge = T.state.edges.find(e => e.kind !== "link");
     edge.routing = "ortho";
@@ -5108,12 +5239,13 @@ if (process.argv.includes("--api-surface")){
       "link dropdown exposes semantic relationship presets and custom text");
     assert(submenu("selection-line").querySelector('[aria-label="Line width"]'),
       "link dropdown exposes line width");
-    assert(doc.getElementById("menuCut").disabled && doc.getElementById("menuCopy").disabled &&
-           doc.getElementById("menuDuplicate").disabled,
+    assert(["menuCut","menuCopy","menuDuplicate"].every(id =>
+      doc.getElementById(id).getAttribute("aria-disabled") === "true"),
       "node-only Edit commands disable for a selected link");
-    assert(!doc.getElementById("menuDelete").disabled, "Delete remains available for a selected link");
+    assert.strictEqual(doc.getElementById("menuDelete").getAttribute("aria-disabled"), "false",
+      "Delete remains available for a selected link");
     assert(!selectionPanel.querySelector('.color-picker, input[type="color"], [aria-label="Font size"]'),
-      "selection-specific dropdowns omit color and font-size controls for every object");
+      "selection-specific ribbon commands omit color and font-size controls for every object");
   }
 
   /* ---- SCH-066: hide / show the inspector ---- */

@@ -24,8 +24,9 @@ requires no bundler, package installation, or server runtime.
 | 6 | `js/interactions.js` | Pointer, wheel, keyboard, inline editing, command palette, and shortcut modal behavior |
 | 7 | `js/inspector.js` | Inspector rendering, edge endpoint controls, field/item editors, palettes, and reusable UI controls |
 | 8 | `js/io.js` | Open/save, SQL, linting, DDL/CSV import, Mermaid/Markdown/SVG, and PNG export |
-| 9 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
-| 10 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
+| 9 | `js/commands.js` | Shared command definitions plus ribbon, quick-access, overflow, and command-palette bindings |
+| 10 | `js/context-menu.js` | Node, edge, and blank-canvas context menus |
+| 11 | `js/bootstrap.js` | Starter data, initialization sequence, and the `window.__T` test/debug surface |
 
 The order is an architectural contract. Earlier files may declare functions that call later-file
 functions, but those calls must not execute until `bootstrap.js` runs after every declaration has
