@@ -104,8 +104,10 @@ function newDoc(){
   updateDocLabel();
   clearRecoverySave();
 }
-document.getElementById("btnExportJSON").addEventListener("click", () =>
-  download(doc.name || "schematic-diagram.json", serializeDocument(), "application/json"));
+function exportJsonDocument(){
+  download(doc.name || "schematic-diagram.json", serializeDocument(), "application/json");
+}
+function importJsonDocument(){ fallbackOpen(); }
 
 function addNodeAtViewCenter(type){
   const center = viewCenter();
@@ -121,13 +123,6 @@ function zoomAtCanvasCenter(scale){
   const rect = board.getBoundingClientRect();
   zoomAtClient(scale, rect.left + rect.width/2, rect.top + rect.height/2);
 }
-
-document.getElementById("btnImportJSON").addEventListener("click", () =>
-  fallbackOpen());
-document.getElementById("btnOpen").addEventListener("click", openDoc);
-document.getElementById("btnSave").addEventListener("click", saveDoc);
-document.getElementById("btnSaveAs").addEventListener("click", saveAsDoc);
-document.getElementById("btnNew").addEventListener("click", newDoc);
 document.getElementById("fileInput").addEventListener("change", ev => {
   const f = ev.target.files[0];
   if (!f) return;
@@ -142,77 +137,23 @@ document.getElementById("fileInput").addEventListener("change", ev => {
   });
   ev.target.value = "";
 });
-
-document.getElementById("btnClear").addEventListener("click", () => {
+function clearCanvas(){
   if (!state.nodes.length || confirm("Clear the entire canvas? (Undo can bring it back.)")){
     pushHistory(); state.nodes = []; state.edges = []; clearSelection(); render();
   }
-});
-document.getElementById("btnUndo").addEventListener("click", undo);
-document.getElementById("btnRedo").addEventListener("click", redo);
-document.getElementById("btnFit").addEventListener("click", fitView);
-document.getElementById("btnInspector").addEventListener("click", toggleInspector);
-document.getElementById("btnAddConcept").addEventListener("click", () => addNodeAtViewCenter("concept"));
-document.getElementById("btnAddText").addEventListener("click", () => addNodeAtViewCenter("text"));
-document.getElementById("btnAddStatus").addEventListener("click", () => addNodeAtViewCenter("status"));
-document.getElementById("btnAddNote").addEventListener("click", () => addNodeAtViewCenter("note"));
-document.getElementById("btnAddTable").addEventListener("click", () => addNodeAtViewCenter("table"));
-document.getElementById("btnAddTodo").addEventListener("click", () => addNodeAtViewCenter("todo"));
-document.getElementById("btnSnap").addEventListener("click", toggleSnapToGrid);
-document.getElementById("btnCleanup").addEventListener("click", cleanUpToGrid);
+}
+
 document.getElementById("autoSaveToggle").addEventListener("change", ev => setAutoSave(ev.target.checked));
-document.getElementById("btnAddFrame").addEventListener("click", () => addNodeAtViewCenter("frame"));
-document.getElementById("btnAddHorizontalLane").addEventListener("click", () => addSwimlane("horizontal"));
-document.getElementById("btnAddVerticalLane").addEventListener("click", () => addSwimlane("vertical"));
-document.getElementById("btnLayoutTree").addEventListener("click", layoutMindMapTree);
-document.getElementById("btnLayoutSchema").addEventListener("click", layoutSchemaTables);
-document.getElementById("btnLint").addEventListener("click", openLintModal);
-document.getElementById("btnAlignTop").addEventListener("click", () => alignSelection("top"));
-document.getElementById("btnAlignMiddle").addEventListener("click", () => alignSelection("centerY"));
-document.getElementById("btnAlignBottom").addEventListener("click", () => alignSelection("bottom"));
-document.getElementById("btnAlignLeft").addEventListener("click", () => alignSelection("left"));
-document.getElementById("btnAlignCenter").addEventListener("click", () => alignSelection("centerX"));
-document.getElementById("btnAlignRight").addEventListener("click", () => alignSelection("right"));
-document.getElementById("btnTheme").addEventListener("click", toggleTheme);
 document.getElementById("pngAsShown").addEventListener("change", ev => setPngAsShown(ev.target.checked));
 document.getElementById("dialectSelect").addEventListener("change", ev => setDialect(ev.target.value));
-
-/* Full desktop-style dropdown command surface (SCH-093). These handlers call
-   the same mutation functions as the inspector, shortcuts, and context menus. */
-document.getElementById("menuSave").addEventListener("click", saveDoc);
-document.getElementById("menuUndo").addEventListener("click", undo);
-document.getElementById("menuRedo").addEventListener("click", redo);
-document.getElementById("menuCut").addEventListener("click", () => copySelection(true));
-document.getElementById("menuCopy").addEventListener("click", () => { copySelection(false); updateDropdownMenus(); });
-document.getElementById("menuPaste").addEventListener("click", pasteSelection);
-document.getElementById("menuDuplicate").addEventListener("click", duplicateSelection);
-document.getElementById("menuDelete").addEventListener("click", deleteSelection);
-
-for (const [id, type] of [["menuAddConcept","concept"],["menuAddText","text"],["menuAddStatus","status"],
-  ["menuAddNote","note"],["menuAddTable","table"],["menuAddTodo","todo"],["menuAddFrame","frame"]])
-  document.getElementById(id).addEventListener("click", () => addNodeAtViewCenter(type));
-document.getElementById("menuAddHorizontalLane").addEventListener("click", () => addSwimlane("horizontal"));
-document.getElementById("menuAddVerticalLane").addEventListener("click", () => addSwimlane("vertical"));
-
-document.getElementById("menuDistributeHorizontal").addEventListener("click", () => alignSelection("distributeX"));
-document.getElementById("menuDistributeVertical").addEventListener("click", () => alignSelection("distributeY"));
-document.getElementById("menuResetSize").addEventListener("click", resetSelectionSizes);
-document.getElementById("menuWidthSmallest").addEventListener("click", () => matchSelectionWidths("smallest"));
-document.getElementById("menuWidthLargest").addEventListener("click", () => matchSelectionWidths("largest"));
-document.getElementById("menuWidthAverage").addEventListener("click", () => matchSelectionWidths("average"));
-document.getElementById("menuBringFront").addEventListener("click", () => {
-  const node = firstSelectedNode(); if (node) reorderNode(node.id, true);
-});
-document.getElementById("menuSendBack").addEventListener("click", () => {
-  const node = firstSelectedNode(); if (node) reorderNode(node.id, false);
-});
-
-document.getElementById("menuFit").addEventListener("click", fitView);
-document.getElementById("menuActualSize").addEventListener("click", () => zoomAtCanvasCenter(1));
-document.getElementById("menuZoomIn").addEventListener("click", () => zoomAtCanvasCenter(view.k * 1.2));
-document.getElementById("menuZoomOut").addEventListener("click", () => zoomAtCanvasCenter(view.k / 1.2));
-document.getElementById("menuInspector").addEventListener("click", () => { toggleInspector(); updateDropdownMenus(); });
-document.getElementById("menuTheme").addEventListener("click", toggleTheme);
+function bringSelectionToFront(){
+  const node = firstSelectedNode();
+  if (node) reorderNode(node.id, true);
+}
+function sendSelectionToBack(){
+  const node = firstSelectedNode();
+  if (node) reorderNode(node.id, false);
+}
 
 /* --------------------------- SQL export --------------------------- */
 function ident(s){
@@ -753,10 +694,10 @@ function openOutputModal(title, text, downloadName, mime){
   modal.querySelector("#btnDownloadOutput").addEventListener("click", () => download(downloadName, text, mime));
   modal.querySelector("#btnCloseOutput").addEventListener("click", closeTextModal);
 }
-document.getElementById("btnExportSQL").addEventListener("click", () => {
+function openSqlExport(){
   document.getElementById("sqlOut").textContent = generateSQL();
   sqlModal.classList.add("open");
-});
+}
 document.getElementById("btnCloseSQL").addEventListener("click", () => sqlModal.classList.remove("open"));
 sqlModal.addEventListener("click", ev => { if (ev.target === sqlModal) sqlModal.classList.remove("open"); });
 document.getElementById("btnCopySQL").addEventListener("click", ev => {
@@ -765,19 +706,25 @@ document.getElementById("btnCopySQL").addEventListener("click", ev => {
 });
 document.getElementById("btnDownloadSQL").addEventListener("click", () =>
   download("schematic-schema.sql", document.getElementById("sqlOut").textContent, "text/plain"));
-document.getElementById("btnImportDDL").addEventListener("click", () =>
+function openDdlImport(){
   openTextInputModal("Import SQL DDL", "CREATE TABLE ...", "Import", text => {
     const result = importDDLText(text);
     if (result.skipped.length) openOutputModal("DDL import report", `Imported ${result.tables.length} tables.\nSkipped:\n- ${result.skipped.join("\n- ")}`, "schematic-ddl-import.txt", "text/plain");
-  }));
-document.getElementById("btnExportMermaid").addEventListener("click", () =>
-  openOutputModal("Mermaid ER", generateMermaid(), "schematic-er.mmd", "text/plain"));
-document.getElementById("btnExportMarkdown").addEventListener("click", () =>
-  openOutputModal("Markdown outline", generateMarkdownOutline(), "schematic-outline.md", "text/markdown"));
-document.getElementById("btnExportSVG").addEventListener("click", () =>
-  download("schematic-diagram.svg", serializedSvg(true), "image/svg+xml"));
-document.getElementById("btnImportCSV").addEventListener("click", () =>
-  openTextInputModal("Import CSV", "id,email,created_at\n1,user@example.com,2026-07-08", "Create table", text => importCSVText(text)));
+  });
+}
+function exportMermaidDocument(){
+  openOutputModal("Mermaid ER", generateMermaid(), "schematic-er.mmd", "text/plain");
+}
+function exportMarkdownDocument(){
+  openOutputModal("Markdown outline", generateMarkdownOutline(), "schematic-outline.md", "text/markdown");
+}
+function exportSvgDocument(){
+  download("schematic-diagram.svg", serializedSvg(true), "image/svg+xml");
+}
+function openCsvImport(){
+  openTextInputModal("Import CSV", "id,email,created_at\n1,user@example.com,2026-07-08",
+    "Create table", text => importCSVText(text));
+}
 
 /* --------------------------- PNG export --------------------------- */
 function cloneBoardForPng(asShown = pngAsShown){
@@ -788,7 +735,7 @@ function cloneBoardForPng(asShown = pngAsShown){
   if (previousTheme !== exportTheme) applyTheme(previousTheme, { render:true });
   return { clone, themeName:exportTheme };
 }
-document.getElementById("btnExportPNG").addEventListener("click", () => {
+function exportPngDocument(){
   if (!state.nodes.length){ alert("Nothing to export yet."); return; }
   const bounds = documentBounds();
   const x0 = bounds.x, y0 = bounds.y, x1 = bounds.x + bounds.w, y1 = bounds.y + bounds.h;
@@ -822,4 +769,4 @@ document.getElementById("btnExportPNG").addEventListener("click", () => {
     });
   };
   img.src = url;
-});
+}

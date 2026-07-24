@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.36.2";
+const APP_VERSION = "v1.37.1";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -380,13 +380,7 @@ let inspectorPinned = loadInspectorPref();
 function updateInspectorVisibility(){
   const aside = document.getElementById("inspector");
   if (aside) aside.hidden = !inspectorPinned && !sel;
-  const b = document.getElementById("btnInspector");
-  if (b){
-    b.setAttribute("aria-pressed", String(inspectorPinned));
-    b.title = inspectorPinned
-      ? "Auto-hide the inspector when nothing is selected (I)"
-      : "Keep the inspector always visible (I)";
-  }
+  if (typeof updateCommandStates === "function") updateCommandStates();
 }
 function toggleInspector(){
   inspectorPinned = !inspectorPinned;
@@ -403,35 +397,6 @@ const SQL_TYPES_BY_DIALECT = {
   athena: ["INT","BIGINT","STRING","BOOLEAN","DATE","TIMESTAMP","DECIMAL(12,2)","DOUBLE","JSON"]
 };
 let SQL_TYPES = SQL_TYPES_BY_DIALECT.ansi.slice();
-const SHORTCUTS = [
-  { id:"open", keys:"Ctrl/Cmd+O", title:"Open" },
-  { id:"save", keys:"Ctrl/Cmd+S", title:"Save" },
-  { id:"saveAs", keys:"Ctrl/Cmd+Shift+S", title:"Save As" },
-  { id:"undo", keys:"Ctrl/Cmd+Z", title:"Undo" },
-  { id:"redo", keys:"Ctrl/Cmd+Shift+Z", title:"Redo" },
-  { id:"redoAlt", keys:"Ctrl/Cmd+Y", title:"Redo" },
-  { id:"copy", keys:"Ctrl/Cmd+C", title:"Copy selection" },
-  { id:"cut", keys:"Ctrl/Cmd+X", title:"Cut selection" },
-  { id:"paste", keys:"Ctrl/Cmd+V", title:"Paste selection" },
-  { id:"duplicate", keys:"Ctrl/Cmd+D", title:"Duplicate selection" },
-  { id:"palette", keys:"Ctrl/Cmd+K", title:"Quick jump / command palette" },
-  { id:"help", keys:"?", title:"Shortcut cheat sheet" },
-  { id:"concept", keys:"C", title:"Add concept" },
-  { id:"text", keys:"X", title:"Add plain text" },
-  { id:"status", keys:"S", title:"Add status node" },
-  { id:"note", keys:"N", title:"Add rich note" },
-  { id:"table", keys:"T", title:"Add table" },
-  { id:"todo", keys:"D", title:"Add to-do list" },
-  { id:"child", keys:"Tab", title:"Add linked child concept" },
-  { id:"delete", keys:"Delete/Backspace", title:"Delete selection" },
-  { id:"fit", keys:"F", title:"Fit diagram" },
-  { id:"inspector", keys:"I", title:"Show or hide the inspector" },
-  { id:"escape", keys:"Esc", title:"Close menu or clear selection" },
-  { id:"nudge", keys:"Arrow keys", title:"Nudge selected nodes" },
-  { id:"nudgeLarge", keys:"Shift+Arrow keys", title:"Nudge selected nodes by 24px" },
-  { id:"spacePan", keys:"Space+drag", title:"Pan the canvas" }
-];
-
 /* recent custom colors (SCH-017): live in the document (meta.recentColors) and are
    mirrored to localStorage when available (RECOVERY doubles as the feature detect) */
 const RECENT_COLORS_KEY = "schematic.recentColors";
@@ -530,15 +495,11 @@ function updateSchemeCssVars(){
 function updateThemeControls(){
   document.documentElement.dataset.theme = docTheme;
   updateSchemeCssVars();
-  const btn = document.getElementById("btnTheme");
-  if (btn){
-    btn.textContent = docTheme === "dark" ? "Light" : "Dark";
-    btn.title = docTheme === "dark" ? "Switch to light theme" : "Switch to dark theme";
-  }
   const png = document.getElementById("pngAsShown");
   if (png) png.checked = pngAsShown;
   const dot = board && board.querySelector("#dots circle");
   if (dot) dot.setAttribute("fill", themeColors().grid);
+  if (typeof updateCommandStates === "function") updateCommandStates();
 }
 function applyTheme(next, opts = {}){
   const normalized = next === "dark" ? "dark" : "light";
@@ -743,12 +704,7 @@ function restore(json){
 function undo(){ if(!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
 function redo(){ if(!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
 function syncHistoryButtons(){
-  document.getElementById("btnUndo").disabled = !undoStack.length;
-  document.getElementById("btnRedo").disabled = !redoStack.length;
-  const menuUndo = document.getElementById("menuUndo");
-  const menuRedo = document.getElementById("menuRedo");
-  if (menuUndo) menuUndo.disabled = !undoStack.length;
-  if (menuRedo) menuRedo.disabled = !redoStack.length;
+  if (typeof updateCommandStates === "function") updateCommandStates();
 }
 
 function cleanFieldForDocument(f){
@@ -1104,75 +1060,199 @@ function syncAriaLabels(){
   board.setAttribute("role", "application");
   board.setAttribute("aria-label", "Schematic canvas");
 }
-/* toolbar dropdown menus (SCH-065): disclosure pattern — trigger toggles its panel,
-   only one panel open at a time, outside pointer / Escape / item click all close.
-   The buttons inside panels keep their historical ids and handlers. */
-function setupMenus(){
-  const menus = [...document.querySelectorAll("header .menu")];
-  if (!menus.length) return;
-  const anyOpen = () => menus.some(m => m.classList.contains("open"));
-  const closeAll = () => {
-    for (const m of menus){
-      m.classList.remove("open");
-      const b = m.querySelector(".menubtn");
-      if (b) b.setAttribute("aria-expanded", "false");
-      for (const submenu of m.querySelectorAll(".menusubmenu[open]")) submenu.open = false;
-    }
-  };
-  const open = m => {
-    closeAll();
-    m.classList.add("open");
-    const b = m.querySelector(".menubtn");
-    if (b) b.setAttribute("aria-expanded", "true");
-  };
-  for (const m of menus){
-    const btn = m.querySelector(".menubtn");
-    const panel = m.querySelector(".menupanel");
-    if (!btn || !panel) continue;
-    panel.setAttribute("role", "menu");
-    for (const command of panel.querySelectorAll(":scope > button, .menusubbody > button")){
-      command.classList.add("menucommand");
-      command.setAttribute("role", "menuitem");
-    }
-    for (const submenu of panel.querySelectorAll(".menusubmenu")){
-      const summary = submenu.querySelector(":scope > summary");
-      if (!summary) continue;
-      summary.setAttribute("role", "menuitem");
-      summary.setAttribute("aria-haspopup", "true");
-      summary.setAttribute("aria-expanded", String(submenu.open));
-      if (!summary.querySelector(".disclosure-chevron")) summary.appendChild(disclosureChevron());
-      submenu.addEventListener("toggle", () => {
-        summary.setAttribute("aria-expanded", String(submenu.open));
-        if (!submenu.open) return;
-        for (const sibling of submenu.parentElement.children){
-          if (sibling !== submenu && sibling.classList && sibling.classList.contains("menusubmenu")) sibling.open = false;
-        }
-      });
-    }
-    btn.addEventListener("click", ev => {
-      ev.stopPropagation();
-      m.classList.contains("open") ? closeAll() : open(m);
-    });
-    /* sliding across triggers while a menu is open switches panels, like a native menubar */
-    btn.addEventListener("pointerenter", () => {
-      if (anyOpen() && !m.classList.contains("open")) open(m);
-    });
-    panel.addEventListener("click", ev => {
-      const command = ev.target.closest && ev.target.closest(".menucommand");
-      if (command && !command.disabled && !command.hasAttribute("data-menu-stay-open")) closeAll();
+/* Office-style ribbon (issue #76): tabs own one panel each, contextual
+   selection commands appear only when relevant, and a persisted collapsed
+   state keeps the tab row while opening chosen panels as temporary peeks. */
+const RIBBON_COLLAPSED_KEY = "schematic.ribbonCollapsed";
+let activeRibbonTab = "home";
+let ribbonCollapsed = (() => {
+  if (!RECOVERY) return false;
+  try { return localStorage.getItem(RIBBON_COLLAPSED_KEY) === "1"; } catch { return false; }
+})();
+function ribbonTabs(){
+  return [...document.querySelectorAll("#appRibbon [data-ribbon-tab]")];
+}
+function ribbonPanels(){
+  return [...document.querySelectorAll("#appRibbon [data-ribbon-panel]")];
+}
+function ribbonTabAvailable(id){
+  const tab = ribbonTabs().find(candidate => candidate.dataset.ribbonTab === id);
+  return !!tab && !tab.hidden && !tab.disabled;
+}
+function closeRibbonOverflow(){
+  document.querySelectorAll("#appRibbon .ribbon-overflow[open]").forEach(details => { details.open = false; });
+}
+function closeRibbonPeek(){
+  const header = document.getElementById("appHeader");
+  if (header) header.classList.remove("ribbon-peek");
+  closeRibbonOverflow();
+}
+function ribbonElementVisible(element){
+  if (!element || element.hidden || element.closest("[hidden]")) return false;
+  for (let current = element; current && current.id !== "appRibbon"; current = current.parentElement){
+    if (getComputedStyle(current).display === "none" || getComputedStyle(current).visibility === "hidden")
+      return false;
+  }
+  return true;
+}
+function ribbonGroupControls(element){
+  const group = element.closest(".ribbon-group,.ribbon-overflow-panel");
+  if (!group) return [];
+  return [...group.querySelectorAll("button[data-command],summary")]
+    .filter(ribbonElementVisible);
+}
+function focusActiveRibbonTab(){
+  const tab = ribbonTabs().find(candidate => candidate.dataset.ribbonTab === activeRibbonTab);
+  if (tab) tab.focus();
+}
+function activateRibbonTab(id, opts = {}){
+  const next = ribbonTabAvailable(id) ? id : "home";
+  activeRibbonTab = next;
+  for (const tab of ribbonTabs()){
+    const selected = tab.dataset.ribbonTab === next;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of ribbonPanels()) panel.hidden = panel.dataset.ribbonPanel !== next;
+  closeRibbonOverflow();
+  const header = document.getElementById("appHeader");
+  if (header) header.classList.toggle("ribbon-peek", ribbonCollapsed && !!opts.peek);
+  if (opts.focus){
+    const tab = ribbonTabs().find(candidate => candidate.dataset.ribbonTab === next);
+    if (tab) tab.focus();
+  }
+  return next;
+}
+function setRibbonCollapsed(collapsed, opts = {}){
+  ribbonCollapsed = !!collapsed;
+  const header = document.getElementById("appHeader");
+  const toggle = document.getElementById("btnRibbonToggle");
+  if (header){
+    header.classList.toggle("ribbon-collapsed", ribbonCollapsed);
+    if (!ribbonCollapsed) header.classList.remove("ribbon-peek");
+  }
+  if (toggle){
+    toggle.setAttribute("aria-expanded", String(!ribbonCollapsed));
+    toggle.textContent = ribbonCollapsed ? "Expand ribbon" : "Collapse ribbon";
+    toggle.title = ribbonCollapsed ? "Expand the ribbon" : "Collapse the ribbon";
+  }
+  if (opts.persist !== false && RECOVERY){
+    try { localStorage.setItem(RIBBON_COLLAPSED_KEY, ribbonCollapsed ? "1" : "0"); } catch {}
+  }
+  if (opts.announce !== false) announce(ribbonCollapsed ? "Ribbon collapsed" : "Ribbon expanded");
+}
+function setRibbonSelectionAvailable(available, label = "Selection"){
+  const tab = document.getElementById("btnSelectionMenu");
+  if (!tab) return;
+  const focusWasContextual = document.activeElement === tab ||
+    !!(document.activeElement && document.activeElement.closest &&
+       document.activeElement.closest('[data-ribbon-panel="selection"]'));
+  tab.hidden = !available;
+  tab.disabled = !available;
+  tab.setAttribute("aria-disabled", String(!available));
+  tab.textContent = label;
+  if (!available && activeRibbonTab === "selection")
+    activateRibbonTab("home", {focus:focusWasContextual});
+}
+function setupRibbon(){
+  const header = document.getElementById("appHeader");
+  const ribbon = document.getElementById("appRibbon");
+  const toggle = document.getElementById("btnRibbonToggle");
+  if (!header || !ribbon || !toggle) return;
+  for (const tab of ribbonTabs()){
+    tab.addEventListener("click", () => activateRibbonTab(tab.dataset.ribbonTab, {peek:ribbonCollapsed}));
+    tab.addEventListener("keydown", ev => {
+      const available = ribbonTabs().filter(candidate => !candidate.hidden && !candidate.disabled);
+      const index = available.indexOf(tab);
+      let next = null;
+      if (ev.key === "ArrowRight") next = available[(index + 1) % available.length];
+      if (ev.key === "ArrowLeft") next = available[(index - 1 + available.length) % available.length];
+      if (ev.key === "Home") next = available[0];
+      if (ev.key === "End") next = available[available.length - 1];
+      if (ev.key === "ArrowDown"){
+        ev.preventDefault();
+        activateRibbonTab(tab.dataset.ribbonTab, {peek:ribbonCollapsed});
+        const panel = ribbonPanels().find(candidate => !candidate.hidden);
+        const command = panel && panel.querySelector("button:not(:disabled), summary");
+        if (command) command.focus();
+        return;
+      }
+      if (!next) return;
+      ev.preventDefault();
+      activateRibbonTab(next.dataset.ribbonTab, {focus:true, peek:ribbonCollapsed});
     });
   }
-  document.addEventListener("pointerdown", ev => {
-    if (anyOpen() && !(ev.target.closest && ev.target.closest("header .menu"))) closeAll();
-  });
-  /* capture phase so an open menu swallows Escape before the canvas shortcut
-     handler on window clears the selection */
-  document.addEventListener("keydown", ev => {
-    if (ev.key === "Escape" && anyOpen()){
+  for (const overflow of document.querySelectorAll("#appRibbon .ribbon-overflow")){
+    const summary = overflow.querySelector(":scope > summary");
+    if (!summary) continue;
+    summary.setAttribute("aria-haspopup", "menu");
+    overflow.addEventListener("toggle", () => {
+      summary.setAttribute("aria-expanded", String(overflow.open));
+      if (!overflow.open) return;
+      for (const sibling of document.querySelectorAll("#appRibbon .ribbon-overflow[open]"))
+        if (sibling !== overflow) sibling.open = false;
+    });
+    summary.addEventListener("keydown", ev => {
+      if (ev.key !== "ArrowDown") return;
+      ev.preventDefault();
+      overflow.open = true;
+      const first = overflow.querySelector(".ribbon-overflow-panel [data-command]");
+      if (first) first.focus();
+    });
+  }
+  ribbon.addEventListener("keydown", ev => {
+    if (ev.target.closest("[role=tab]")) return;
+    const details = ev.target.closest(".ribbon-overflow");
+    if (ev.key === "Escape"){
+      ev.preventDefault();
       ev.stopPropagation();
-      closeAll();
+      if (details && details.open){
+        details.open = false;
+        const summary = details.querySelector(":scope > summary");
+        if (summary) summary.focus();
+      } else {
+        closeRibbonPeek();
+        focusActiveRibbonTab();
+      }
+      return;
+    }
+    const controls = ribbonGroupControls(ev.target);
+    if (!controls.length) return;
+    const index = controls.indexOf(ev.target);
+    let next = null;
+    if (ev.key === "ArrowRight") next = controls[(index + 1) % controls.length];
+    if (ev.key === "ArrowLeft") next = controls[(index - 1 + controls.length) % controls.length];
+    if (ev.key === "Home") next = controls[0];
+    if (ev.key === "End") next = controls[controls.length - 1];
+    if (ev.key === "ArrowUp" && index === 0){
+      ev.preventDefault();
+      focusActiveRibbonTab();
+      return;
+    }
+    if (!next) return;
+    ev.preventDefault();
+    next.focus();
+  });
+  ribbon.addEventListener("click", ev => {
+    const control = ev.target.closest("[data-command]");
+    if (!control || control.getAttribute("aria-disabled") === "true") return;
+    closeRibbonOverflow();
+    if (ribbonCollapsed) closeRibbonPeek();
+  });
+  toggle.addEventListener("click", () => setRibbonCollapsed(!ribbonCollapsed));
+  document.addEventListener("pointerdown", ev => {
+    if (header.classList.contains("ribbon-peek") && !(ev.target.closest && ev.target.closest("#appHeader")))
+      closeRibbonPeek();
+  });
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape" && header.classList.contains("ribbon-peek")){
+      ev.stopPropagation();
+      closeRibbonPeek();
+      focusActiveRibbonTab();
     }
   }, true);
+  setRibbonCollapsed(ribbonCollapsed, {persist:false, announce:false});
+  activateRibbonTab(activeRibbonTab);
 }
 function updateAlignMenu(){
   if (typeof updateDropdownMenus === "function") updateDropdownMenus();

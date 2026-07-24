@@ -282,8 +282,7 @@ function renderNodeTitleField(n){
       i.value = n.title || "";
       i.rows = 2;
       i.setAttribute("aria-label", "Node text; Shift+Enter inserts a new line");
-      i.addEventListener("focus", pushHistoryOnce());
-      i.addEventListener("input", () => update(i.value));
+      bindHistoryOnInput(i, () => update(i.value));
       i.addEventListener("keydown", ev => {
         if (ev.key === "Enter" && ev.shiftKey){
           ev.preventDefault();
@@ -322,8 +321,7 @@ function renderNodeDecorationFields(n){
     input.value = n.subtitle || "";
     input.placeholder = "Smaller supporting text";
     input.setAttribute("aria-label", "Node subtitle");
-    input.addEventListener("focus", pushHistoryOnce());
-    input.addEventListener("input", () => {
+    bindHistoryOnInput(input, () => {
       const value = input.value.replace(/\r\n?/g, "\n").slice(0, 500);
       if (value) n.subtitle = value; else delete n.subtitle;
       drawOnly();
@@ -363,8 +361,7 @@ function renderNodeDecorationFields(n){
       input.value = current ? current.name : "";
       input.placeholder = "✨";
       input.setAttribute("aria-label", "Node emoji");
-      input.addEventListener("focus", pushHistoryOnce());
-      input.addEventListener("input", () => {
+      bindHistoryOnInput(input, () => {
         const emoji = cleanNodeEmoji(input.value);
         if (emoji) n.icon = `emoji:${emoji}`; else delete n.icon;
         drawOnly();
@@ -464,8 +461,7 @@ function renderNodeNotesField(n){
     const t = document.createElement("textarea");
     t.value = n.notes || "";
     t.placeholder = "Add notes…";
-    t.addEventListener("focus", pushHistoryOnce());
-    t.addEventListener("input", () => { n.notes = t.value; drawOnly(); });
+    bindHistoryOnInput(t, () => { n.notes = t.value; drawOnly(); });
     return t;
   });
 }
@@ -761,8 +757,7 @@ function renderInspector(){
           t.rows = 10;
           t.value = n.content || "";
           t.placeholder = "Write a note…";
-          t.addEventListener("focus", pushHistoryOnce());
-          t.addEventListener("input", () => { n.content = t.value; drawOnly(); });
+          bindHistoryOnInput(t, () => { n.content = t.value; drawOnly(); });
           return t;
         });
         const help = document.createElement("div");
@@ -1372,9 +1367,19 @@ function frow(label, buildCtrl){
 function mkInput(val, onInput){
   const i = document.createElement("input");
   i.type = "text"; i.value = val || "";
-  i.addEventListener("focus", pushHistoryOnce());
-  i.addEventListener("input", () => onInput(i.value));
+  bindHistoryOnInput(i, () => onInput(i.value));
   return i;
+}
+function bindHistoryOnInput(control, onInput){
+  const ensureHistory = pushHistoryOnce();
+  control.addEventListener("beforeinput", ensureHistory);
+  control.addEventListener("input", () => {
+    // Programmatic tests and older engines may dispatch input without a
+    // beforeinput event. The model has not been updated yet, so this fallback
+    // still captures the correct pre-edit snapshot.
+    ensureHistory();
+    onInput();
+  });
 }
 function pushHistoryOnce(){
   let done = false;

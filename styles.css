@@ -30,14 +30,17 @@
   html,body{height:100%;overflow:hidden}
   body{font-family:var(--ui);color:var(--ink);background:var(--paper);display:flex;flex-direction:column}
 
-  /* ---------- Toolbar ---------- */
-  header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);
-         border-bottom:1px solid var(--line);flex-wrap:wrap;z-index:5}
+  /* ---------- Office-style ribbon ---------- */
+  header{position:relative;z-index:5;display:flex;flex:none;flex-direction:column;background:var(--panel);
+         border-bottom:1px solid var(--line)}
+  .ribbon-titlebar{display:flex;align-items:center;gap:10px;min-height:38px;padding:5px 12px;
+                   border-bottom:1px solid var(--line);background:var(--panel)}
   .brand{display:flex;flex-direction:column;line-height:1.1;margin-right:4px;min-width:0}
   .brand b{font-weight:800;letter-spacing:.14em;font-size:14px}
   .brand span{font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;
               max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tgroup{display:flex;align-items:center;gap:5px}
+  .quick-access{display:flex;align-items:center;gap:4px}
+  .quick-access button{min-height:27px;padding:4px 9px;font-size:11.5px}
   button{font-family:var(--ui);font-size:12.5px;font-weight:600;color:var(--ink-2);
          background:var(--panel);border:1px solid var(--line);border-radius:7px;
          padding:6px 11px;cursor:pointer;transition:background .12s,border-color .12s}
@@ -47,35 +50,70 @@
   button.primary:hover{background:var(--accent);filter:brightness(.92)}
   button.ghost{border-color:transparent}
   button:disabled{opacity:.4;cursor:default}
+  button.command-unavailable,[data-command][aria-disabled="true"]{opacity:.44;cursor:not-allowed}
+  button.command-unavailable:hover,[data-command][aria-disabled="true"]:hover{
+    background:var(--panel);border-color:var(--line);filter:none}
+  .ribbon-command-grid>button.command-unavailable:hover,
+  .ribbon-command-grid>[data-command][aria-disabled="true"]:hover,
+  .ribbon-overflow-panel>[data-command][aria-disabled="true"]:hover{background:transparent;border-color:transparent}
   .spacer{flex:1}
 
-  /* ---------- Toolbar menus ---------- */
-  .menubar{display:flex;align-items:center;gap:1px;margin-right:2px;padding-right:8px;
-           border-right:1px solid var(--line)}
-  .menu{position:relative}
-  .menubtn{border-color:transparent;background:none;font-weight:600;padding:6px 10px;border-radius:6px}
-  .menubtn:hover,.menu.open .menubtn{background:var(--hover);border-color:transparent}
-  .menu.open .menubtn{color:var(--ink)}
-  .lane-add-btn{border-color:var(--line);background:var(--panel);font-weight:600;padding:6px 11px}
-  .lane-add-btn:hover,.menu.open .lane-add-btn{border-color:var(--line);background:var(--hover)}
-  .menupanel{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:208px;
-             display:none;flex-direction:column;padding:5px;background:var(--panel);
-             border:1px solid var(--line);border-radius:9px;
-             box-shadow:0 10px 32px rgba(10,20,30,.18);max-height:calc(100vh - 74px);overflow-y:auto}
-  .menupanel.wide{min-width:252px}
-  .menupanel.align-right{left:auto;right:0}
-  .menu.open .menupanel{display:flex}
-  .menupanel button{display:flex;justify-content:space-between;align-items:center;gap:18px;
-                    width:100%;border:none;background:none;border-radius:6px;padding:7px 10px;
-                    font-size:12.5px;font-weight:500;color:var(--ink);text-align:left}
-  .menupanel button:hover{background:var(--accent-soft);border-color:transparent}
-  .menupanel button:disabled{background:none;color:var(--muted);opacity:.5}
-  .menupanel button.dangerbtn{color:var(--danger);border:none}
-  .menupanel button.dangerbtn:hover{background:var(--hover)}
-  .menupanel button[aria-pressed="true"]{color:var(--accent);font-weight:600}
-  .menupanel button[aria-pressed="true"]::after{content:"✓";font-weight:700}
-  .menupanel button kbd{margin-left:auto;font-family:var(--mono);font-size:9.5px;font-weight:500;color:var(--muted);
-                        background:none;border:0;padding:0}
+  .ribbon{position:relative;display:flex;flex-direction:column;background:var(--panel)}
+  .ribbon-tabs{display:flex;align-items:flex-end;gap:2px;min-height:30px;padding:2px 10px 0;
+               background:var(--control)}
+  .ribbon-tabs>button{min-height:27px;padding:5px 13px;border:0;border-radius:6px 6px 0 0;
+                      background:transparent;color:var(--muted);font-size:11.5px;font-weight:650}
+  .ribbon-tabs>button:hover{background:var(--hover);color:var(--ink)}
+  .ribbon-tabs>button[aria-selected="true"]{background:var(--panel);color:var(--accent);
+                                            box-shadow:inset 0 2px 0 var(--accent)}
+  .ribbon-tabs>button.contextual{color:#7B4F00;background:#FFF3CF}
+  :root[data-theme=dark] .ribbon-tabs>button.contextual{color:#FFD788;background:#392F1C}
+  .ribbon-tabs>button.contextual[aria-selected="true"]{color:var(--accent);background:var(--panel)}
+  .ribbon-tabs>button[hidden]{display:none}
+  .ribbon-panels{position:relative;min-height:78px;background:var(--panel)}
+  .ribbon-panel{display:flex;align-items:stretch;gap:0;min-height:78px;padding:6px 10px;
+                background:var(--panel)}
+  .ribbon-panel[hidden]{display:none}
+  .ribbon-group{position:relative;display:flex;flex:none;flex-direction:column;justify-content:flex-start;
+                min-width:88px;padding:0 10px 15px;border-right:1px solid var(--line)}
+  .ribbon-group:first-child{padding-left:0}
+  .ribbon-group-label{position:absolute;right:8px;bottom:0;left:8px;overflow:hidden;
+                      color:var(--muted);font-size:9px;font-weight:700;letter-spacing:.065em;
+                      text-align:center;text-overflow:ellipsis;text-transform:uppercase;white-space:nowrap}
+  .ribbon-command-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(2,26px);
+                       grid-auto-columns:max-content;gap:3px 4px;align-content:start}
+  .ribbon-command-grid.compact{grid-template-rows:repeat(2,26px)}
+  .ribbon-command-grid>button{display:flex;align-items:center;justify-content:center;min-width:64px;
+                              max-width:138px;height:26px;padding:3px 8px;border-color:transparent;
+                              background:transparent;border-radius:5px;font-size:10.5px;font-weight:600;
+                              white-space:nowrap}
+  .ribbon-command-grid>button:hover{border-color:transparent;background:var(--accent-soft)}
+  .ribbon-command-grid>button.primary{background:var(--accent);color:#fff}
+  .ribbon-command-grid>button.dangerbtn{color:var(--danger)}
+  .ribbon-command-grid>button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+  .ribbon-toggle{min-width:104px}
+  .ribbon-overflow{position:relative;display:none;align-self:stretch;margin-left:8px}
+  .ribbon-overflow>summary{display:flex;align-items:center;justify-content:center;min-width:62px;height:52px;
+                           list-style:none;border:1px solid var(--line);border-radius:6px;color:var(--ink-2);
+                           font-size:10.5px;font-weight:650;cursor:pointer}
+  .ribbon-overflow>summary::-webkit-details-marker{display:none}
+  .ribbon-overflow>summary:hover,.ribbon-overflow[open]>summary{background:var(--accent-soft)}
+  .ribbon-overflow>summary:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  .ribbon-overflow-panel{position:absolute;z-index:45;top:calc(100% + 5px);right:0;display:flex;
+                         min-width:210px;max-height:calc(100vh - 150px);flex-direction:column;gap:2px;
+                         overflow:auto;padding:6px;border:1px solid var(--line);border-radius:8px;
+                         background:var(--panel);box-shadow:0 12px 34px rgba(10,20,30,.2)}
+  .ribbon-overflow-panel>button{display:flex;justify-content:flex-start;width:100%;padding:7px 9px;
+                                border-color:transparent;background:transparent;text-align:left}
+  .ribbon-overflow-panel>button:hover{background:var(--accent-soft)}
+  header.ribbon-collapsed .ribbon-panels{display:none}
+  header.ribbon-collapsed.ribbon-peek .ribbon-panels{position:absolute;z-index:35;top:100%;right:0;left:0;
+                                                     display:block;border:1px solid var(--line);
+                                                     box-shadow:0 12px 32px rgba(10,20,30,.2)}
+  header.ribbon-collapsed.ribbon-peek .ribbon-panel:not([hidden]){display:flex}
+
+  /* Dynamic contextual selection groups retain the established compact
+     disclosure controls while living inside the ribbon's Selection tab. */
   .menulabel{padding:7px 10px 3px;color:var(--muted);font-size:10px;font-weight:700;
              letter-spacing:.08em;text-transform:uppercase}
   .menusep{height:1px;background:var(--line);margin:5px 4px}
@@ -92,8 +130,19 @@
   .menusubbody{margin:2px 4px 5px 10px;padding:2px 0 2px 6px;border-left:1px solid var(--line)}
   .menusubbody .menulabel{padding-left:8px}
   .menusubbody button{padding-left:8px}
+  .selection-ribbon-panel{align-items:stretch;overflow:visible}
+  .selection-ribbon-panel>.menusubmenu{position:relative;min-width:132px;margin-right:5px;
+                                       border-right:1px solid var(--line)}
+  .selection-ribbon-panel>.menusubmenu>summary{min-height:52px;margin-right:5px}
+  .selection-ribbon-panel>.menusubmenu[open]>.menusubbody{position:absolute;z-index:45;top:calc(100% + 5px);
+                                                          left:0;display:flex;min-width:235px;max-height:65vh;
+                                                          flex-direction:column;overflow:auto;padding:6px;
+                                                          border:1px solid var(--line);border-radius:8px;
+                                                          background:var(--panel);
+                                                          box-shadow:0 12px 34px rgba(10,20,30,.2)}
+  .selection-ribbon-panel>.menusubmenu[open]>.menusubbody button{width:100%}
   .menucontext{display:grid;grid-template-columns:24px minmax(0,1fr);gap:8px;align-items:center;
-               margin:-5px -5px 4px;padding:10px 12px;border-bottom:1px solid var(--line)}
+               min-width:176px;margin:0 8px 0 0;padding:6px 12px 6px 2px;border-right:1px solid var(--line)}
   .menucontext .ctxicon{width:20px;height:20px;color:var(--muted)}
   .menucontext>div{display:flex;min-width:0;flex-direction:column;gap:2px}
   .menucontext small{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
@@ -104,6 +153,19 @@
   .menucontrol select{font-size:12px;padding:6px 8px}
   .menucontrol .sizestepper{width:100%}
   .menucontrol .sizestepper .sizeval{flex:1}
+  @media (max-width:1180px){
+    .ribbon-low-priority{display:none}
+    .ribbon-overflow{display:block}
+  }
+  @media (max-width:760px){
+    .brand span{display:none}
+    .ribbon-titlebar{gap:5px;padding-right:7px;padding-left:7px}
+    .quick-access button{padding-right:7px;padding-left:7px}
+    .ribbon-toggle{min-width:0;font-size:0}
+    .ribbon-toggle::after{content:"Ribbon";font-size:10.5px}
+    .ribbon-tabs{padding-left:5px;overflow-x:auto}
+    .ribbon-tabs>button{padding-right:10px;padding-left:10px}
+  }
   .banner{background:#FFF7D6;border-bottom:1px solid #E8D58B;color:#604B00;
           padding:8px 16px;font-size:12px;line-height:1.35}
   .banner[hidden]{display:none!important}

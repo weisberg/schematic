@@ -198,11 +198,12 @@ function perfSeed(n = 500){
 buildScaffold();
 seed();
 ensureFieldIds();
+initializeCommands();
+setupRibbon();
 render();
 syncHistoryButtons();
 updateDocLabel();
 syncAriaLabels();
-setupMenus();
 updateDialectControls();
 updateSnapControl();
 updateAutoSaveControl();
@@ -445,5 +446,28 @@ window.__T = {
   closeCommandPalette,
   openShortcutModal,
   closeShortcutModal,
-  get SHORTCUTS(){ return SHORTCUTS.slice(); }
+  get SHORTCUTS(){ return shortcutCatalog(); },
+  get COMMANDS(){ return COMMAND_DEFINITIONS.map(command => ({
+    id:command.id,
+    category:command.category,
+    label:commandLabel(command),
+    shortcut:command.shortcut || "",
+    icon:command.icon,
+    scope:command.scope,
+    mutatesDocument:command.mutatesDocument,
+    transaction:command.transaction,
+    owner:command.owner,
+    enabled:commandIsEnabled(command),
+    disabledReason:commandDisabledReason(command)
+  })); },
+  executeCommand,
+  commandDefinition,
+  commandDisabledReason,
+  registerCommand,
+  unregisterCommandsByOwner,
+  updateCommandStates,
+  activateRibbonTab,
+  setRibbonCollapsed,
+  get ribbonCollapsed(){ return ribbonCollapsed; },
+  get activeRibbonTab(){ return activeRibbonTab; }
 };
