@@ -854,9 +854,14 @@ board.addEventListener("wheel", ev => {
 
 /* -------------------------- Keyboard ------------------------------ */
 function matchShortcut(ev, typing){
-  if (typing) return null;
   const key = ev.key.toLowerCase();
   const mod = ev.ctrlKey || ev.metaKey;
+  // Search shortcuts remain application-level even when focus is already in
+  // an editor. This prevents the browser's page-find UI from taking over.
+  if (mod && ev.shiftKey && key === "g") return "searchPrevious";
+  if (mod && key === "f") return "search";
+  if (mod && key === "g") return "searchNext";
+  if (typing) return null;
   if (mod && ev.shiftKey && key === "s") return "saveAs";
   if (mod && ev.shiftKey && key === "z") return "redo";
   if (mod && key === "o") return "open";
@@ -884,7 +889,10 @@ function matchShortcut(ev, typing){
   return null;
 }
 function runShortcut(id, ev){
-  if (id === "escape"){ closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return; }
+  if (id === "escape"){
+    if (typeof searchPanelOpen === "function" && searchPanelOpen()){ closeSearchPanel(); return; }
+    closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return;
+  }
   if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
   if (typeof executeCommand === "function")
     return executeCommand(id, {source:"shortcut", event:ev});
@@ -921,7 +929,13 @@ function nudgeSelection(key, step){
   render();
 }
 window.addEventListener("keydown", ev => {
-  const tag = document.activeElement && document.activeElement.tagName;
+  // Controls such as search handle their own keyboard interaction before the
+  // event reaches the canvas shortcut layer. Respect that decision even when
+  // the control moves focus synchronously (for example, Escape closes search
+  // and returns focus to the board).
+  if (ev.defaultPrevented) return;
+  const keyTarget = ev.target && ev.target.nodeType === 1 ? ev.target : document.activeElement;
+  const tag = keyTarget && keyTarget.tagName;
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   if (!typing && ev.key === " "){
     ev.preventDefault();          // keep the page from scrolling while space-panning

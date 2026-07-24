@@ -1881,5 +1881,6 @@ function drawOnly(){
     if (!hidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
   renderMinimap();
+  if (typeof markSearchIndexDirty === "function") markSearchIndexDirty();
 }
 function escapeHtml(s){ return (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }

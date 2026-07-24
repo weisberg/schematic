@@ -37,6 +37,8 @@ function applyView(){
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
   renderMinimap();
+  if (typeof searchPanelOpen === "function" && searchPanelOpen() &&
+      typeof scheduleSearchRun === "function") scheduleSearchRun();
 }
 
 function render(){
@@ -81,6 +83,7 @@ function render(){
   renderMinimap();
   renderInspector();
   updateAlignMenu();
+  if (typeof refreshSearchIndex === "function") refreshSearchIndex();
 }
 function fastDragRender(ids){
   renderStats.fast++;

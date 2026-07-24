@@ -25,6 +25,9 @@ function commandHasSingleContentNode(){
 }
 function commandHasConcepts(){ return state.nodes.some(node => node.type === "concept"); }
 function commandHasTables(){ return state.nodes.some(node => node.type === "table"); }
+function commandHasSearchResults(){
+  return typeof searchResults !== "undefined" && searchResults.length > 0;
+}
 
 const CORE_COMMAND_DEFINITIONS = [
   { id:"new", label:"New", description:"Start a new diagram", action:newDoc },
@@ -122,6 +125,25 @@ const CORE_COMMAND_DEFINITIONS = [
   { id:"importCSV", label:"CSV headers", description:"Create a table from CSV headers", action:openCsvImport },
   { id:"lint", label:"Lint schema", description:"Run schema lint checks", action:openLintModal },
 
+  { id:"search", label:"Search", shortcut:"Ctrl/Cmd+F",
+    description:"Search every indexed object and property in this diagram", action:openSearchPanel },
+  { id:"searchNext", label:"Next result", shortcut:"Ctrl/Cmd+G",
+    description:"Open the next search result", action:activateNextSearchResult,
+    enabled:commandHasSearchResults },
+  { id:"searchPrevious", label:"Previous result", shortcut:"Ctrl/Cmd+Shift+G",
+    description:"Open the previous search result", action:activatePreviousSearchResult,
+    enabled:commandHasSearchResults },
+  { id:"searchReferences", label:"Find references",
+    description:"Find indexed references to the selected object", action:openSelectedReferencesSearch,
+    enabled:() => !!singleSelectedNode() },
+  { id:"searchConnected", label:"Find connected",
+    description:"Find the selected objects and every directly connected object", action:openConnectedSearch,
+    enabled:commandHasSelection },
+  { id:"searchHidden", label:"Find hidden",
+    description:"Find objects hidden inside collapsed containers", action:openHiddenSearch },
+  { id:"searchDuplicates", label:"Find duplicates",
+    description:"Find objects that share the same name", action:openDuplicateNameSearch },
+
   { id:"fit", label:"Fit diagram", shortcut:"F", description:"Fit the complete diagram in view", action:fitView },
   { id:"actualSize", label:"Actual size", description:"Show the diagram at 100%",
     action:() => zoomAtCanvasCenter(1) },
@@ -153,7 +175,8 @@ const COMMAND_CATEGORY_IDS = Object.freeze({
     "alignBottom","alignLeft","alignCenter","alignRight","distributeHorizontal","distributeVertical",
     "resetSize","widthSmallest","widthLargest","widthAverage","bringFront","sendBack"]),
   model: new Set(["importDDL","importCSV","lint"]),
-  view: new Set(["fit","actualSize","zoomIn","zoomOut","toggleInspector","toggleTheme"]),
+  view: new Set(["search","searchNext","searchPrevious","searchReferences","searchConnected",
+    "searchHidden","searchDuplicates","fit","actualSize","zoomIn","zoomOut","toggleInspector","toggleTheme"]),
   export: new Set(["exportPNG","exportSVG","exportJSON","exportSQL","exportMermaid","exportMarkdown"])
 });
 const DOCUMENT_MUTATING_COMMANDS = new Set([
@@ -167,10 +190,11 @@ const DOCUMENT_MUTATING_COMMANDS = new Set([
 const SELECTION_SCOPED_COMMANDS = new Set([
   "cut","copy","duplicate","delete","addChild","alignTop","alignMiddle","alignBottom","alignLeft",
   "alignCenter","alignRight","distributeHorizontal","distributeVertical","resetSize","widthSmallest",
-  "widthLargest","widthAverage","bringFront","sendBack"
+  "widthLargest","widthAverage","bringFront","sendBack","searchReferences","searchConnected"
 ]);
 const CAMERA_COMMANDS = new Set(["fit","actualSize","zoomIn","zoomOut"]);
-const APPLICATION_COMMANDS = new Set(["commandPalette","shortcuts","toggleSnap","toggleInspector"]);
+const APPLICATION_COMMANDS = new Set(["commandPalette","shortcuts","toggleSnap","toggleInspector",
+  "search","searchNext","searchPrevious","searchHidden","searchDuplicates"]);
 const COMMAND_CATEGORY_ICONS = Object.freeze({
   home:"lucide:house", insert:"lucide:plus", arrange:"lucide:align-center",
   model:"lucide:database", view:"lucide:eye", export:"lucide:download"
@@ -200,7 +224,11 @@ const COMMAND_DISABLED_REASONS = Object.freeze({
   widthLargest:"Select two or more nodes to match widths.",
   widthAverage:"Select two or more nodes to match widths.",
   bringFront:"Select a node to bring to front.",
-  sendBack:"Select a node to send to back."
+  sendBack:"Select a node to send to back.",
+  searchNext:"Run a search that has at least one result.",
+  searchPrevious:"Run a search that has at least one result.",
+  searchReferences:"Select one node to find its references.",
+  searchConnected:"Select a node or relationship to find connected objects."
 });
 
 function commandCategory(id){
@@ -438,7 +466,8 @@ function commandPaletteItems(){
 
 function shortcutCatalog(){
   const order = ["open","save","saveAs","undo","redo","copy","cut","paste","duplicate",
-    "commandPalette","shortcuts","addConcept","addText","addStatus","addNote","addTable","addTodo",
+    "search","searchNext","searchPrevious","commandPalette","shortcuts",
+    "addConcept","addText","addStatus","addNote","addTable","addTodo",
     "addChild","delete","fit","toggleInspector"];
   const rows = order.map(id => {
     const command = commandDefinition(id);
