@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.41.1">
+<link rel="stylesheet" href="styles.css?v=1.42.0">
 </head>
 <body>
 <noscript>
@@ -72,6 +72,8 @@
           <div class="ribbon-command-grid">
             <button id="menuUndo" data-command="undo"><span data-command-label>Undo</span></button>
             <button id="menuRedo" data-command="redo"><span data-command-label>Redo</span></button>
+            <button id="btnHistoryOpen" data-command="historyOpen"><span data-command-label>Version history</span></button>
+            <button id="btnHistoryCheckpoint" data-command="historyCheckpoint"><span data-command-label>Checkpoint</span></button>
           </div>
         </div>
         <div class="ribbon-group" aria-label="Clipboard">
@@ -268,6 +270,8 @@
             <button id="btnExportPNG" data-command="exportPNG"><span data-command-label>PNG</span></button>
             <button id="btnExportSVG" data-command="exportSVG"><span data-command-label>SVG</span></button>
             <button id="btnExportJSON" data-command="exportJSON"><span data-command-label>JSON</span></button>
+            <button id="btnExportJSONNoHistory" data-command="exportJSONNoHistory"><span data-command-label>JSON, no history</span></button>
+            <button id="btnExportHistory" data-command="exportHistory"><span data-command-label>History archive</span></button>
           </div>
         </div>
         <div class="ribbon-group" aria-label="Model formats">
@@ -377,20 +381,145 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.41.1"></script>
-<script src="js/icon-catalog.js?v=1.41.1"></script>
-<script src="js/geometry.js?v=1.41.1"></script>
-<script src="js/render.js?v=1.41.1"></script>
-<script src="js/model.js?v=1.41.1"></script>
-<script src="js/interactions.js?v=1.41.1"></script>
-<script src="js/inspector.js?v=1.41.1"></script>
-<script src="js/io.js?v=1.41.1"></script>
-<script src="js/search.js?v=1.41.1"></script>
-<script src="js/organization.js?v=1.41.1"></script>
-<script src="js/metadata.js?v=1.41.1"></script>
-<script src="js/editing.js?v=1.41.1"></script>
-<script src="js/commands.js?v=1.41.1"></script>
-<script src="js/context-menu.js?v=1.41.1"></script>
-<script src="js/bootstrap.js?v=1.41.1"></script>
+<div class="modal history-modal" id="historyPanel" hidden role="dialog" aria-modal="true"
+     aria-labelledby="historyPanelTitle">
+  <div class="card history-card">
+    <header class="history-head">
+      <div>
+        <span class="object-explorer-kicker">Controlled change</span>
+        <h3 id="historyPanelTitle">Version history</h3>
+      </div>
+      <div class="history-head-actions">
+        <button id="btnHistoryNewCheckpoint" type="button" class="primary">New checkpoint</button>
+        <button id="btnCloseHistoryPanel" type="button" aria-label="Close version history">×</button>
+      </div>
+    </header>
+    <div class="history-toolbar">
+      <label>Find versions
+        <input id="historySearch" type="search" placeholder="Name, description, author">
+      </label>
+      <label>Show
+        <select id="historyTypeFilter">
+          <option value="all">All versions</option>
+          <option value="named">Named checkpoints</option>
+          <option value="automatic">Automatic</option>
+          <option value="restored">Restores</option>
+          <option value="imported">Imports</option>
+        </select>
+      </label>
+      <span id="historyStorageStatus" class="history-storage" role="status"></span>
+    </div>
+    <div class="history-workspace">
+      <aside class="history-timeline-pane" aria-label="Version timeline">
+        <div id="historyTimeline" class="history-timeline" role="listbox"
+             aria-label="Chronological versions" tabindex="0"></div>
+      </aside>
+      <section class="history-preview-pane" aria-labelledby="historyPreviewTitle">
+        <div class="history-pane-head">
+          <div>
+            <span class="history-kicker">Read-only historical canvas</span>
+            <h4 id="historyPreviewTitle">Current document</h4>
+          </div>
+          <div class="history-preview-actions">
+            <button id="btnHistoryFitPreview" type="button">Fit preview</button>
+            <button id="btnHistoryDuplicate" type="button">Duplicate version</button>
+          </div>
+        </div>
+        <svg id="historyPreview" role="img" aria-labelledby="historyPreviewTitle historyPreviewDescription"></svg>
+        <p id="historyPreviewDescription" class="visually-hidden"></p>
+        <details class="history-outline">
+          <summary>Accessible object outline</summary>
+          <ol id="historyObjectOutline"></ol>
+        </details>
+      </section>
+      <aside class="history-diff-pane" aria-label="Version comparison">
+        <div class="history-compare-controls">
+          <label>Compare from<select id="historyCompareFrom"></select></label>
+          <label>Compare to<select id="historyCompareTo"></select></label>
+          <button id="btnHistoryCompare" type="button">Compare</button>
+        </div>
+        <div id="historyDiffSummary" class="history-diff-summary" aria-live="polite"></div>
+        <div class="history-change-nav">
+          <button id="btnHistoryPreviousChange" type="button" aria-label="Previous change">Previous</button>
+          <span id="historyChangePosition">No changes</span>
+          <button id="btnHistoryNextChange" type="button" aria-label="Next change">Next</button>
+        </div>
+        <div id="historyChangeList" class="history-change-list" role="list"
+             aria-label="Changes between selected versions"></div>
+      </aside>
+    </div>
+    <footer class="history-footer">
+      <div class="history-footer-meta">
+        <strong id="historySelectedMeta">Current document</strong>
+        <span id="historySelectedDescription"></span>
+      </div>
+      <div class="history-footer-actions">
+        <button id="btnHistorySettings" type="button">Retention &amp; author</button>
+        <button id="btnHistoryRestoreSelected" type="button">Restore selected objects</button>
+        <button id="btnHistoryRestoreAll" type="button" class="primary">Restore this version</button>
+      </div>
+    </footer>
+    <section id="historyComposer" class="history-sheet" hidden aria-label="Create checkpoint">
+      <div>
+        <h4>Create named checkpoint</h4>
+        <label>Name<input id="historyCheckpointName" maxlength="80" placeholder="Before schema migration"></label>
+        <label>Description<textarea id="historyCheckpointDescription" maxlength="500"
+          placeholder="Why this state matters"></textarea></label>
+        <label class="history-check"><input id="historyCheckpointPinned" type="checkbox" checked>
+          Pin this checkpoint so retention cleanup never removes it</label>
+        <p id="historyComposerError" class="history-error" role="alert"></p>
+        <div class="actions">
+          <button id="btnHistoryCancelCheckpoint" type="button">Cancel</button>
+          <button id="btnHistorySaveCheckpoint" type="button" class="primary">Create checkpoint</button>
+        </div>
+      </div>
+    </section>
+    <section id="historySettings" class="history-sheet" hidden aria-label="History retention settings">
+      <div>
+        <h4>Retention and local identity</h4>
+        <label>Local author name<input id="historyAuthor" maxlength="80"
+          placeholder="Optional — never inferred"></label>
+        <div class="history-setting-grid">
+          <label>Automatic versions<input id="historyRetentionCount" type="number" min="10" max="500"></label>
+          <label>Maximum age (days)<input id="historyRetentionDays" type="number" min="1" max="365"></label>
+        </div>
+        <p class="helper">Named and pinned checkpoints are stored with the document. Automatic versions stay on this device and are pruned by these limits.</p>
+        <div class="actions">
+          <button id="btnHistoryClearAutomatic" type="button" class="dangerbtn">Clear automatic history</button>
+          <button id="btnHistoryCancelSettings" type="button">Cancel</button>
+          <button id="btnHistorySaveSettings" type="button" class="primary">Save settings</button>
+        </div>
+      </div>
+    </section>
+    <section id="historyRestoreSheet" class="history-sheet" hidden aria-label="Partial restore preview">
+      <div>
+        <h4>Restore selected objects</h4>
+        <p id="historyRestoreSummary" class="helper"></p>
+        <div id="historyRestorePlan" class="history-restore-plan"></div>
+        <div class="actions">
+          <button id="btnHistoryCancelRestore" type="button">Cancel</button>
+          <button id="btnHistoryApplyRestore" type="button" class="primary">Apply as one change</button>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<script src="js/core.js?v=1.42.0"></script>
+<script src="js/icon-catalog.js?v=1.42.0"></script>
+<script src="js/geometry.js?v=1.42.0"></script>
+<script src="js/render.js?v=1.42.0"></script>
+<script src="js/model.js?v=1.42.0"></script>
+<script src="js/interactions.js?v=1.42.0"></script>
+<script src="js/inspector.js?v=1.42.0"></script>
+<script src="js/io.js?v=1.42.0"></script>
+<script src="js/search.js?v=1.42.0"></script>
+<script src="js/organization.js?v=1.42.0"></script>
+<script src="js/metadata.js?v=1.42.0"></script>
+<script src="js/editing.js?v=1.42.0"></script>
+<script src="js/history.js?v=1.42.0"></script>
+<script src="js/commands.js?v=1.42.0"></script>
+<script src="js/context-menu.js?v=1.42.0"></script>
+<script src="js/bootstrap.js?v=1.42.0"></script>
 </body>
 </html>

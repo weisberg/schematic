@@ -156,7 +156,7 @@ if (process.argv.includes("--api-surface")){
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
-    "js/editing.js", "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
+    "js/editing.js", "js/history.js", "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -323,6 +323,307 @@ if (process.argv.includes("--api-surface")){
       "starter demonstrates status indicators on both sides");
     assert(statuses.some(n => n.status === "Blocked") && statuses.some(n => n.status === "In progress"),
       "starter demonstrates multiple built-in status values");
+  }
+
+  /* SCH-084 — durable version history, visual diff, and safe restoration */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    assert.strictEqual(T.HISTORY_SCHEMA_VERSION, 1, "history schema has an explicit version");
+    assert(T.historyState.documentId, "every new document receives a stable history identity");
+    assert.strictEqual(T.historyLocal.automatic.length, 1,
+      "a new document begins with one retained automatic version");
+    assert.strictEqual(T.historyPanelOpen, false, "history UI starts closed");
+    assert.strictEqual(T.historyStableStringify({b:1,a:{d:2,c:3}}),
+      T.historyStableStringify({a:{c:3,d:2},b:1}),
+      "history serialization is deterministic across property insertion order");
+    assert.strictEqual(T.historyChecksum({b:1,a:2}),T.historyChecksum({a:2,b:1}),
+      "integrity checksums use deterministic serialization");
+
+    const node = T.state.nodes.find(candidate => candidate.type === "concept");
+    const transactionCount = T.historyState.transactions.length;
+    const automaticCount = T.historyLocal.automatic.length;
+    const originalTitle = node.title;
+    T.pushHistory(`history-title:${node.id}`);
+    node.title = "Versioned title one";
+    T.pushHistory(`history-title:${node.id}`);
+    node.title = "Versioned title two";
+    const transaction = T.historyFinalizePendingTransaction();
+    assert(transaction, "coalesced editing creates a durable transaction");
+    assert.strictEqual(T.historyState.transactions.length,transactionCount + 1,
+      "coalesced editing creates exactly one transaction");
+    assert.strictEqual(T.historyLocal.automatic.length,automaticCount + 1,
+      "a meaningful transaction creates one automatic version");
+    assert(transaction.affectedIds.includes(node.id),
+      "transaction records affected stable object identities");
+    assert(transaction.operations.some(operation =>
+      operation.objectId === node.id && operation.category === "content"),
+      "transaction records structured before and after content changes");
+    assert.strictEqual(T.historyFinalizePendingTransaction(),null,
+      "finalizing without a pending change does not flood history");
+
+    const beforeMove = T.historyModelSnapshot();
+    node.x += 37;
+    const afterMove = T.historyModelSnapshot();
+    const moveDiff = T.historyDiffSnapshots(beforeMove,afterMove);
+    assert.strictEqual(moveDiff.summary.added,0,"a move is not reported as an addition");
+    assert.strictEqual(moveDiff.summary.removed,0,"a move is not reported as a deletion");
+    assert.strictEqual(moveDiff.summary.moved,1,"stable identity classifies a move correctly");
+    assert(moveDiff.items.some(item =>
+      item.objectId === node.id && item.changeType === "moved" && item.category === "geometry"),
+      "move diff retains the stable object ID and geometry category");
+
+    const checkpoint = T.historyCreateCheckpoint("Review baseline","Before downstream review",{pinned:true});
+    assert.strictEqual(checkpoint.type,"named","user checkpoint is distinguished from automatic history");
+    assert.strictEqual(checkpoint.pinned,true,"checkpoint can be pinned against cleanup");
+    assert.strictEqual(checkpoint.description,"Before downstream review",
+      "checkpoint retains its user description");
+    assert.strictEqual(checkpoint.checksum,T.historyChecksum(checkpoint.snapshot),
+      "portable checkpoint includes a valid integrity checksum");
+    assert.throws(() => T.historyCreateCheckpoint("   "),/required/i,
+      "blank checkpoint names are rejected");
+    const withHistory = JSON.parse(T.serializeDocument());
+    const withoutHistory = JSON.parse(T.serializeDocument({includeHistory:false}));
+    assert(withHistory.history && withHistory.history.documentId === T.historyState.documentId,
+      "native serialization includes portable history by default");
+    assert(!withoutHistory.history,"native serialization can explicitly exclude sensitive history");
+    assert(withHistory.history.checkpoints.some(record => record.id === checkpoint.id),
+      "named checkpoints travel with the native document");
+    assert(!withHistory.history.checkpoints.some(record => record.type === "automatic"),
+      "high-frequency automatic snapshots do not bloat portable documents");
+
+    node.title = originalTitle;
+    node.x -= 37;
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const sourceNode = T.state.nodes.find(node => node.type === "concept");
+    const unrelated = T.state.nodes.find(node => node.type === "table");
+    const originalSourceTitle = sourceNode.title;
+    const originalUnrelatedTitle = unrelated.title;
+    const checkpoint = T.historyCreateCheckpoint("Partial restore source","Known-good object state");
+
+    T.pushHistory(`history-edit:${sourceNode.id}`);
+    sourceNode.title = "Changed after checkpoint";
+    unrelated.title = "Unrelated current work";
+    T.historyFinalizePendingTransaction({
+      commandId:"testBulkEdit",label:"Change two objects",origin:"user"
+    });
+    const diff = T.historyCompareVersions(checkpoint.id,T.HISTORY_CURRENT_ID);
+    assert(diff.items.some(item => item.objectId === sourceNode.id && item.category === "content"),
+      "arbitrary checkpoint-to-current comparison finds content changes");
+    const plan = T.historyPlanPartialRestore(checkpoint.snapshot,[sourceNode.id]);
+    assert(plan.items.some(item => item.kind === "node" && item.id === sourceNode.id &&
+      item.resolution === "replace"),"partial restore planner identifies a clean replacement");
+    const beforeTransactions = T.historyState.transactions.length;
+    assert.strictEqual(T.historyApplyPartialRestore(plan),true,"partial object restore applies");
+    assert.strictEqual(sourceNode.id,T.state.nodes.find(node => node.id === sourceNode.id).id,
+      "partial restore preserves stable identity");
+    assert.strictEqual(T.state.nodes.find(node => node.id === sourceNode.id).title,originalSourceTitle,
+      "partial restore returns the selected object to its historical value");
+    assert.strictEqual(T.state.nodes.find(node => node.id === unrelated.id).title,"Unrelated current work",
+      "partial restore does not overwrite unrelated current work");
+    assert.strictEqual(T.historyState.transactions.length,beforeTransactions + 1,
+      "partial restore is recorded as one logical transaction");
+    assert.strictEqual(T.historyState.transactions.at(-1).origin,"partial-restore",
+      "partial restore has an explicit history origin");
+    unrelated.title = originalUnrelatedTitle;
+
+    const conflictSnapshot = T.historyModelSnapshot();
+    const conflicting = conflictSnapshot.nodes.find(node => node.id === sourceNode.id);
+    const live = T.state.nodes.find(node => node.id === sourceNode.id);
+    conflicting.type = live.type === "concept" ? "table" : "concept";
+    const conflictPlan = T.historyPlanPartialRestore(conflictSnapshot,[sourceNode.id]);
+    assert.strictEqual(conflictPlan.items.find(item => item.id === sourceNode.id).status,"type-conflict",
+      "partial restore reports a type conflict instead of overwriting silently");
+    assert.strictEqual(conflictPlan.items.find(item => item.id === sourceNode.id).resolution,"skip",
+      "conflicting restoration defaults to the safe skip resolution");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const node = T.state.nodes.find(candidate => candidate.type === "concept");
+    const original = node.title;
+    const checkpoint = T.historyCreateCheckpoint("Whole restore source","Document restore fixture");
+    T.pushHistory(`history-whole:${node.id}`);
+    node.title = "Later document state";
+    T.historyFinalizePendingTransaction({commandId:"rename",label:"Rename node"});
+    const beforeRestoreCheckpointCount = T.historyState.checkpoints.length;
+    const beforeRestoreTransactionCount = T.historyState.transactions.length;
+    assert.strictEqual(T.historyRestoreWhole(checkpoint.id),true,"whole-document restore applies");
+    assert.strictEqual(T.state.nodes.find(candidate => candidate.id === node.id).title,original,
+      "whole-document restore makes the selected version current");
+    assert.strictEqual(T.historyState.checkpoints.length,beforeRestoreCheckpointCount + 1,
+      "whole-document restore creates a safety checkpoint first");
+    const safety = T.historyState.checkpoints.at(-1);
+    assert.strictEqual(safety.type,"pre-restore","safety checkpoint identifies its restore purpose");
+    assert.strictEqual(safety.pinned,true,"pre-restore checkpoint cannot be silently pruned");
+    assert.strictEqual(T.historyState.transactions.length,beforeRestoreTransactionCount + 1,
+      "whole restore creates one durable restore transaction");
+    assert.strictEqual(T.historyState.transactions.at(-1).origin,"restore",
+      "whole restore is distinguishable from ordinary user edits");
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(candidate => candidate.id === node.id).title,"Later document state",
+      "whole restore remains one session-undoable operation");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const snapshot = T.historyModelSnapshot();
+    const checksum = T.historyChecksum(snapshot);
+    const synthetic = {
+      schemaVersion:1,
+      documentId:"retention-fixture",
+      retention:{maxAutomatic:10,maxAgeDays:2},
+      automatic:Array.from({length:25},(_,index) => ({
+        id:`auto-${index}`,type:"automatic",name:`Automatic ${index}`,
+        timestamp:Date.now() - index * 24 * 60 * 60 * 1000,
+        sequence:index + 1,checksum,snapshot
+      }))
+    };
+    T.historyApplyRetention(synthetic);
+    assert.strictEqual(synthetic.automatic.length,10,
+      "automatic retention respects the configured count and keeps a recent safety floor");
+    assert(synthetic.automatic.every(record => T.historyChecksum(record.snapshot) === record.checksum),
+      "retention keeps only verifiable records");
+
+    const checkpoint = T.historyCreateCheckpoint("Portable import","Round-trip fixture");
+    const portable = T.serializeDocument();
+    const documentId = T.historyState.documentId;
+    T.importDocText(portable,{name:"round-trip.schematic.json",dirty:false});
+    assert.strictEqual(T.historyState.documentId,documentId,
+      "opening a native document preserves its history identity");
+    assert(T.historyState.checkpoints.some(record => record.id === checkpoint.id),
+      "portable named history survives save and reopen");
+    const newIdentitySource = JSON.parse(T.serializeDocument({includeHistory:false}));
+    T.importDocText(JSON.stringify(newIdentitySource),{name:"history-free.schematic.json",dirty:false});
+    assert.notStrictEqual(T.historyState.documentId,documentId,
+      "a history-free portable document receives a new local history identity");
+
+    const archive = T.exportHistoryArchive();
+    assert.strictEqual(archive.kind,"schematic-history-archive",
+      "history archive export is self-identifying");
+    assert.strictEqual(archive.documentId,T.historyState.documentId,
+      "history archive is bound to the correct document identity");
+    assert.strictEqual(T.historyImportArchiveText(JSON.stringify(archive)),true,
+      "history archives can be deterministically re-imported without duplicate failure");
+    assert.throws(() => T.historyImportArchiveText(JSON.stringify({...archive,documentId:"other"})),
+      /another document/i,"history archive import rejects a different document identity");
+  }
+
+  {
+    const knownSnapshot = {
+      version:1,nextId:2,
+      nodes:[{id:"n1",type:"concept",x:0,y:0,title:"Known",notes:"",color:"#CFE8FF"}],
+      edges:[],meta:{theme:"light",dialect:"ansi"}
+    };
+    const source = JSON.stringify({
+      ...knownSnapshot,
+      history:{
+        schemaVersion:1,storage:"hybrid",documentId:"doc-corrupt",sequence:1,
+        checkpoints:[],transactions:[]
+      }
+    });
+    const badLocal = {
+      schemaVersion:1,documentId:"doc-corrupt",retention:{maxAutomatic:80,maxAgeDays:30},
+      automatic:[{
+        id:"bad",type:"automatic",name:"Damaged",timestamp:Date.now(),sequence:1,
+        checksum:"fnv1a-deadbeef",snapshot:knownSnapshot
+      }]
+    };
+    const { window } = makeDom({storageSeed:{
+      "schematic.history.doc-corrupt":JSON.stringify(badLocal)
+    }});
+    const T = window.__T;
+    T.importDocText(source,{name:"corrupt-history.schematic.json",dirty:false});
+    assert.strictEqual(T.state.nodes[0].title,"Known",
+      "damaged history never prevents the current document from opening");
+    assert(!T.historyLocal.automatic.some(record => record.id === "bad"),
+      "corrupted automatic records are isolated");
+    assert.strictEqual(T.historyStorageStatus.ok,false,
+      "corruption is reported visibly instead of being silently ignored");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const node = T.state.nodes.find(candidate => candidate.type === "concept");
+    const checkpoint = T.historyCreateCheckpoint("Accessible baseline","UI fixture");
+    T.pushHistory(`history-ui:${node.id}`);
+    node.title = "Changed for visual diff";
+    T.historyFinalizePendingTransaction({commandId:"rename",label:"Rename for comparison"});
+    assert.strictEqual(T.openHistoryPanel({versionId:checkpoint.id}),true,
+      "version history opens from a shared command");
+    assert.strictEqual(doc.getElementById("historyPanel").getAttribute("role"),"dialog",
+      "history opens as an accessible dialog");
+    assert.strictEqual(doc.getElementById("historyTimeline").getAttribute("role"),"listbox",
+      "timeline exposes listbox keyboard semantics");
+    assert.strictEqual(doc.getElementById("historyPreview").getAttribute("role"),"img",
+      "historical canvas exposes an accessible read-only image");
+    assert(doc.getElementById("historyObjectOutline").children.length > 0,
+      "historical canvas provides a non-spatial accessible object outline");
+    assert(doc.querySelectorAll("#historyChangeList .history-change").length > 0,
+      "comparison renders a navigable change list");
+    const changedNode = doc.querySelector(`[data-history-object="${node.id}"]`);
+    assert(changedNode && /history-preview-(changed|removed|added)/.test(changedNode.getAttribute("class")),
+      "visual diff uses explicit change classes in addition to color");
+    const previewObjects = [...doc.querySelectorAll("#historyPreview .history-preview-node")];
+    const frameIndex = previewObjects.findIndex(element => {
+      const candidate = T.state.nodes.find(item => item.id === element.dataset.historyObject);
+      return candidate && candidate.type === "frame";
+    });
+    const changedIndex = previewObjects.findIndex(element => element.dataset.historyObject === node.id);
+    assert(frameIndex >= 0 && changedIndex > frameIndex,
+      "history preview paints structural containers behind their contents");
+    assert(/Current document compared with Accessible baseline/.test(
+      doc.getElementById("historyPreviewTitle").textContent),
+    "history preview names the rendered comparison target and source");
+    doc.getElementById("historyCompareFrom").value = checkpoint.id;
+    doc.getElementById("historyCompareTo").value = T.HISTORY_CURRENT_ID;
+    doc.getElementById("btnHistoryCompare").click();
+    assert.strictEqual(doc.getElementById("btnHistoryRestoreAll").disabled,false,
+      "comparison selectors also choose a restorable historical source on compact layouts");
+    assert(/Before:/.test(doc.querySelector(".history-change-before").textContent),
+      "change list exposes before values");
+    assert(/After:/.test(doc.querySelector(".history-change-after").textContent),
+      "change list exposes after values");
+    doc.getElementById("btnHistoryNextChange").click();
+    assert(/of/.test(doc.getElementById("historyChangePosition").textContent),
+      "keyboard-equivalent next/previous controls step through changes");
+    T.closeHistoryPanel();
+    assert.strictEqual(doc.getElementById("historyPanel").hidden,true,
+      "history dialog closes without changing the current document");
+  }
+
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const nodeCount = 10000, edgeCount = 20000;
+    const nodes = Array.from({length:nodeCount},(_,index) => ({
+      id:`n${index}`,type:"concept",x:(index % 100) * 180,y:Math.floor(index / 100) * 80,
+      title:`Node ${index}`,notes:"",color:"#CFE8FF"
+    }));
+    const edges = Array.from({length:edgeCount},(_,index) => ({
+      id:`e${index}`,from:`n${index % nodeCount}`,to:`n${(index * 17 + 3) % nodeCount}`,
+      kind:"link",label:index % 5 ? "" : "Depends on"
+    }));
+    const before = {version:1,nextId:edgeCount+nodeCount+1,nodes,edges,meta:{theme:"light",dialect:"ansi"}};
+    const after = JSON.parse(JSON.stringify(before));
+    after.nodes[7321].x += 24;
+    after.edges[15432].to = "n9000";
+    const started = Date.now();
+    const diff = T.historyDiffSnapshots(before,after);
+    const elapsed = Date.now() - started;
+    assert.strictEqual(diff.summary.moved,1,
+      "10,000-object benchmark finds the one moved object precisely");
+    assert.strictEqual(diff.summary.relinked,1,
+      "20,000-relationship benchmark finds the one relinked edge precisely");
+    assert(elapsed < 5000,
+      `large deterministic comparison remains bounded on the reference fixture (${elapsed} ms)`);
   }
 
   /* SCH-091 — status nodes + one document-wide custom status catalog */

@@ -43,6 +43,10 @@ const CORE_COMMAND_DEFINITIONS = [
   { id:"redo", label:"Redo", shortcut:"Ctrl/Cmd+Shift+Z", shortcutAliases:["Ctrl/Cmd+Y"],
     description:"Redo the last undone change", action:redo,
     enabled:() => redoStack.length > 0 },
+  { id:"historyOpen", label:"Version history", description:"Browse, compare, and restore retained versions",
+    action:openHistoryPanel, icon:"lucide:history", scope:"document-read" },
+  { id:"historyCheckpoint", label:"Checkpoint", description:"Name and pin the current document state",
+    action:openCheckpointComposer, icon:"lucide:bookmark-plus", mutatesDocument:true, scope:"document" },
   { id:"cut", label:"Cut", shortcut:"Ctrl/Cmd+X", description:"Cut the selected nodes", action:() => copySelection(true),
     enabled:commandHasNodeSelection },
   { id:"copy", label:"Copy", shortcut:"Ctrl/Cmd+C", description:"Copy the selected nodes",
@@ -165,6 +169,10 @@ const CORE_COMMAND_DEFINITIONS = [
   { id:"exportPNG", label:"PNG", description:"Download the diagram as a PNG image", action:exportPngDocument },
   { id:"exportSVG", label:"SVG", description:"Download the diagram as an SVG vector", action:exportSvgDocument },
   { id:"exportJSON", label:"JSON", description:"Download the native Schematic document", action:exportJsonDocument },
+  { id:"exportJSONNoHistory", label:"JSON without history",
+    description:"Download a portable copy without earlier document content", action:exportJsonWithoutHistory },
+  { id:"exportHistory", label:"History archive",
+    description:"Download checkpoints and automatic history as a separate archive", action:exportHistoryArchive },
   { id:"exportSQL", label:"SQL DDL", description:"Generate SQL DDL from table nodes", action:openSqlExport },
   { id:"exportMermaid", label:"Mermaid ER", description:"Export a Mermaid ER diagram", action:exportMermaidDocument },
   { id:"exportMarkdown", label:"Markdown", description:"Export the concept map as a Markdown outline",
@@ -172,8 +180,8 @@ const CORE_COMMAND_DEFINITIONS = [
 ];
 
 const COMMAND_CATEGORY_IDS = Object.freeze({
-  home: new Set(["new","open","save","saveAs","importJson","clear","undo","redo","cut","copy","paste",
-    "duplicate","delete","commandPalette","shortcuts","addChild"]),
+  home: new Set(["new","open","save","saveAs","importJson","clear","undo","redo","historyOpen",
+    "historyCheckpoint","cut","copy","paste","duplicate","delete","commandPalette","shortcuts","addChild"]),
   insert: new Set(["addConcept","addText","addStatus","addNote","addTable","addTodo","addFrame",
     "addHorizontalLane","addVerticalLane"]),
   arrange: new Set(["layoutTree","layoutSchema","cleanupGrid","toggleSnap","alignTop","alignMiddle",
@@ -182,7 +190,8 @@ const COMMAND_CATEGORY_IDS = Object.freeze({
   model: new Set(["importDDL","importCSV","lint"]),
   view: new Set(["search","searchNext","searchPrevious","searchReferences","searchConnected",
     "searchHidden","searchDuplicates","fit","actualSize","zoomIn","zoomOut","toggleInspector","toggleTheme"]),
-  export: new Set(["exportPNG","exportSVG","exportJSON","exportSQL","exportMermaid","exportMarkdown"])
+  export: new Set(["exportPNG","exportSVG","exportJSON","exportJSONNoHistory","exportHistory",
+    "exportSQL","exportMermaid","exportMarkdown"])
 });
 const DOCUMENT_MUTATING_COMMANDS = new Set([
   "new","open","importJson","clear","undo","redo","cut","paste","duplicate","delete","addChild",
@@ -338,14 +347,30 @@ function executeCommand(id, context = {}){
     if (context.announce !== false) announce(commandDisabledReason(command));
     return false;
   }
-  const result = command.action(context);
-  updateCommandStates();
-  if (typeof document !== "undefined")
+  const dispatchExecuted = () => {
+    updateCommandStates();
+    if (typeof document === "undefined") return;
     document.dispatchEvent(new CustomEvent("schematic:command-executed", {
-      detail:{id:command.id, scope:command.scope, mutatesDocument:command.mutatesDocument}
+      detail:{
+        id:command.id,
+        label:commandLabel(command),
+        transaction:command.transaction,
+        scope:command.scope,
+        mutationKind:command.mutationKind,
+        mutatesDocument:command.mutatesDocument
+      }
     }));
+  };
+  const result = command.action(context);
   if (result && typeof result.then === "function")
-    return result.finally(updateCommandStates);
+    return result.then(value => {
+      dispatchExecuted();
+      return value === undefined ? true : value;
+    }, error => {
+      updateCommandStates();
+      throw error;
+    });
+  dispatchExecuted();
   return result === undefined ? true : result;
 }
 function commandElements(id, root = document){

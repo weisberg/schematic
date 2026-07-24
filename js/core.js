@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.41.1";
+const APP_VERSION = "v1.42.0";
 const DEFAULT_GRID_SIZE = 24;
 const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
@@ -720,6 +720,7 @@ let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   if (typeof invalidateMetadataEvaluation === "function") invalidateMetadataEvaluation();
+  if (typeof historyBeginTransaction === "function") historyBeginTransaction(coalesceKey);
   if (coalesceKey != null){
     const now = Date.now();
     if (coalesce.key === coalesceKey && now - coalesce.t < 1000){ coalesce.t = now; return; }
@@ -750,8 +751,28 @@ function restore(json){
   pruneSelection();
   render();
 }
-function undo(){ if(!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
-function redo(){ if(!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); setDocDirty(true); syncHistoryButtons(); }
+function undo(){
+  if (!undoStack.length) return;
+  if (typeof historyFinalizePendingTransaction === "function") historyFinalizePendingTransaction();
+  const before = typeof historyModelSnapshot === "function" ? historyModelSnapshot() : null;
+  redoStack.push(snapshot());
+  restore(undoStack.pop());
+  setDocDirty(true);
+  syncHistoryButtons();
+  if (before && typeof historyRecordImmediateTransaction === "function")
+    historyRecordImmediateTransaction(before, {commandId:"undo", label:"Undo", origin:"undo"});
+}
+function redo(){
+  if (!redoStack.length) return;
+  if (typeof historyFinalizePendingTransaction === "function") historyFinalizePendingTransaction();
+  const before = typeof historyModelSnapshot === "function" ? historyModelSnapshot() : null;
+  undoStack.push(snapshot());
+  restore(redoStack.pop());
+  setDocDirty(true);
+  syncHistoryButtons();
+  if (before && typeof historyRecordImmediateTransaction === "function")
+    historyRecordImmediateTransaction(before, {commandId:"redo", label:"Redo", origin:"redo"});
+}
 function syncHistoryButtons(){
   if (typeof updateCommandStates === "function") updateCommandStates();
 }
@@ -895,7 +916,7 @@ function cleanNodeForDocument(n){
   if (!out.notes) out.notes = out.notes || "";
   return out;
 }
-function documentObject(){
+function documentObject(opts = {}){
   const cleanNode = typeof cleanMetadataObjectForDocument === "function"
     ? node => cleanMetadataObjectForDocument(cleanNodeForDocument(node))
     : cleanNodeForDocument;
@@ -923,10 +944,14 @@ function documentObject(){
   if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
   if (customStatuses.length) meta.customStatuses = customStatuses.slice();
   d.meta = meta;
+  if (opts.includeHistory !== false && typeof historyDocumentPayload === "function"){
+    const history = historyDocumentPayload();
+    if (history) d.history = history;
+  }
   return d;
 }
-function serializeDocument(){
-  return JSON.stringify(documentObject(), null, 2);
+function serializeDocument(opts = {}){
+  return JSON.stringify(documentObject(opts), null, 2);
 }
 function nextIdFromDocument(d){
   const organizationRecords = d.organization && typeof d.organization === "object"
@@ -956,6 +981,7 @@ function migrateDocument(d){
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
   if (out.editing && typeof out.editing === "object") result.editing = out.editing;
+  if (out.history && typeof out.history === "object") result.history = out.history;
   return result;
 }
 function applyDocument(d, opts = {}){
@@ -1070,6 +1096,11 @@ function applyDocument(d, opts = {}){
   applyTheme(migrated.meta && migrated.meta.theme ? migrated.meta.theme : "light", { render:false });
   applyDialect(migrated.meta && migrated.meta.dialect ? migrated.meta.dialect : "ansi", { render:false });
   clearSelection();
+  if (typeof historyAdoptDocument === "function" && opts.preserveVersionHistory !== true)
+    historyAdoptDocument(migrated.history, {
+      imported:opts.historyOrigin === "imported",
+      name:opts.historyName || doc.name
+    });
   if (opts.resetHistory !== false){
     undoStack.length = 0;
     redoStack.length = 0;
@@ -1080,7 +1111,12 @@ function applyDocument(d, opts = {}){
 }
 function importDocText(text, opts = {}){
   const parsed = JSON.parse(text);
-  applyDocument(parsed, { resetHistory: opts.resetHistory !== false });
+  applyDocument(parsed, {
+    resetHistory: opts.resetHistory !== false,
+    preserveVersionHistory:opts.preserveVersionHistory === true,
+    historyOrigin:opts.historyOrigin || "imported",
+    historyName:opts.name
+  });
   if (opts.name) doc.name = opts.name;
   doc.handle = opts.handle || null;
   setDocDirty(Boolean(opts.dirty));

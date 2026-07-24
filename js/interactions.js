@@ -926,6 +926,7 @@ board.addEventListener("pointerup", ev => {
     render();
   }
   board.classList.remove("panning","connecting");
+  if (typeof historyFinalizePendingTransaction === "function") historyFinalizePendingTransaction();
   drag = null;
 });
 board.addEventListener("pointercancel", ev => {
@@ -934,6 +935,7 @@ board.addEventListener("pointercancel", ev => {
   if (activePointers.size < 2) touchGesture = null;
   const redrawDraft = drag && (drag.mode === "ortho-bend" || drag.mode === "edge-label" ||
     (drag.mode === "node" && drag.guides) || drag.mode === "guide");
+  if (typeof historyFinalizePendingTransaction === "function") historyFinalizePendingTransaction();
   drag = null;
   board.classList.remove("panning","connecting");
   if (redrawDraft) render();
