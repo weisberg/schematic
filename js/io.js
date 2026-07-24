@@ -91,7 +91,10 @@ function newDoc(){
   state.nextId = 1;
   state.organization = typeof defaultOrganization === "function" ? defaultOrganization() : undefined;
   if (typeof ensureOrganization === "function") ensureOrganization();
+  state.metadata = typeof defaultMetadata === "function" ? defaultMetadata() : undefined;
+  if (typeof ensureMetadata === "function") ensureMetadata();
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
+  if (typeof metadataCsvPreview !== "undefined") metadataCsvPreview = null;
   clearSelection();
   undoStack.length = 0;
   redoStack.length = 0;
