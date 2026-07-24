@@ -476,12 +476,12 @@ function buildEdgeSelectionDropdown(panel, edge){
     for (const [style, label] of [["solid","Solid"],["dash","Dashed"],["dot","Dotted"]])
       menuCommand(body, label, () => {
         if (edgeLineStyle(edge) === style) return;
-        pushHistory(); edge.lineStyle = style; render();
+        pushHistory(); formattingSetManualValue(edge,"lineStyle",style); render();
       }, {pressed:edgeLineStyle(edge) === style, action:"line-style-" + style});
     menuSeparator(body);
     const width = sizeStepper(edgeLineWidth(edge), 1, 8, .5, (value, commit) => {
       pushHistory("menu-edge-width:" + edge.id);
-      edge.lineWidth = value;
+      formattingSetManualValue(edge,"lineWidth",value);
       drawOnly();
       if (commit) renderInspector();
     }, {ariaLabel:"Line width"});
@@ -666,7 +666,7 @@ function nodeMenu(n, x, y){
             ? conceptColors() : tableColors(), n.color,
           (c, commit) => {
             pushHistory(targets.length > 1 ? "color:multi" : "color:"+n.id);
-            applyToTargets(t => { t.color = c; });
+            applyToTargets(t => { formattingSetManualValue(t,"fill",c); });
             commit ? render() : drawOnly();
           });
       });
@@ -675,7 +675,9 @@ function nodeMenu(n, x, y){
           ctxSwatches(sub, palette, n.titleColor || SWIMLANE_DEFAULT.titleColor,
             (c, commit) => {
               pushHistory(targets.length > 1 ? "lane-title:multi" : "lane-title:"+n.id);
-              applyToTargets(t => { if (t.type === "swimlane") t.titleColor = c; });
+              applyToTargets(t => {
+                if (t.type === "swimlane") formattingSetManualValue(t,"titleBandColor",c);
+              });
               commit ? render() : drawOnly();
             });
         });
@@ -704,7 +706,7 @@ function nodeMenu(n, x, y){
           ctxSwatches(sub, fontColors(), n.fontColor || "#16232F",
             (c, commit) => {
               pushHistory(targets.length > 1 ? "fc:multi" : "fc:"+n.id);
-              applyToTargets(t => { t.fontColor = c; });
+              applyToTargets(t => { formattingSetManualValue(t,"textColor",c); });
               commit ? render() : drawOnly();
             });
         });
@@ -799,6 +801,8 @@ function nodeMenu(n, x, y){
       buildOrganizationNodeContext(m, n, targets);
     if (typeof buildMetadataNodeContext === "function")
       buildMetadataNodeContext(m, n, targets);
+    if (typeof buildFormattingNodeContext === "function")
+      buildFormattingNodeContext(m, n, targets);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "node:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -847,11 +851,12 @@ function edgeMenu(e, x, y){
         ctxColorOverride(sub, fontColors(), e.labelTextColor, edgeLineColor(e),
           (c, commit) => {
             pushHistory("edge-label-text:"+e.id);
-            e.labelTextColor = c;
+            formattingSetManualValue(e,"labelTextColor",c);
             commit ? render() : drawOnly();
           }, () => {
             pushHistory();
             delete e.labelTextColor;
+            formattingClearManualOverride(e,"labelTextColor");
             render();
           }, {inheritLabel:"link color", action:"inherit-label-text", key:"label-text"});
       });
@@ -859,11 +864,12 @@ function edgeMenu(e, x, y){
         ctxColorOverride(sub, conceptColors(), e.labelBackgroundColor, themeColors().labelBg,
           (c, commit) => {
             pushHistory("edge-label-background:"+e.id);
-            e.labelBackgroundColor = c;
+            formattingSetManualValue(e,"labelBackgroundColor",c);
             commit ? render() : drawOnly();
           }, () => {
             pushHistory();
             delete e.labelBackgroundColor;
+            formattingClearManualOverride(e,"labelBackgroundColor");
             render();
           }, {inheritLabel:"canvas background", action:"inherit-label-background", key:"label-background"});
       });
@@ -899,7 +905,7 @@ function edgeMenu(e, x, y){
         widthRow.appendChild(sizeStepper(edgeLineWidth(e), 1, 8, .5,
           (v, commit) => {
             pushHistory("edge-width:"+e.id);
-            e.lineWidth = v;
+            formattingSetManualValue(e,"lineWidth",v);
             if (commit){ hideCtx(); render(); } else drawOnly();
           }, {ariaLabel:"Line width"}));
         sub.appendChild(widthRow);
@@ -908,7 +914,7 @@ function edgeMenu(e, x, y){
         ctxSwatches(sub, tableColors(), edgeLineColor(e),
           (c, commit) => {
             pushHistory("edge-color:"+e.id);
-            e.lineColor = c;
+            formattingSetManualValue(e,"lineColor",c);
             commit ? render() : drawOnly();
           });
       });
@@ -968,6 +974,8 @@ function edgeMenu(e, x, y){
       buildOrganizationEdgeContext(m, e);
     if (typeof buildMetadataEdgeContext === "function")
       buildMetadataEdgeContext(m, e);
+    if (typeof buildFormattingEdgeContext === "function")
+      buildFormattingEdgeContext(m, e);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "edge:style-transfer", "Style transfer", panel => {
       ctxItem(panel, "Copy link style", () => executeCommand("copyStyle"), {action:"copy-style"});
       ctxItem(panel, "Paste link style", () => executeCommand("pasteStyle"), {action:"paste-style"});
@@ -1051,6 +1059,8 @@ function canvasMenu(w, x, y){
       buildOrganizationCanvasContext(m);
     if (typeof buildMetadataCanvasContext === "function")
       buildMetadataCanvasContext(m);
+    if (typeof buildFormattingCanvasContext === "function")
+      buildFormattingCanvasContext(m);
   });
 }
 

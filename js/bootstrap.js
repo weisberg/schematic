@@ -253,6 +253,80 @@ function seed(){
       dependency.propertyProvenance = {"p-confidence":{origin:"manual"}};
     }
   }
+  if (typeof normalizeConditionalFormatting === "function"){
+    state.formatting = normalizeConditionalFormatting({
+      schemaVersion:1,
+      rules:[
+        {
+          id:"rule-blocked-work",name:"Blocked work warning",enabled:true,target:"status",
+          scope:{kind:"document"},priority:90,stopProcessing:false,
+          condition:{op:"all",children:[
+            {op:"predicate",field:"status",comparator:"equals",value:"Blocked"}
+          ]},
+          actions:[
+            {property:"borderColor",value:"#C20029"},{property:"borderWidth",value:4},
+            {property:"borderStyle",value:"dash"},{property:"badge",value:"Blocked"},
+            {property:"badgeColor",value:"#C20029"}
+          ],
+          description:"Make blocked work visible without replacing its underlying node color.",
+          legendLabel:"Blocked work",accessibilityText:"Blocked status with a dashed warning border."
+        },
+        {
+          id:"rule-critical-system",name:"Critical system indicator",enabled:true,target:"node",
+          scope:{kind:"document"},priority:70,
+          condition:{op:"all",children:[
+            {op:"predicate",field:"property:p-criticality",comparator:"equals",value:"high"}
+          ]},
+          actions:[
+            {property:"borderColor",value:"#B05A00"},{property:"borderWidth",value:3},
+            {property:"badge",value:"Critical"},{property:"badgeColor",value:"#B05A00"}
+          ],
+          description:"Identify high-criticality semantic objects with a non-color-only badge.",
+          legendLabel:"High criticality",accessibilityText:"High criticality object."
+        },
+        {
+          id:"rule-strong-confidence",name:"High-confidence relationship",enabled:true,target:"edge",
+          scope:{kind:"document"},priority:50,
+          condition:{op:"all",children:[
+            {op:"predicate",field:"property:p-confidence",comparator:"greaterOrEqual",value:80}
+          ]},
+          actions:[
+            {property:"lineColor",value:"#007873"},{property:"lineWidth",value:3},
+            {property:"lineStyle",value:"solid"}
+          ],
+          description:"Represent strongly supported typed relationships with a heavier solid line.",
+          legendLabel:"Confidence ≥ 80%",accessibilityText:"High-confidence relationship."
+        },
+        {
+          id:"rule-missing-metadata",name:"Missing required metadata",enabled:true,target:"node",
+          scope:{kind:"document"},priority:80,
+          condition:{op:"all",children:[
+            {op:"predicate",field:"missingRequiredCount",comparator:"greaterThan",value:0}
+          ]},
+          actions:[
+            {property:"badge",value:"Needs metadata"},{property:"badgeColor",value:"#8A3FA8"},
+            {property:"borderStyle",value:"dot"}
+          ],
+          description:"Surface incomplete required metadata without changing semantic values.",
+          legendLabel:"Missing metadata",accessibilityText:"One or more required properties are missing."
+        }
+      ],
+      lenses:[
+        {
+          id:"lens-operational-risk",name:"Operational risk",enabled:true,
+          description:"Keep blocked work, critical objects, and one hop of connected context visible.",
+          condition:{op:"any",children:[
+            {op:"predicate",field:"status",comparator:"equals",value:"Blocked"},
+            {op:"predicate",field:"blockedPredecessorCount",comparator:"greaterThan",value:0},
+            {op:"predicate",field:"property:p-criticality",comparator:"equals",value:"high"}
+          ]},
+          nonmatchTreatment:"ghost",contextDirection:"both",contextHops:1,
+          ruleIds:["rule-blocked-work","rule-critical-system","rule-missing-metadata"],
+          scope:{kind:"document"},legendTitle:"Operational risk legend"
+        }
+      ]
+    });
+  }
 }
 function perfSeed(n = 500){
   state.nodes = [];
@@ -260,6 +334,8 @@ function perfSeed(n = 500){
   state.nextId = 1;
   if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
   if (typeof defaultMetadata === "function") state.metadata = defaultMetadata();
+  if (typeof defaultConditionalFormatting === "function")
+    state.formatting = defaultConditionalFormatting();
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   clearSelection();
   for (let i = 0; i < n; i++){
@@ -277,6 +353,7 @@ buildScaffold();
 seed();
 if (typeof ensureOrganization === "function") ensureOrganization();
 if (typeof ensureMetadata === "function") ensureMetadata();
+if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
 if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
 ensureFieldIds();
 if (typeof initializeHistory === "function") initializeHistory();
@@ -284,10 +361,12 @@ initializeCommands();
 if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
 if (typeof initializeMetadataCommands === "function") initializeMetadataCommands();
+if (typeof initializeFormattingCommands === "function") initializeFormattingCommands();
 setupRibbon();
 if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 if (typeof initializeMetadataUi === "function") initializeMetadataUi();
+if (typeof initializeFormattingUi === "function") initializeFormattingUi();
 if (typeof initializeHistoryUi === "function") initializeHistoryUi();
 render();
 syncHistoryButtons();
@@ -658,6 +737,52 @@ window.__T = {
   get metadataCsvPreview(){ return metadataCsvPreview; },
   invalidateMetadataEvaluation,
   defaultMetadata,
+  FORMATTING_SCHEMA_VERSION,
+  defaultConditionalFormatting,
+  normalizeConditionalFormatting,
+  cleanConditionalFormattingForDocument,
+  ensureConditionalFormatting,
+  formattingRules,
+  formattingRuleById,
+  formattingLenses,
+  formattingLensById,
+  formattingNormalizeCondition,
+  formattingEvaluateCondition,
+  formattingRuleEvaluation,
+  formattingResolveAppearance,
+  formattingEffectiveValue,
+  formattingExplainObject,
+  formattingRuleMatchCount,
+  formattingCreateRule,
+  formattingUpdateRule,
+  formattingDeleteRule,
+  formattingDuplicateRule,
+  formattingReorderRule,
+  formattingCreateLens,
+  formattingUpdateLens,
+  formattingDeleteLens,
+  formattingApplyLens,
+  formattingLensMatches,
+  formattingMarkManualOverride,
+  formattingSetManualValue,
+  formattingClearManualOverride,
+  formattingInvalidateObject,
+  formattingInvalidateAll,
+  formattingInvalidateTransaction,
+  formattingContrastRatio,
+  formattingLegendEntries,
+  formattingSemanticZoomTier,
+  formattingSetZoomTier,
+  formattingPreview,
+  formattingCancelPreview,
+  openFormattingPanel,
+  closeFormattingPanel,
+  renderFormattingPanel,
+  get formattingPanelOpen(){ return formattingPanelOpen; },
+  get formattingPanelMode(){ return formattingPanelMode; },
+  get formattingActiveLensId(){ return formattingActiveLensId; },
+  get formattingPreviewIds(){ return [...formattingPreviewIds]; },
+  get formattingStats(){ return {...formattingStats}; },
   normalizeEditingSettings,
   cleanEditingForDocument,
   editingSettings,

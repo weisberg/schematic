@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.42.0">
+<link rel="stylesheet" href="styles.css?v=1.43.2">
 </head>
 <body>
 <noscript>
@@ -381,6 +381,40 @@
   </div>
 </div>
 
+<div class="modal formatting-modal" id="formattingPanel" hidden role="dialog" aria-modal="true"
+     aria-labelledby="formattingPanelTitle">
+  <div class="card formatting-card">
+    <header class="formatting-head">
+      <div>
+        <span class="object-explorer-kicker">Explainable presentation</span>
+        <h3 id="formattingPanelTitle">Conditional formatting</h3>
+      </div>
+      <div class="formatting-tabs" role="tablist" aria-label="Formatting tools">
+        <button type="button" role="tab" data-formatting-mode="rules"
+                aria-controls="formattingPanelBody" aria-selected="true">Rules</button>
+        <button type="button" role="tab" data-formatting-mode="lenses"
+                aria-controls="formattingPanelBody" aria-selected="false">Lenses</button>
+        <button type="button" role="tab" data-formatting-mode="legend"
+                aria-controls="formattingPanelBody" aria-selected="false">Legend &amp; detail</button>
+      </div>
+      <div class="formatting-head-actions">
+        <label>Active lens
+          <select id="formattingActiveLens" aria-label="Active formatting lens">
+            <option value="">No active lens</option>
+          </select>
+        </label>
+        <button id="btnFormattingCreate" type="button" class="primary">New rule</button>
+        <button id="btnCloseFormattingPanel" type="button" aria-label="Close formatting tools">×</button>
+      </div>
+    </header>
+    <div id="formattingPanelBody" class="formatting-body" role="tabpanel" tabindex="0"></div>
+    <footer class="formatting-footer">
+      <span id="formattingPanelStatus" role="status"></span>
+      <span>Manual override → conditional rule → underlying object style</span>
+    </footer>
+  </div>
+</div>
+
 <div class="modal history-modal" id="historyPanel" hidden role="dialog" aria-modal="true"
      aria-labelledby="historyPanelTitle">
   <div class="card history-card">
@@ -505,21 +539,22 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.42.0"></script>
-<script src="js/icon-catalog.js?v=1.42.0"></script>
-<script src="js/geometry.js?v=1.42.0"></script>
-<script src="js/render.js?v=1.42.0"></script>
-<script src="js/model.js?v=1.42.0"></script>
-<script src="js/interactions.js?v=1.42.0"></script>
-<script src="js/inspector.js?v=1.42.0"></script>
-<script src="js/io.js?v=1.42.0"></script>
-<script src="js/search.js?v=1.42.0"></script>
-<script src="js/organization.js?v=1.42.0"></script>
-<script src="js/metadata.js?v=1.42.0"></script>
-<script src="js/editing.js?v=1.42.0"></script>
-<script src="js/history.js?v=1.42.0"></script>
-<script src="js/commands.js?v=1.42.0"></script>
-<script src="js/context-menu.js?v=1.42.0"></script>
-<script src="js/bootstrap.js?v=1.42.0"></script>
+<script src="js/core.js?v=1.43.2"></script>
+<script src="js/icon-catalog.js?v=1.43.2"></script>
+<script src="js/geometry.js?v=1.43.2"></script>
+<script src="js/render.js?v=1.43.2"></script>
+<script src="js/model.js?v=1.43.2"></script>
+<script src="js/interactions.js?v=1.43.2"></script>
+<script src="js/inspector.js?v=1.43.2"></script>
+<script src="js/io.js?v=1.43.2"></script>
+<script src="js/search.js?v=1.43.2"></script>
+<script src="js/organization.js?v=1.43.2"></script>
+<script src="js/metadata.js?v=1.43.2"></script>
+<script src="js/conditional-formatting.js?v=1.43.2"></script>
+<script src="js/editing.js?v=1.43.2"></script>
+<script src="js/history.js?v=1.43.2"></script>
+<script src="js/commands.js?v=1.43.2"></script>
+<script src="js/context-menu.js?v=1.43.2"></script>
+<script src="js/bootstrap.js?v=1.43.2"></script>
 </body>
 </html>

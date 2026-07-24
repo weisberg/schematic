@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, sixteen ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, seventeen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,8 +59,8 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `organization` → `metadata` → `editing` → `history` → `commands` → `context-menu` →
-`bootstrap`.
+`search` → `organization` → `metadata` → `conditional-formatting` → `editing` → `history` →
+`commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -109,6 +109,29 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
         "propertyIds": ["p-owner", "p-degree"], "requiredPropertyIds": ["p-owner"] }
     ],
     "relationshipTypes": []
+  },
+  "formatting": {
+    "schemaVersion": 1,
+    "rules": [
+      { "id": "rule-blocked", "name": "Blocked work", "enabled": true,
+        "target": "status", "scope": { "kind": "document" }, "priority": 90,
+        "condition": { "op": "all", "children": [
+          { "op": "predicate", "field": "status", "comparator": "equals",
+            "value": "Blocked", "fallback": "no-match" }
+        ] },
+        "actions": [
+          { "property": "borderColor", "value": "#C20029" },
+          { "property": "badge", "value": "Blocked" }
+        ] }
+    ],
+    "lenses": [
+      { "id": "lens-risk", "name": "Operational risk", "enabled": true,
+        "condition": { "op": "all", "children": [] },
+        "nonmatchTreatment": "ghost", "contextDirection": "both", "contextHops": 1,
+        "relationshipTypes": [], "ruleIds": ["rule-blocked"],
+        "scope": { "kind": "document" }, "legendTitle": "Risk legend" }
+    ],
+    "semanticZoom": { "enabled": true }
   },
   "history": {
     "schemaVersion": 1,
@@ -2099,6 +2122,51 @@ cancel is byte-equivalent for document, camera, selection, and history; Apply, e
 and snap-selection each undo in one step; legacy documents, direct `file://`, the full automated
 suite, and desktop/narrow browser interaction, visual, persistence, accessibility, and console QA
 pass.
+
+---
+
+**SCH-118 · Durable local-first version history · P0 · XL · Done 2026-07-24**
+
+Add portable named checkpoints, a bounded local automatic timeline, structured transaction records,
+arbitrary-version comparison, visual preview, and safe full or partial restoration. History is
+hybrid by design: intentional checkpoints and the transaction log travel with the document, while
+high-frequency automatic snapshots use local storage and retention controls.
+
+AC: checkpoints carry stable IDs, names, descriptions, timestamps, sequence numbers, checksums,
+summary counts, and immutable snapshots; transactions identify their command, origin, affected
+objects, typed operations, and before/after checksums; comparisons distinguish added, removed,
+moved, resized, relinked, content, style, metadata, organization, and formatting changes; preview is
+read-only and uses normal rendering semantics; full restore, selective restore, undo, redo, and
+pinned safety checkpoints are deterministic; malformed or newer payloads fail safely; named history
+survives export/import while automatic retention remains bounded; the full suite and desktop/narrow
+browser interaction, visual, persistence, restore, accessibility, and console QA pass.
+
+---
+
+**SCH-119 · Conditional formatting and saved lenses · P0 · XL · Done 2026-07-24**
+
+Add declarative, versioned, typed visual rules over built-in fields, custom metadata, validation,
+relationships, hierarchy, and graph-derived values. Rules alter presentation only; they never
+replace semantic values. Saved lenses combine a condition, bounded relationship context, nonmatch
+treatment, a named formatting-rule set, legend, and optional semantic-zoom tier.
+
+The cascade is deterministic: product defaults, semantic presentation, conditional rules ordered by
+priority and stable list order, explicit manual overrides, then temporary preview/selection state.
+Every effective value retains its provenance, shadowed values, and equal-priority conflicts so the
+inspector can answer why an object looks the way it does. Missing, blank, invalid, and unavailable
+values use explicit three-state fallback behavior. The advanced expression editor accepts only the
+same normalized data structure as the visual builder and never evaluates arbitrary code.
+
+AC: rules support stable CRUD, duplicate, order, enable, scope, effective dates, stop processing,
+descriptions, legend/accessibility labels, non-color markers, node/container/link actions, match
+counts, previews, conflicts, and broad/zero-match warnings; lenses hide, ghost, dim, or retain
+nonmatches, add cycle-safe inbound/outbound/bidirectional context hops, retain containing structures,
+and switch saved rule sets without mutating the model; named semantic-zoom tiers use hysteresis;
+manual inspector/context-menu/style-transfer changes outrank rules and can be cleared to reveal the
+rule result; rules, lenses, and formatting-history diffs serialize deterministically; unknown newer
+schemas remain recoverable; incremental invalidation skips geometry-only edits; a 10,000-object
+benchmark, full automated suite, and desktop/narrow browser interaction, visual, keyboard,
+persistence, accessibility, and console QA pass.
 
 ---
 

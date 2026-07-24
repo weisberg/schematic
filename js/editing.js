@@ -563,9 +563,18 @@ function editingApplyStylePayload(payload, targets, opts = {}){
     .map(item => [item.target.id,nodeSize(item.target)]));
   for (const item of plan){
     for (const entry of item.entries){
-      if (entry.operation === "clear") delete item.target[entry.field];
-      else item.target[entry.field] = entry.value == null ? entry.value :
-        JSON.parse(JSON.stringify(entry.value));
+      const manualProperty = typeof formattingManualPropertyForField === "function"
+        ? formattingManualPropertyForField(entry.field) : "";
+      if (entry.operation === "clear"){
+        delete item.target[entry.field];
+        if (manualProperty && typeof formattingClearManualOverride === "function")
+          formattingClearManualOverride(item.target,manualProperty);
+      } else {
+        item.target[entry.field] = entry.value == null ? entry.value :
+          JSON.parse(JSON.stringify(entry.value));
+        if (manualProperty && typeof formattingMarkManualOverride === "function")
+          formattingMarkManualOverride(item.target,manualProperty,true);
+      }
     }
     const before = sizes.get(item.target.id);
     if (!before) continue;

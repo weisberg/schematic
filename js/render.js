@@ -39,6 +39,10 @@ function applyView(){
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
   renderMinimap();
+  if (typeof formattingUpdateSemanticZoom === "function" && formattingUpdateSemanticZoom(view.k)){
+    render();
+    return;
+  }
   if (typeof renderEditingRulers === "function") renderEditingRulers();
   if (typeof searchPanelOpen === "function" && searchPanelOpen() &&
       typeof scheduleSearchRun === "function") scheduleSearchRun();
@@ -56,7 +60,9 @@ function render(){
   const hidden = collapsedFrameHiddenNodeIds();
   const organizationHidden = typeof organizationalHiddenNodeIds === "function"
     ? organizationalHiddenNodeIds() : new Set();
-  const allHidden = new Set([...hidden, ...organizationHidden]);
+  const formattingHidden = typeof conditionalLensHiddenNodeIds === "function"
+    ? conditionalLensHiddenNodeIds() : new Set();
+  const allHidden = new Set([...hidden, ...organizationHidden, ...formattingHidden]);
   const proxies = collapsedFrameProxyMap(hidden);
   let frames = 0, lanes = 0;
   const structuralNodes = state.nodes.filter(n => {
@@ -87,6 +93,7 @@ function render(){
   for (const n of typeof organizationSortRecords === "function"
     ? organizationSortRecords(contentNodes) : contentNodes) drawNode(n);
   if (typeof drawManualGuides === "function") drawManualGuides();
+  if (typeof formattingDrawCanvasLegend === "function") formattingDrawCanvasLegend();
   if (typeof editingRenderLayoutProposal === "function" && editingLayoutProposal)
     editingRenderLayoutProposal();
   for (const n of state.nodes)
@@ -107,6 +114,9 @@ function fastDragRender(ids){
   renderStats.fast++;
   const moved = new Set(ids);
   const hidden = collapsedFrameHiddenNodeIds();
+  const formattingHidden = typeof conditionalLensHiddenNodeIds === "function"
+    ? conditionalLensHiddenNodeIds() : new Set();
+  for (const id of formattingHidden) hidden.add(id);
   const proxies = collapsedFrameProxyMap(hidden);
   const visibleEdges = new Set(visibleCanvasEdges(hidden, proxies));
   for (const id of moved){
@@ -203,8 +213,10 @@ function renderMinimap(){
     const p = tx.toMini({x:r.x, y:r.y});
     const structural = isStructuralNode(n);
     const cleanText = n.type === "text" && textBoxShape(n) === "none";
-    const fill = n.type === "frame" ? n.color || frameColorDefault()
+    const baseFill = n.type === "frame" ? n.color || frameColorDefault()
       : cleanText ? n.fontColor || t.ink : n.color || t.ink;
+    const fill = typeof formattingEffectiveValue === "function"
+      ? formattingEffectiveValue(n,"fill",baseFill) : baseFill;
     el("rect", {x:p.x, y:p.y, width:r.w*tx.scale, height:r.h*tx.scale, rx:structural ? 2 : 1.5,
                 fill, opacity:structural ? .30 : .72, stroke:t.ink, "stroke-width":.35}, minimap);
   }
@@ -669,21 +681,39 @@ function edgePath(e, pa, pb){
   return e && e.routing === "ortho" ? orthoEdgePath(pa, pb, e) : curveEdgePath(pa, pb);
 }
 function edgeLineColor(e, colors = themeColors()){
-  return normalizeHex(e && e.lineColor) || (e && e.kind === "link" ? colors.link : colors.edge);
+  const base = normalizeHex(e && e.lineColor) || (e && e.kind === "link" ? colors.link : colors.edge);
+  return e && typeof formattingEffectiveValue === "function"
+    ? formattingEffectiveValue(e,"lineColor",base) : base;
 }
 function edgeLabelTextColor(e, colors = themeColors()){
-  return normalizeHex(e && e.labelTextColor) || edgeLineColor(e, colors);
+  const manual = normalizeHex(e && e.labelTextColor);
+  if (!e || typeof formattingResolveAppearance !== "function")
+    return manual || edgeLineColor(e, colors);
+  const appearance = formattingResolveAppearance(e);
+  const hasLabelRule = appearance.sources.labelTextColor?.some(source =>
+    source.winning && source.source !== "base");
+  return manual || hasLabelRule
+    ? appearance.values.labelTextColor
+    : edgeLineColor(e, colors);
 }
 function edgeLabelBackgroundColor(e, colors = themeColors()){
-  return normalizeHex(e && e.labelBackgroundColor) || colors.labelBg;
+  const base = normalizeHex(e && e.labelBackgroundColor) || colors.labelBg;
+  return e && typeof formattingEffectiveValue === "function"
+    ? formattingEffectiveValue(e,"labelBackgroundColor",base) : base;
 }
 function edgeLineWidth(e){
   const width = Number(e && e.lineWidth);
-  return Number.isFinite(width) ? Math.min(8, Math.max(1, width)) : 1.7;
+  const base = Number.isFinite(width) ? Math.min(8, Math.max(1, width)) : 1.7;
+  const resolved = e && typeof formattingEffectiveValue === "function"
+    ? Number(formattingEffectiveValue(e,"lineWidth",base)) : base;
+  return Number.isFinite(resolved) ? Math.min(16,Math.max(.5,resolved)) : base;
 }
 function edgeLineStyle(e){
-  return e && ["solid","dash","dot"].includes(e.lineStyle)
+  const base = e && ["solid","dash","dot"].includes(e.lineStyle)
     ? e.lineStyle : e && e.kind === "link" ? "dash" : "solid";
+  const resolved = e && typeof formattingEffectiveValue === "function"
+    ? formattingEffectiveValue(e,"lineStyle",base) : base;
+  return ["solid","dash","dot"].includes(resolved) ? resolved : base;
 }
 function edgeDashArray(e){
   const style = edgeLineStyle(e);
@@ -781,6 +811,8 @@ function drawEdge(e, hidden = null, proxies = null){
                 "font-family":"'IBM Plex Mono', monospace", "font-size":10.5,
                 "font-weight":600, "data-edge-label":"1"}, labelGroup).textContent = label;
   }
+  if (typeof formattingDecorateGroup === "function")
+    formattingDecorateGroup(g,e);
 }
 
 /* ---- nodes ---- */
@@ -857,6 +889,8 @@ function drawFrame(n){
     el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
                 stroke:selected ? t.accent : color, "stroke-width":1.6, "stroke-linecap":"round"}, h);
   }
+  if (typeof formattingDecorateGroup === "function")
+    formattingDecorateGroup(g,n);
 }
 function drawSwimlane(n){
   const r = nodeRect(n);
@@ -897,6 +931,8 @@ function drawSwimlane(n){
   el("rect", {x:r.w - 18, y:r.h - 18, width:18, height:18, fill:"transparent"}, h);
   el("path", {d:`M ${r.w-15} ${r.h-5} L ${r.w-5} ${r.h-15} M ${r.w-10} ${r.h-5} L ${r.w-5} ${r.h-10}`,
               stroke:selected ? t.accent : t.ink2, "stroke-width":1.6, "stroke-linecap":"round"}, h);
+  if (typeof formattingDecorateGroup === "function")
+    formattingDecorateGroup(g,n);
 }
 function drawStructuralNode(n){
   if (n.type === "swimlane") drawSwimlane(n);
@@ -1231,11 +1267,11 @@ function drawNode(n){
     const fc = n.fontColor || autoInk(n.color || todoColorDefault(), t);
     const total = n.items.length;
     const doneCount = n.items.filter(it => it.done).length;
-    el("rect", {width:r.w, height:r.h, rx:10, fill:t.tableFill,
+    el("rect", {width:r.w, height:r.h, rx:10, fill:t.tableFill, "data-node-outline":"1",
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.3}, g);
     el("path", {d:`M 0 10 Q 0 0 10 0 H ${r.w-10} Q ${r.w} 0 ${r.w} 10 V ${m.headerH} H 0 Z`,
-                fill: n.color || todoColorDefault()}, g);
+                fill: n.color || todoColorDefault(), "data-node-fill":"1"}, g);
     const ht = el("text", {x:12, y:m.headerBaseline, fill:fc, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700}, g);
     ht.textContent = truncate(n.title || "To-do list", r.w - 96, `700 ${m.headerSize}px Archivo, sans-serif`);
@@ -1258,7 +1294,8 @@ function drawNode(n){
         const rowTop = m.headerH + i*m.rowH;
         const cy = rowTop + m.rowH/2;
         if (i > 0) el("line", {x1:8, y1:rowTop, x2:r.w-8, y2:rowTop, stroke:t.rowLine, "stroke-width":1}, g);
-        const cb = el("g", {"data-todocheck": it.id, "data-todonode": n.id, cursor:"pointer",
+        const cb = el("g", {"data-todocheck": it.id, "data-todonode": n.id,
+                            "data-todo-row-detail":"1", cursor:"pointer",
                             role:"checkbox", "aria-checked": it.done ? "true" : "false",
                             "aria-label": `${it.done ? "Done" : "Not done"}: ${it.text || "item"}`}, g);
         el("rect", {x:4, y:rowTop + 1, width:m.nameX - 6, height:m.rowH - 2, fill:"transparent"}, cb);
@@ -1272,6 +1309,7 @@ function drawNode(n){
         /* item text keeps the theme ink (issue #44): n.fontColor styles only the header,
            otherwise a light header color would blank out every item row */
         const label = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill: it.done ? t.muted : t.ink,
+                    "data-todo-row-detail":"1",
                     "font-family":"Archivo, sans-serif", "font-size":m.nameSize, "font-weight":500}, g);
         if (it.done) label.setAttribute("text-decoration", "line-through");
         label.textContent = truncate(it.text || "…", r.w - m.nameX - 16, `500 ${m.nameSize}px Archivo, sans-serif`);
@@ -1299,12 +1337,12 @@ function drawNode(n){
   } else {
     const m = tableMetrics(n);
     const fc = n.fontColor || t.ink;
-    el("rect", {width:r.w, height:r.h, rx:8, fill:t.tableFill,
+    el("rect", {width:r.w, height:r.h, rx:8, fill:t.tableFill, "data-node-outline":"1",
                 stroke: selected ? t.accent : t.ink,
                 "stroke-width": selected ? 2.2 : 1.3}, g);
     const hInk = autoInk(n.color || t.ink, t);
     el("path", {d:`M 0 8 Q 0 0 8 0 H ${r.w-8} Q ${r.w} 0 ${r.w} 8 V ${m.headerH} H 0 Z`,
-                fill: n.color || t.ink}, g);
+                fill: n.color || t.ink, "data-node-fill":"1"}, g);
     const ht = el("text", {x:12, y:m.headerBaseline, fill:hInk, "font-family":"Archivo, sans-serif",
                 "font-size":m.headerSize, "font-weight":700, "letter-spacing":".04em"}, g);
     ht.textContent = truncate(n.title || "table", r.w - 82, `700 ${m.headerSize}px Archivo, sans-serif`);
@@ -1329,19 +1367,23 @@ function drawNode(n){
       const badge = f.pk ? "PK" : f.fk ? "FK" : f.unique ? "U" : "";
       if (badge){
         el("rect", {x:8, y:cy - m.badgeH/2, width:m.badgeW, height:m.badgeH, rx:3,
+                    "data-table-row-detail":"1",
                     fill: f.pk ? t.ink : f.unique ? t.accent : t.tableFill,
                     stroke:t.ink, "stroke-width":.9}, g);
         el("text", {x:8 + m.badgeW/2, y:cy + m.badgeSize*0.34, "text-anchor":"middle",
+                    "data-table-row-detail":"1",
                     fill: f.pk || f.unique ? autoInk(f.pk ? t.ink : t.accent, t) : t.ink,
                     "font-family":"'IBM Plex Mono', monospace", "font-size":m.badgeSize,
                     "font-weight":600}, g).textContent = badge;
       }
       const nm = el("text", {x:m.nameX, y:cy + m.nameSize*0.35, fill:fc,
+                  "data-table-row-detail":"1",
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.nameSize,
                   "font-weight":500}, g);
       if (f.comment) nm.setAttribute("title", f.comment);
       nm.textContent = f.name + (f.nullable ? "?" : "");
       el("text", {x:r.w-12, y:cy + m.nameSize*0.35, "text-anchor":"end", fill:t.muted,
+                  "data-table-row-detail":"1",
                   "font-family":"'IBM Plex Mono', monospace", "font-size":m.typeSize}, g)
         .textContent = f.type;
     });
@@ -1385,6 +1427,8 @@ function drawNode(n){
     }
   }
   preserveReadableNodeText(g, n);
+  if (typeof formattingDecorateGroup === "function")
+    formattingDecorateGroup(g,n);
 }
 /* per-row connect handles (left + right of each row) — tables and todos */
 function drawRowHandles(g, n, rows, r, t){

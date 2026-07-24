@@ -9,6 +9,7 @@ const scriptUrls = [...html.matchAll(/<script\s+src="([^"]+\.js(?:\?[^\"]*)?)"/g
 const scriptSources = scriptUrls.map(src => src.split("?")[0]);
 const script = scriptSources.map(src => fs.readFileSync(path.join(ROOT, src), "utf8")).join("\n;\n");
 const styles = fs.readFileSync(path.join(ROOT, "styles.css"), "utf8");
+const testDoms = [];
 
 function makeStorage(throwing = false){
   const store = new Map();
@@ -26,6 +27,7 @@ function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}
     url: "http://localhost/",
     pretendToBeVisual: true
   });
+  testDoms.push(dom);
   const { window } = dom;
   const downloads = [];
   const alerts = [];
@@ -60,7 +62,7 @@ function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}
   window.HTMLAnchorElement.prototype.click = function click(){
     downloads.push({ download: this.download, href: this.href });
   };
-  window.requestAnimationFrame = cb => setTimeout(cb, 0);
+  window.requestAnimationFrame = cb => window.setTimeout(cb, 0);
   window.alert = msg => alerts.push(msg);
   window.confirm = () => true;
   window.navigator.clipboard = { writeText: async () => {} };
@@ -156,7 +158,8 @@ if (process.argv.includes("--api-surface")){
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
-    "js/editing.js", "js/history.js", "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
+    "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
+    "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -2067,6 +2070,8 @@ if (process.argv.includes("--api-surface")){
     const doc = window.document;
     let edge = T.state.edges.find(e => e.label === "Depends on");
     const edgeId = edge.id;
+    T.state.formatting = T.defaultConditionalFormatting();
+    T.ensureConditionalFormatting();
     T.setSelection("edge", edgeId);
     T.render();
 
@@ -3709,8 +3714,9 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Create", "Layout", "Selection", "View", "Organize", "Model data"],
-      "canvas menu groups creation, layout, selection, view, organization, and model-data actions");
+      ["Create", "Layout", "Selection", "View", "Organize", "Model data",
+        "Formatting & lenses"],
+      "canvas menu groups creation, layout, selection, view, organization, model-data, and formatting actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
     assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
@@ -5682,11 +5688,12 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Organization","Metadata","Transform & layout","Basics","Link ports","Appearance","Notes"],
+      ["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Link ports",
+        "Appearance","Notes"],
       "concept inspector groups controls by task");
-    assert(!sections[0].open && !sections[1].open && !sections[2].open && sections[3].open &&
-      !sections[4].open && sections[5].open && !sections[6].open,
-      "primary inspector sections start open while organization, metadata, transforms, link ports, and notes stay compact");
+    assert(!sections[0].open && !sections[1].open && !sections[2].open && !sections[3].open &&
+      sections[4].open && !sections[5].open && sections[6].open && !sections[7].open,
+      "primary inspector sections start open while inactive rule context and secondary sections stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
     appearance.dispatchEvent(new window.Event("toggle"));
@@ -5737,7 +5744,8 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Style transfer","Actions"],
+      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Formatting",
+        "Style transfer","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5761,7 +5769,8 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Style transfer","Actions"],
+      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Formatting",
+        "Style transfer","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -5812,10 +5821,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Organization","Metadata","Transform & layout","Basics","Appearance","Size"],
-      n1:["Organization","Metadata","Transform & layout","Basics","Content","Appearance"],
-      d1:["Organization","Metadata","Transform & layout","Basics","Appearance","Notes","Items"],
-      t1:["Organization","Metadata","Transform & layout","Basics","Appearance","Notes","Fields"]
+      f1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Size"],
+      n1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Content","Appearance"],
+      d1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Notes","Items"],
+      t1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -7369,6 +7378,266 @@ if (process.argv.includes("--api-surface")){
     assert(filterMs < 5000, `metadata table filtering remains interactive (${filterMs.toFixed(0)}ms)`);
   }
 
+  /* SCH-119 — typed conditional formatting, lenses, semantic zoom, and explainability */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    assert.strictEqual(T.FORMATTING_SCHEMA_VERSION, 1,
+      "conditional formatting declares a versioned schema");
+    assert(T.formattingRules().some(rule => rule.id === "rule-blocked-work"),
+      "starter tour includes a discoverable blocked-work rule");
+    assert(T.formattingLenses().some(lens => lens.id === "lens-operational-risk"),
+      "starter tour includes a saved operational-risk lens");
+    const starterDecoratedNode = T.state.nodes.find(node => node.icon && !node.properties?.["p-criticality"]);
+    assert(starterDecoratedNode &&
+      !doc.querySelector(`[data-node="${starterDecoratedNode.id}"] [data-formatting-badge]`),
+      "ordinary node icons do not masquerade as conditional-formatting badges");
+
+    const frame = {id:"cf-frame",type:"frame",x:0,y:0,w:430,h:260,title:"Delivery",color:"#E4E7EC"};
+    const blocked = {id:"cf-blocked",type:"status",x:60,y:70,w:220,title:"Release",
+      status:"Blocked",color:"#CFE8FF",properties:{"p-score":92}};
+    const upstream = {id:"cf-upstream",type:"concept",x:10,y:180,title:"Upstream",color:"#FFE9A8"};
+    const downstream = {id:"cf-downstream",type:"concept",x:280,y:180,title:"Downstream",color:"#D8F3DC"};
+    const edgeIn = {id:"cf-e1",from:upstream.id,to:blocked.id,kind:"link",label:"Blocks"};
+    const edgeOut = {id:"cf-e2",from:blocked.id,to:downstream.id,kind:"link",label:"Triggers",
+      properties:{"p-confidence":88}};
+    T.state.nodes = [frame,blocked,upstream,downstream];
+    T.state.edges = [edgeIn,edgeOut];
+    T.state.metadata = T.normalizeMetadata({
+      schemaVersion:1,
+      properties:[
+        {id:"p-score",name:"Score",type:"number",scope:"canonical",appliesTo:["node"]},
+        {id:"p-confidence",name:"Confidence",type:"number",scope:"canonical",appliesTo:["edge"]}
+      ],
+      objectTypes:[],relationshipTypes:[]
+    });
+    T.state.formatting = T.normalizeConditionalFormatting({
+      schemaVersion:1,
+      rules:[
+        {
+          id:"cf-high",name:"High priority",enabled:true,target:"node",priority:100,
+          scope:{kind:"document"},
+          condition:{op:"all",children:[
+            {op:"predicate",field:"status",comparator:"equals",value:"Blocked"}
+          ]},
+          actions:[
+            {property:"fill",value:"#C20029"},
+            {property:"borderColor",value:"#C20029"},
+            {property:"borderWidth",value:4},
+            {property:"borderStyle",value:"dash"},
+            {property:"badge",value:"Blocked"}
+          ],
+          legendLabel:"Blocked"
+        },
+        {
+          id:"cf-low",name:"Low priority",enabled:true,target:"node",priority:10,
+          scope:{kind:"document"},
+          condition:{op:"all",children:[
+            {op:"predicate",field:"status",comparator:"equals",value:"Blocked"}
+          ]},
+          actions:[{property:"fill",value:"#007873"}]
+        },
+        {
+          id:"cf-score",name:"High score",enabled:true,target:"node",priority:50,
+          scope:{kind:"document"},
+          condition:{op:"all",children:[
+            {op:"predicate",field:"property:p-score",comparator:"greaterOrEqual",value:90}
+          ]},
+          actions:[{property:"textColor",value:"#FFFFFF"}]
+        },
+        {
+          id:"cf-link",name:"Strong link",enabled:true,target:"edge",priority:40,
+          scope:{kind:"document"},
+          condition:{op:"all",children:[
+            {op:"predicate",field:"property:p-confidence",comparator:"greaterThan",value:80}
+          ]},
+          actions:[
+            {property:"lineColor",value:"#007873"},
+            {property:"lineWidth",value:3},
+            {property:"lineStyle",value:"solid"}
+          ]
+        }
+      ],
+      lenses:[{
+        id:"cf-risk",name:"Risk context",enabled:true,
+        condition:{op:"all",children:[
+          {op:"predicate",field:"status",comparator:"equals",value:"Blocked"}
+        ]},
+        nonmatchTreatment:"ghost",contextDirection:"both",contextHops:1,
+        relationshipTypes:[],ruleIds:["cf-high","cf-link"],scope:{kind:"document"},
+        legendTitle:"Risk legend"
+      }]
+    });
+    T.ensureConditionalFormatting();
+
+    const appearance = T.formattingResolveAppearance(blocked);
+    assert.strictEqual(appearance.values.fill, "#c20029",
+      "higher-priority matching rules win deterministically");
+    assert.strictEqual(appearance.values.textColor, "#ffffff",
+      "independent properties cascade across matching rules");
+    assert.strictEqual(appearance.sources.fill.find(source => source.winning).source,"rule",
+      "the provenance chain marks the effective rule rather than the displaced base as winner");
+    assert(appearance.matches.some(match => match.ruleId === "cf-score"),
+      "appearance provenance retains every matching rule");
+    assert(appearance.sources.fill.some(source => source.ruleId === "cf-low" && !source.winning),
+      "explainability retains shadowed lower-priority values");
+    assert.strictEqual(T.formattingResolveAppearance(edgeOut).values.lineWidth, 3,
+      "link rules resolve typed line actions");
+    assert.strictEqual(T.edgeLabelTextColor(edgeOut), "#007873",
+      "an inherited link label follows the conditionally resolved link color");
+
+    T.formattingSetManualValue(blocked,"fill","#2456E6");
+    let manualAppearance = T.formattingResolveAppearance(blocked);
+    assert.strictEqual(manualAppearance.values.fill, "#2456E6",
+      "manual appearance overrides win over conditional rules");
+    assert.strictEqual(manualAppearance.sources.fill.at(-1).source, "manual",
+      "manual precedence is explicit in the provenance chain");
+    T.formattingClearManualOverride(blocked,"fill");
+    assert.strictEqual(T.formattingResolveAppearance(blocked).values.fill, "#c20029",
+      "clearing a manual override reveals the underlying rule result");
+
+    const missing = T.formattingEvaluateCondition(upstream,{
+      op:"predicate",field:"property:p-score",comparator:"greaterThan",value:20,fallback:"unknown"
+    });
+    assert.strictEqual(missing.result, null,
+      "missing typed values preserve three-state unknown evaluation when requested");
+    const missingMatches = T.formattingEvaluateCondition(upstream,{
+      op:"predicate",field:"property:p-score",comparator:"greaterThan",value:20,fallback:"match"
+    });
+    assert.strictEqual(missingMatches.result, true,
+      "a rule can explicitly choose a match fallback for unavailable values");
+    const graphCondition = T.formattingEvaluateCondition(blocked,{
+      op:"predicate",field:"inboundCount",comparator:"equals",value:1
+    });
+    assert.strictEqual(graphCondition.result, true,
+      "conditions can derive relationship counts without mutating the model");
+    const titleRule = T.formattingCreateRule({
+      id:"cf-title-live",name:"Live title",target:"node",priority:5,
+      scope:{kind:"document"},condition:{op:"all",children:[
+        {op:"predicate",field:"title",comparator:"equals",value:"Upstream"}
+      ]},actions:[{property:"badge",value:"Named"}]
+    });
+    assert(T.formattingResolveAppearance(upstream).matches.some(match => match.ruleId === titleRule.id),
+      "dependency fingerprints evaluate title-based rules");
+    upstream.title = "Renamed upstream";
+    assert(!T.formattingResolveAppearance(upstream).matches.some(match => match.ruleId === titleRule.id),
+      "dependency fingerprints refresh live field edits before a history transaction settles");
+    T.formattingDeleteRule(titleRule.id);
+
+    const lens = T.formattingLensById("cf-risk");
+    const lensMatches = T.formattingLensMatches(lens);
+    for (const id of [blocked.id,upstream.id,downstream.id,frame.id])
+      assert(lensMatches.has(id), `one-hop lens context retains ${id}`);
+    T.formattingApplyLens(lens.id);
+    assert.strictEqual(T.formattingActiveLensId, lens.id, "saved lenses apply as reversible view state");
+    assert.strictEqual(T.formattingResolveAppearance(blocked).matches.some(match => match.ruleId === "cf-score"),
+      false, "an active lens can select a saved formatting rule set");
+    assert(doc.querySelector('[data-formatting-legend="1"]'),
+      "an active lens exposes a model-derived canvas legend");
+    T.formattingApplyLens("");
+    assert.strictEqual(T.formattingActiveLensId, "", "saved lenses clear without model mutation");
+
+    assert.strictEqual(T.formattingSemanticZoomTier(.3), "overview",
+      "semantic zoom provides an overview tier");
+    assert.strictEqual(T.formattingSemanticZoomTier(.75), "summary",
+      "semantic zoom provides a summary tier");
+    assert.strictEqual(T.formattingSemanticZoomTier(1.2), "detail",
+      "semantic zoom provides a detail tier");
+    assert.strictEqual(T.formattingSemanticZoomTier(2), "inspection",
+      "semantic zoom provides an inspection tier");
+    assert(T.formattingContrastRatio("#16232F","#FFFFFF") > 4.5,
+      "accessibility diagnostics calculate WCAG-style contrast ratios");
+
+    const serialized = JSON.parse(T.serializeDocument());
+    assert.strictEqual(serialized.formatting.schemaVersion, 1,
+      "document serialization retains the formatting schema version");
+    assert.strictEqual(serialized.formatting.rules.length, 4,
+      "document serialization retains rule definitions rather than rendered styles");
+    const roundTrip = T.normalizeConditionalFormatting(serialized.formatting);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(roundTrip.rules.map(rule => rule.id))),
+      ["cf-high","cf-low","cf-score","cf-link"],
+      "rule IDs and order survive a serialization round trip");
+    const future = T.normalizeConditionalFormatting({schemaVersion:99,rules:[{id:"future-rule"}]});
+    assert.strictEqual(future.futurePayload.schemaVersion, 99,
+      "newer formatting payloads remain recoverable without unsafe evaluation");
+
+    const previewRule = {
+      id:"cf-preview",name:"Preview",enabled:true,target:"node",priority:1,
+      scope:{kind:"document"},condition:{op:"all",children:[]},
+      actions:[{property:"badge",value:"Preview"}]
+    };
+    const beforePreview = T.serializeDocument();
+    const preview = T.formattingPreview(previewRule);
+    assert.strictEqual(preview.count, 4, "rule preview reports a bounded model-backed match count");
+    assert.strictEqual(T.formattingPreviewIds.length, 4,
+      "preview identifies matched objects without editing them");
+    T.formattingCancelPreview();
+    assert.strictEqual(T.serializeDocument(), beforePreview,
+      "canceling preview leaves the serialized document byte-equivalent");
+
+    const beforeHistory = T.historyModelSnapshot();
+    T.formattingUpdateRule("cf-high",{description:"Updated rationale"});
+    const formattingDiff = T.historyDiffSnapshots(beforeHistory,T.historyModelSnapshot());
+    assert(formattingDiff.items.some(item => item.category === "formatting"),
+      "version history describes formatting-definition changes as document changes");
+    const invalidationStart = T.formattingStats.incrementalInvalidations;
+    T.formattingInvalidateTransaction({operations:[{category:"geometry"}]});
+    assert.strictEqual(T.formattingStats.incrementalInvalidations,invalidationStart,
+      "geometry-only edits do not invalidate formatting evaluation");
+    T.formattingInvalidateTransaction({operations:[{category:"metadata"}]});
+    assert.strictEqual(T.formattingStats.incrementalInvalidations,invalidationStart+1,
+      "semantic edits invalidate cached formatting evaluation");
+
+    T.openFormattingPanel("rules",{ruleId:"cf-high"});
+    assert.strictEqual(T.formattingPanelOpen,true,"rule manager opens from the application model");
+    assert.strictEqual(doc.getElementById("formattingPanel").hidden,false,
+      "rule manager is visible and uses the shared dialog surface");
+    assert(doc.querySelectorAll(".formatting-list-item[data-rule-id]").length >= 4,
+      "rule manager provides CRUD/reorder rows for every rule");
+    assert(doc.querySelector(".formatting-editor-pane .formatting-editor"),
+      "rule manager provides a visual condition and action editor");
+    T.closeFormattingPanel();
+
+    T.state.nodes = Array.from({length:10000},(_,index) => ({
+      id:`cf-scale-${index}`,type:"concept",x:index%100,y:Math.floor(index/100),
+      title:`Scale ${index}`,status:index%5===0?"Blocked":"Not started",color:"#CFE8FF"
+    }));
+    T.state.edges = Array.from({length:20000},(_,index) => ({
+      id:`cf-scale-edge-${index}`,
+      from:`cf-scale-${index%10000}`,
+      to:`cf-scale-${(index*17+1)%10000}`,
+      kind:"link"
+    }));
+    T.state.formatting = T.normalizeConditionalFormatting({
+      schemaVersion:1,
+      rules:[{
+        id:"cf-scale-rule",name:"Scale rule",enabled:true,target:"node",priority:1,
+        scope:{kind:"document"},condition:{op:"all",children:[
+          {op:"predicate",field:"status",comparator:"equals",value:"Blocked"}
+        ]},actions:[{property:"badge",value:"Blocked"}]
+      }],
+      lenses:[]
+    });
+    T.ensureConditionalFormatting();
+    const scaleRule = T.formattingRuleById("cf-scale-rule");
+    const scaleStart = performance.now();
+    const scaleResult = T.formattingRuleMatchCount(scaleRule);
+    const scaleMs = performance.now()-scaleStart;
+    assert.strictEqual(scaleResult.count,2000,
+      "large rule evaluation returns the complete deterministic match set");
+    assert(scaleMs < 5000,
+      `10,000-node/20,000-edge rule evaluation remains interactive (${scaleMs.toFixed(0)}ms)`);
+    const warmStart = performance.now();
+    const warmResult = T.formattingRuleMatchCount(scaleRule);
+    const warmMs = performance.now()-warmStart;
+    assert.strictEqual(warmResult,scaleResult,"warm match-count queries reuse their cached result");
+    assert(warmMs < 50,`warm rule match counts stay near-instant (${warmMs.toFixed(1)}ms)`);
+    T.state.nodes = [];
+    T.state.edges = [];
+    window.close();
+  }
+
   /* scheme theme overrides follow light/dark toggling */
   {
     const { window } = makeDom();
@@ -7383,5 +7652,6 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(T.themeColors().accent, "#88ccff", "canvas theme follows the active mode's override");
   }
 
+  for (const dom of testDoms) dom.window.close();
   console.log("ALL TESTS PASSED");
 })();
