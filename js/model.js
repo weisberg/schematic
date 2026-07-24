@@ -73,6 +73,8 @@ function addTodoItem(n){
   pushHistory();
   const item = { id:uid(), text:"New item" };
   n.items.push(item);
+  if (typeof styleMarkComponentOverride === "function")
+    styleMarkComponentOverride(n,"items",true);
   setSelection("node", n.id);
   render();
   return item;
@@ -144,20 +146,29 @@ function duplicateSelection(){
 }
 function cloneSelectionPayload(ids){
   const nodeIds = new Set(ids);
+  const nodes=state.nodes.filter(n => nodeIds.has(n.id));
+  const edges=state.edges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
   return {
-    nodes: state.nodes.filter(n => nodeIds.has(n.id)).map(n => JSON.parse(JSON.stringify(n))),
-    edges: state.edges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
-      .map(e => JSON.parse(JSON.stringify(e)))
+    nodes:nodes.map(n => JSON.parse(JSON.stringify(n))),
+    edges:edges.map(e => JSON.parse(JSON.stringify(e))),
+    ...(typeof styleClipboardDependencies === "function"
+      ? {styleDependencies:styleClipboardDependencies([...nodes,...edges])} : {})
   };
 }
 function remapPayload(payload, offset = 36){
   const nodeMap = new Map();
   const fieldMap = new Map();
   const edgeMap = new Map();
+  const componentInstanceMap = new Map();
   const nodes = payload.nodes.map(src => {
     const n = JSON.parse(JSON.stringify(src));
     nodeMap.set(src.id, uid());
     n.id = nodeMap.get(src.id);
+    if (src.componentInstanceId){
+      if (!componentInstanceMap.has(src.componentInstanceId))
+        componentInstanceMap.set(src.componentInstanceId,styleUid("instance"));
+      n.componentInstanceId=componentInstanceMap.get(src.componentInstanceId);
+    }
     n.x += offset;
     n.y += offset;
     const rows = nodeRows(n);
@@ -174,6 +185,8 @@ function remapPayload(payload, offset = 36){
     const e = JSON.parse(JSON.stringify(src));
     edgeMap.set(src.id, uid());
     e.id = edgeMap.get(src.id);
+    if (src.componentInstanceId)
+      e.componentInstanceId=componentInstanceMap.get(src.componentInstanceId) || styleUid("instance");
     e.from = nodeMap.get(src.from);
     e.to = nodeMap.get(src.to);
     if (Number.isFinite(e.orthoX)) e.orthoX += offset;
@@ -191,8 +204,18 @@ function remapPayload(payload, offset = 36){
   return { nodes, edges, nodeIds:nodes.map(n => n.id) };
 }
 function pastePayload(payload, offset = 36, mutate = true){
-  const remapped = remapPayload(payload, offset);
   if (mutate) pushHistory();
+  if (typeof styleImportClipboardDependencies === "function"){
+    let resolve="fork";
+    if (typeof stylePlanClipboardDependencies === "function"){
+      const plan=stylePlanClipboardDependencies(payload);
+      if (plan.conflicts.length && typeof confirm === "function")
+        resolve=confirm(`${plan.conflicts.length} pasted style definition${plan.conflicts.length===1?" conflicts":"s conflict"} with this document. Import detached local copies?\n\nChoose Cancel to reuse this document's definitions instead.`)
+          ? "fork" : "reuse-local";
+    }
+    styleImportClipboardDependencies(payload,{resolve});
+  }
+  const remapped = remapPayload(payload, offset);
   state.nodes.push(...remapped.nodes);
   state.edges.push(...remapped.edges);
   /* duplicated/pasted tables must not collide with existing names (issue #46) */

@@ -315,6 +315,8 @@ function metadataSetValue(object, definitionOrId, raw, opts = {}){
   if (normalized.absent) delete object.properties[definition.id];
   else object.properties[definition.id] = normalized.value;
   if (!Object.keys(object.properties).length) delete object.properties;
+  if (typeof styleMarkComponentOverride === "function")
+    styleMarkComponentOverride(object,"properties",true);
   metadataSetProvenance(object, definition.id, opts.origin || "manual");
   invalidateMetadataEvaluation();
   if (typeof markSearchIndexDirty === "function") markSearchIndexDirty();
@@ -335,6 +337,8 @@ function metadataSetValueMany(objects, definition, raw){
     else object.properties[definition.id] = metadataCloneValue(normalized.value);
     if (!Object.keys(object.properties).length) delete object.properties;
     metadataSetProvenance(object, definition.id, "manual");
+    if (typeof styleMarkComponentOverride === "function")
+      styleMarkComponentOverride(object,"properties",true);
   }
   invalidateMetadataEvaluation();
   if (typeof markSearchIndexDirty === "function") markSearchIndexDirty();
@@ -790,6 +794,8 @@ function metadataAssignType(object, typeId, opts = {}){
   if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(object)) return false;
   if (opts.history !== false) pushHistory();
   if (definition) object.semanticTypeId = definition.id; else delete object.semanticTypeId;
+  if (typeof styleMarkComponentOverride === "function")
+    styleMarkComponentOverride(object,"semanticTypeId",true);
   delete object.invalidSemanticTypeId;
   if (definition && opts.applyDefaults !== false){
     for (const propertyId of definition.propertyIds || []){
@@ -800,6 +806,8 @@ function metadataAssignType(object, typeId, opts = {}){
       if (!normalized.errors.length && !normalized.absent){
         object.properties = {...(object.properties || {}), [propertyId]:metadataCloneValue(normalized.value)};
         metadataSetProvenance(object, propertyId, "default");
+        if (typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(object,"properties",true);
       }
     }
   }

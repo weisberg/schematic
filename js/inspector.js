@@ -115,6 +115,8 @@ function edgeRelationshipSelect(e, opts = {}){
     if (next === EDGE_CUSTOM_RELATIONSHIP){
       if (edgeRelationshipValue(e.label) !== EDGE_CUSTOM_RELATIONSHIP) e.label = "";
     } else e.label = next;
+    if (typeof styleMarkComponentOverride === "function")
+      styleMarkComponentOverride(e,"label",true);
     if (opts.close) opts.close();
     render();
     if (next === EDGE_CUSTOM_RELATIONSHIP && opts.onCustom) opts.onCustom();
@@ -136,7 +138,11 @@ function statusValueSelect(n, opts = {}){
     const targets = opts.targets || [n];
     if (targets.every(target => target.status === s.value)) return;
     pushHistory();
-    for (const target of targets) target.status = s.value;
+    for (const target of targets){
+      target.status = s.value;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(target,"status",true);
+    }
     if (opts.close) opts.close();
     render();
   });
@@ -272,6 +278,8 @@ function renderNodeTitleField(n){
   frow(n.type === "table" ? "Table name" : n.type === "text" || n.type === "status" ? "Text" : "Title", () => {
     const update = v => {
       n.title = v;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"title",true);
       const headerName = document.querySelector("#inspTitle .inspector-name");
       if (headerName) headerName.textContent = v;
       drawOnly();
@@ -324,6 +332,8 @@ function renderNodeDecorationFields(n){
     bindHistoryOnInput(input, () => {
       const value = input.value.replace(/\r\n?/g, "\n").slice(0, 500);
       if (value) n.subtitle = value; else delete n.subtitle;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"subtitle",true);
       drawOnly();
     });
     input.addEventListener("blur", () => setNodeSubtitle(n, input.value));
@@ -347,6 +357,8 @@ function renderNodeDecorationFields(n){
       else if (source.value === "lucide") setNodeIcon(n, "lucide:rocket");
       else if (source.value === "fa") setNodeIcon(n, "fa:bolt");
       else setNodeIcon(n, "");
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"icon",true);
       render();
     });
     return source;
@@ -364,6 +376,8 @@ function renderNodeDecorationFields(n){
       bindHistoryOnInput(input, () => {
         const emoji = cleanNodeEmoji(input.value);
         if (emoji) n.icon = `emoji:${emoji}`; else delete n.icon;
+        if (typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(n,"icon",true);
         drawOnly();
       });
       input.addEventListener("change", () => {
@@ -387,6 +401,8 @@ function renderNodeDecorationFields(n){
       select.addEventListener("change", () => {
         pushHistory();
         setNodeIcon(n, `${library}:${select.value}`);
+        if (typeof styleMarkComponentOverride === "function")
+          styleMarkComponentOverride(n,"icon",true);
         render();
       });
       return select;
@@ -398,6 +414,9 @@ function renderNodePortFields(n){
   frow("Input / output", () => {
     const toggle = mkFlag(enabled ? "On" : "Off", enabled, on => {
       setNodePortsEnabled(n, on);
+      if (typeof styleMarkComponentOverride === "function")
+        for (const field of ["portsEnabled","inputLabel","outputLabel","inputPorts","outputPorts"])
+          styleMarkComponentOverride(n,field,true);
       render();
     });
     toggle.id = "nodePortsEnabled";
@@ -425,6 +444,9 @@ function renderNodePortSide(n, side){
   const add = mkBtn("+ Add", () => {
     pushHistory();
     addNodePort(n, side);
+    if (typeof styleMarkComponentOverride === "function")
+      for (const field of side === "input" ? ["inputPorts","inputLabel"] : ["outputPorts","outputLabel"])
+        styleMarkComponentOverride(n,field,true);
     render();
   }, "mini");
   add.setAttribute("aria-label", `Add ${side}`);
@@ -437,6 +459,9 @@ function renderNodePortSide(n, side){
     row.className = "port-editor-row";
     const input = mkInput(port.label, value => {
       setNodePortLabel(n, side, value, port.id);
+      if (typeof styleMarkComponentOverride === "function")
+        for (const field of side === "input" ? ["inputPorts","inputLabel"] : ["outputPorts","outputLabel"])
+          styleMarkComponentOverride(n,field,true);
       drawOnly();
     });
     input.maxLength = NODE_PORT_LABEL_MAX;
@@ -447,6 +472,9 @@ function renderNodePortSide(n, side){
     const remove = mkBtn("×", () => {
       pushHistory();
       removeNodePort(n, side, port.id);
+      if (typeof styleMarkComponentOverride === "function")
+        for (const field of side === "input" ? ["inputPorts","inputLabel"] : ["outputPorts","outputLabel"])
+          styleMarkComponentOverride(n,field,true);
       render();
     }, "mini del");
     remove.disabled = ports.length <= 1;
@@ -461,7 +489,12 @@ function renderNodeNotesField(n){
     const t = document.createElement("textarea");
     t.value = n.notes || "";
     t.placeholder = "Add notes…";
-    bindHistoryOnInput(t, () => { n.notes = t.value; drawOnly(); });
+    bindHistoryOnInput(t, () => {
+      n.notes = t.value;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"notes",true);
+      drawOnly();
+    });
     return t;
   });
 }
@@ -486,6 +519,7 @@ function renderInspector(){
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(n);
     if (typeof renderEditingInspectorForNode === "function") renderEditingInspectorForNode(n);
+    if (typeof renderStyleInspectorForObject === "function") renderStyleInspectorForObject(n);
     if (typeof renderFormattingInspectorForObject === "function") renderFormattingInspectorForObject(n);
 
     if (n.type === "swimlane"){
@@ -608,7 +642,10 @@ function renderInspector(){
             commit ? render() : drawOnly();
           }));
         frow("Text size", () => sizeStepper(conceptFont(n), 9, 48, 1,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
           (c, commit) => {
             pushHistory("fc:"+n.id);
@@ -652,7 +689,10 @@ function renderInspector(){
           return control;
         });
         frow("Text size", () => sizeStepper(textBoxFont(n), 10, 72, 1,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); },
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          },
           {ariaLabel:"Text size"}));
         frow("Text color", () => {
           const control = swatches(fontColors(), n.fontColor || themeColors().ink,
@@ -732,6 +772,8 @@ function renderInspector(){
             if (s.value === n.statusSide) return;
             pushHistory();
             n.statusSide = s.value;
+            if (typeof styleMarkComponentOverride === "function")
+              styleMarkComponentOverride(n,"statusSide",true);
             render();
           });
           return s;
@@ -752,6 +794,8 @@ function renderInspector(){
             const label = addCustomStatus(raw);
             if (!label) return;
             n.status = label;
+            if (typeof styleMarkComponentOverride === "function")
+              styleMarkComponentOverride(n,"status",true);
             render();
           });
           button.id = "addCustomStatusButton";
@@ -776,7 +820,10 @@ function renderInspector(){
             commit ? render() : drawOnly();
           }));
         frow("Text size", () => sizeStepper(statusNodeFont(n), 10, 72, 1,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); },
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          },
           {ariaLabel:"Text size"}));
         frow("Text color", () => swatches(fontColors(), n.fontColor || themeColors().ink,
           (c, commit) => {
@@ -799,7 +846,12 @@ function renderInspector(){
           t.rows = 10;
           t.value = n.content || "";
           t.placeholder = "Write a note…";
-          bindHistoryOnInput(t, () => { n.content = t.value; drawOnly(); });
+          bindHistoryOnInput(t, () => {
+            n.content = t.value;
+            if (typeof styleMarkComponentOverride === "function")
+              styleMarkComponentOverride(n,"content",true);
+            drawOnly();
+          });
           return t;
         });
         const help = document.createElement("div");
@@ -817,7 +869,10 @@ function renderInspector(){
         frow("Width", () => sizeStepper(n.w || NOTE_W_DEFAULT, 220, 720, 20,
           (v, commit) => { pushHistory("size:"+n.id); n.w = v; commit ? render() : drawOnly(); }));
         frow("Text size", () => sizeStepper(noteFont(n), 10, 28, 1,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
           (c, commit) => {
             pushHistory("fc:"+n.id);
@@ -839,7 +894,10 @@ function renderInspector(){
             commit ? render() : drawOnly();
           }));
         frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
           (c, commit) => {
             pushHistory("fc:"+n.id);
@@ -863,7 +921,10 @@ function renderInspector(){
             commit ? render() : drawOnly();
           }));
         frow("Text size", () => sizeStepper(tableMetrics(n).base, 8, 28, 0.5,
-          (v, commit) => { pushHistory("fs:"+n.id); n.fontSize = v; commit ? render() : drawOnly(); }));
+          (v, commit) => {
+            pushHistory("fs:"+n.id); formattingSetManualValue(n,"fontSize",v);
+            commit ? render() : drawOnly();
+          }));
         frow("Text color", () => swatches(fontColors(), n.fontColor || "#16232F",
           (c, commit) => {
             pushHistory("fc:"+n.id);
@@ -892,6 +953,7 @@ function renderInspector(){
     setInspectorHeader("Edge", `${a.title} → ${b.title}`, {kind:"edge"});
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(e);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(e);
+    if (typeof renderStyleInspectorForObject === "function") renderStyleInspectorForObject(e);
     if (typeof renderFormattingInspectorForObject === "function") renderFormattingInspectorForObject(e);
     const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
@@ -1062,6 +1124,7 @@ function renderMultiInspector(){
   if (typeof renderOrganizationMultiInspector === "function") renderOrganizationMultiInspector(nodes);
   if (typeof renderMetadataMultiInspector === "function") renderMetadataMultiInspector(nodes);
   if (typeof renderEditingMultiInspector === "function") renderEditingMultiInspector(nodes);
+  if (typeof renderStyleMultiInspector === "function") renderStyleMultiInspector(nodes);
   if (nodes.every(n => n.type === "status")){
     inspectorSection("multi:status", "Status", () => {
       frow("Status", () => {
@@ -1121,7 +1184,8 @@ function renderMultiInspector(){
       frow("Text size", () => sizeStepper(nodeTextSize(nodes[0]),
         8, 48, 1, (v, commit) => {
           pushHistory("fs:multi");
-          for (const n of nodes) n.fontSize = clampNodeTextSize(n, v);
+          for (const n of nodes)
+            formattingSetManualValue(n,"fontSize",clampNodeTextSize(n,v));
           commit ? render() : drawOnly();
         }));
       frow("Text color", () => swatches(fontColors(), nodes[0].fontColor || "#16232F",
@@ -1317,20 +1381,42 @@ function renderFieldEditor(n){
   n.fields.forEach((f, i) => {
     const row = document.createElement("div");
     row.className = "fieldrow";
-    const nameI = mkInput(f.name, v => { f.name = v; drawOnly(); });
-    const typeI = mkInput(f.type, v => { f.type = v; drawOnly(); });
+    const nameI = mkInput(f.name, v => {
+      f.name = v;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"fields",true);
+      drawOnly();
+    });
+    const typeI = mkInput(f.type, v => {
+      f.type = v;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"fields",true);
+      drawOnly();
+    });
     typeI.setAttribute("list", "sqltypes");
-    const del = mkBtn("✕", () => { pushHistory(); const fid = f.id; n.fields.splice(i,1); cleanFieldRefs(fid); render(); }, "mini del");
+    const del = mkBtn("✕", () => {
+      pushHistory();
+      const fid = f.id;
+      n.fields.splice(i,1);
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"fields",true);
+      cleanFieldRefs(fid);
+      render();
+    }, "mini del");
     row.append(nameI, typeI, del);
     wrapD.appendChild(row);
 
     const flags = document.createElement("div");
     flags.className = "flags";
-    flags.appendChild(mkFlag("PK", f.pk, v => { f.pk = v; if (v) f.nullable = false; render(); }));
-    flags.appendChild(mkFlag("FK", f.fk, v => { f.fk = v; render(); }));
-    flags.appendChild(mkFlag("NULL", f.nullable, v => { f.nullable = v; render(); }));
-    flags.appendChild(mkFlag("UNQ", f.unique, v => { f.unique = v; render(); }));
-    flags.appendChild(mkFlag("IDX", f.index, v => { f.index = v; render(); }));
+    const markFields = () => {
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"fields",true);
+    };
+    flags.appendChild(mkFlag("PK", f.pk, v => { f.pk = v; if (v) f.nullable = false; markFields(); render(); }));
+    flags.appendChild(mkFlag("FK", f.fk, v => { f.fk = v; markFields(); render(); }));
+    flags.appendChild(mkFlag("NULL", f.nullable, v => { f.nullable = v; markFields(); render(); }));
+    flags.appendChild(mkFlag("UNQ", f.unique, v => { f.unique = v; markFields(); render(); }));
+    flags.appendChild(mkFlag("IDX", f.index, v => { f.index = v; markFields(); render(); }));
     flags.appendChild(mkBtn("…", () => { f.metaOpen = !f.metaOpen; render(); }, "mini"));
     flags.appendChild(mkBtn("↑", () => moveField(n, i, -1), "mini"));
     flags.appendChild(mkBtn("↓", () => moveField(n, i, +1), "mini"));
@@ -1338,9 +1424,17 @@ function renderFieldEditor(n){
     if (f.metaOpen){
       const meta = document.createElement("div");
       meta.className = "fieldmeta";
-      const def = mkInput(f.default || "", v => { if (v) f.default = v; else delete f.default; drawOnly(); });
+      const def = mkInput(f.default || "", v => {
+        if (v) f.default = v; else delete f.default;
+        markFields();
+        drawOnly();
+      });
       def.placeholder = "default";
-      const comment = mkInput(f.comment || "", v => { if (v) f.comment = v; else delete f.comment; drawOnly(); });
+      const comment = mkInput(f.comment || "", v => {
+        if (v) f.comment = v; else delete f.comment;
+        markFields();
+        drawOnly();
+      });
       comment.placeholder = "comment";
       comment.className = "wide";
       meta.append(def, comment);
@@ -1351,6 +1445,8 @@ function renderFieldEditor(n){
   wrapD.appendChild(mkBtn("+ Add field", () => {
     pushHistory();
     n.fields.push({id: uid(), name:"field_" + (n.fields.length+1), type:"VARCHAR(255)", pk:false, fk:false, nullable:true});
+    if (typeof styleMarkComponentOverride === "function")
+      styleMarkComponentOverride(n,"fields",true);
     render();
   }));
   appendInspector(wrapD);
@@ -1368,6 +1464,8 @@ function moveField(n, i, d){
   if (!rows || j < 0 || j >= rows.length) return;
   pushHistory();
   [rows[i], rows[j]] = [rows[j], rows[i]];
+  if (typeof styleMarkComponentOverride === "function")
+    styleMarkComponentOverride(n,n.type === "table" ? "fields" : "items",true);
   render();
 }
 
@@ -1376,14 +1474,32 @@ function renderItemEditor(n){
   n.items.forEach((it, i) => {
     const row = document.createElement("div");
     row.className = "fieldrow";
-    const textI = mkInput(it.text, v => { it.text = v; drawOnly(); });
-    const del = mkBtn("✕", () => { pushHistory(); const iid = it.id; n.items.splice(i,1); cleanFieldRefs(iid); render(); }, "mini del");
+    const textI = mkInput(it.text, v => {
+      it.text = v;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"items",true);
+      drawOnly();
+    });
+    const del = mkBtn("✕", () => {
+      pushHistory();
+      const iid = it.id;
+      n.items.splice(i,1);
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"items",true);
+      cleanFieldRefs(iid);
+      render();
+    }, "mini del");
     row.append(textI, del);
     wrapD.appendChild(row);
 
     const flags = document.createElement("div");
     flags.className = "flags";
-    flags.appendChild(mkFlag("DONE", !!it.done, v => { if (v) it.done = true; else delete it.done; render(); }));
+    flags.appendChild(mkFlag("DONE", !!it.done, v => {
+      if (v) it.done = true; else delete it.done;
+      if (typeof styleMarkComponentOverride === "function")
+        styleMarkComponentOverride(n,"items",true);
+      render();
+    }));
     flags.appendChild(mkBtn("↑", () => moveField(n, i, -1), "mini"));
     flags.appendChild(mkBtn("↓", () => moveField(n, i, +1), "mini"));
     wrapD.appendChild(flags);

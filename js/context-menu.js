@@ -164,7 +164,8 @@ function ctxSizeRow(parent, n, targets = [n]){
   wrap.appendChild(sizeStepper(cur, isC ? 9 : isNote || isText || isStatus ? 10 : 8, isText || isStatus ? 72 : isC ? 48 : 28, isC || isNote || isText || isStatus ? 1 : 0.5,
     (v, commit) => {
       pushHistory(targets.length > 1 ? "fs:multi" : "fs:"+n.id);
-      for (const t of targets) t.fontSize = clampNodeTextSize(t, v);
+      for (const t of targets)
+        formattingSetManualValue(t,"fontSize",clampNodeTextSize(t,v));
       commit ? render() : drawOnly();
     }));
   parent.appendChild(wrap);
@@ -801,6 +802,8 @@ function nodeMenu(n, x, y){
       buildOrganizationNodeContext(m, n, targets);
     if (typeof buildMetadataNodeContext === "function")
       buildMetadataNodeContext(m, n, targets);
+    if (typeof buildStyleNodeContext === "function")
+      buildStyleNodeContext(m, n, targets);
     if (typeof buildFormattingNodeContext === "function")
       buildFormattingNodeContext(m, n, targets);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "node:style-transfer", "Style transfer", panel => {
@@ -974,6 +977,8 @@ function edgeMenu(e, x, y){
       buildOrganizationEdgeContext(m, e);
     if (typeof buildMetadataEdgeContext === "function")
       buildMetadataEdgeContext(m, e);
+    if (typeof buildStyleEdgeContext === "function")
+      buildStyleEdgeContext(m, e);
     if (typeof buildFormattingEdgeContext === "function")
       buildFormattingEdgeContext(m, e);
     if (typeof editingCopyStyle === "function") ctxGroup(m, "edge:style-transfer", "Style transfer", panel => {
@@ -1059,6 +1064,8 @@ function canvasMenu(w, x, y){
       buildOrganizationCanvasContext(m);
     if (typeof buildMetadataCanvasContext === "function")
       buildMetadataCanvasContext(m);
+    if (typeof buildStyleCanvasContext === "function")
+      buildStyleCanvasContext(m);
     if (typeof buildFormattingCanvasContext === "function")
       buildFormattingCanvasContext(m);
   });

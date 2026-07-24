@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, seventeen ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, eighteen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,7 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `organization` → `metadata` → `conditional-formatting` → `editing` → `history` →
+`search` → `organization` → `metadata` → `style-system` → `conditional-formatting` → `editing` → `history` →
 `commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
@@ -109,6 +109,29 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
         "propertyIds": ["p-owner", "p-degree"], "requiredPropertyIds": ["p-owner"] }
     ],
     "relationshipTypes": []
+  },
+  "styles": {
+    "schemaVersion": 1,
+    "library": {
+      "id": "library-document", "name": "Document style library",
+      "version": "1.0.0", "scope": "document", "authority": "document",
+      "embedded": true
+    },
+    "tokens": [
+      { "id": "token-color-primary", "name": "Primary", "type": "color",
+        "value": "#2456E6", "semantic": false, "order": 0 }
+    ],
+    "classes": [
+      { "id": "class-primary-system", "name": "Primary system",
+        "appliesTo": ["node"], "modifier": false,
+        "properties": {
+          "fill": { "tokenId": "token-color-primary" },
+          "textColor": { "value": "#FFFFFF" }
+        }, "order": 0 }
+    ],
+    "components": [],
+    "templates": [],
+    "importedLibraries": []
   },
   "formatting": {
     "schemaVersion": 1,
@@ -2167,6 +2190,38 @@ rule result; rules, lenses, and formatting-history diffs serialize deterministic
 schemas remain recoverable; incremental invalidation skips geometry-only edits; a 10,000-object
 benchmark, full automated suite, and desktop/narrow browser interaction, visual, keyboard,
 persistence, accessibility, and console QA pass.
+
+---
+
+**SCH-120 · Reusable style system and offline libraries · P0 · XL · Done 2026-07-24**
+
+Add stable, typed design tokens; capability-aware primary and modifier classes; an explicit
+default/token/class/rule/direct-override cascade; and readable provenance for every effective
+property. Document libraries remain embedded and offline, use deterministic packages and checksums,
+preview stable-ID/name/dependency conflicts, pin imported versions, and support safe replacement,
+forking, localization, and detachment. Directly formatted legacy documents remain pixel-equivalent
+until a user explicitly applies or creates a reusable definition.
+
+Add typed template variables that generate ordinary editable models, plus constrained versioned
+component definitions and instances. Component update previews report structural, relationship,
+layout, external-link, and instance-override effects; synchronization preserves declared overrides
+and outside links; detachment leaves independent objects and does not affect other instances or the
+definition. Copy/paste and format painter carry definition references and their local dependencies
+instead of silently baking resolved colors.
+
+AC: color/transparency, typography, border, radius, spacing, icon, and link tokens retain stable IDs,
+references, type validation, cycle detection, consumer discovery, impact previews, replacement, and
+localization; classes support documented capabilities, one understandable base class, deterministic
+modifier order, cycle detection, direct-override reset, and inspector/context-menu assignment;
+conditional formatting remains a separate higher cascade layer; library export/import is
+deterministic, offline, versioned, conflict-aware, and missing-reference-safe; templates validate
+required/number/enum/color inputs before creation; component create/insert/update/sync/detach
+preserves identity, geometry, instance overrides, named attachment content, and external links;
+keyboard-native manager tabs and controls expose readable source/override states and contrast
+findings; repeated save is deterministic; a 10,000-object, 100-token, 100-class fixture proves
+consumer indexing, warm resolution caching, and targeted token invalidation; the full automated
+suite and desktop/narrow browser interaction, visual, persistence, undo, export, accessibility, and
+console QA pass.
 
 ---
 

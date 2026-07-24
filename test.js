@@ -158,7 +158,7 @@ if (process.argv.includes("--api-surface")){
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
-    "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
+    "js/style-system.js", "js/conditional-formatting.js", "js/editing.js", "js/history.js", "js/commands.js",
     "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
@@ -3715,8 +3715,8 @@ if (process.argv.includes("--api-surface")){
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
       ["Create", "Layout", "Selection", "View", "Organize", "Model data",
-        "Formatting & lenses"],
-      "canvas menu groups creation, layout, selection, view, organization, model-data, and formatting actions");
+        "Styles and reuse", "Formatting & lenses"],
+      "canvas menu groups creation, layout, selection, view, organization, model-data, styles, and formatting actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
     assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
@@ -5688,11 +5688,11 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Link ports",
+      ["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Link ports",
         "Appearance","Notes"],
       "concept inspector groups controls by task");
     assert(!sections[0].open && !sections[1].open && !sections[2].open && !sections[3].open &&
-      sections[4].open && !sections[5].open && sections[6].open && !sections[7].open,
+      !sections[4].open && sections[5].open && !sections[6].open && sections[7].open && !sections[8].open,
       "primary inspector sections start open while inactive rule context and secondary sections stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
@@ -5744,7 +5744,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Formatting",
+      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Styles","Formatting",
         "Style transfer","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
@@ -5769,7 +5769,7 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Formatting",
+      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Styles","Formatting",
         "Style transfer","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
@@ -5821,10 +5821,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Size"],
-      n1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Content","Appearance"],
-      d1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Notes","Items"],
-      t1:["Organization","Metadata","Transform & layout","Why this appearance?","Basics","Appearance","Notes","Fields"]
+      f1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Size"],
+      n1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Content","Appearance"],
+      d1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Items"],
+      t1:["Organization","Metadata","Transform & layout","Style system","Why this appearance?","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -7376,6 +7376,343 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(doc.querySelectorAll(".metadata-table tbody tr").length, 1,
       "large-table filtering finds the intended stable row");
     assert(filterMs < 5000, `metadata table filtering remains interactive (${filterMs.toFixed(0)}ms)`);
+  }
+
+  /* SCH-120 — reusable design tokens, classes, libraries, templates, and components */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    const doc = window.document;
+    assert.strictEqual(T.STYLE_SCHEMA_VERSION,1,"style definitions use a versioned document schema");
+    assert.strictEqual(T.STYLE_LIBRARY_SCHEMA_VERSION,1,"portable libraries use a versioned package schema");
+    assert(T.styleTokenById("token-color-primary"),"the starter library includes named semantic colors");
+    assert(T.styleClassById("class-primary-system"),"the starter library includes reusable style classes");
+    assert(T.styleTemplateById("template-project-kickoff"),"the starter library includes a typed template");
+    assert(T.state.nodes.some(node => node.styleClassId) &&
+      T.state.nodes.some(node => node.modifierClassIds?.length),
+      "the starter tour demonstrates both primary and modifier class references");
+
+    const styled={id:"style-node",type:"concept",x:0,y:0,title:"Styled service",color:"#CFE8FF"};
+    const sibling={id:"style-sibling",type:"concept",x:360,y:0,title:"Sibling",color:"#D8F3DC"};
+    const edge={id:"style-edge",from:styled.id,to:sibling.id,kind:"link",label:"Depends on"};
+    T.state.nodes=[styled,sibling]; T.state.edges=[edge];
+    T.state.styles=T.defaultStyleSystem(); T.ensureStyleSystem();
+    T.state.formatting=T.defaultConditionalFormatting(); T.ensureConditionalFormatting();
+
+    const translucent=T.styleCreateToken({name:"Translucent brand",type:"color",value:"#12345680"});
+    assert.strictEqual(T.styleResolveToken(translucent.id).value,"#12345680",
+      "color tokens retain editable alpha rather than flattening the stored value");
+    const serviceClass=T.styleCreateClass({
+      name:"Styled service",appliesTo:["concept"],
+      properties:{
+        fill:{tokenId:translucent.id},textColor:{value:"#ffffff"},
+        borderWidth:{value:3},cornerRadius:{value:16},fontSize:{value:18}
+      }
+    });
+    T.styleApplyClass([styled],serviceClass.id);
+    let styleAppearance=T.styleResolveAppearance(styled);
+    assert.strictEqual(styleAppearance.values.fill,"#12345680",
+      "a class resolves through its referenced token");
+    assert.strictEqual(styleAppearance.values.cornerRadius,16,
+      "capability-aware classes resolve compatible geometry-adjacent appearance");
+    assert.strictEqual(styleAppearance.sources.fill.find(source => source.winning).source,"class",
+      "style provenance identifies the winning class and retains its token chain");
+    assert(styleAppearance.sources.fill.some(source => source.source === "token"),
+      "style provenance retains the named token behind a class value");
+    T.render();
+    assert.strictEqual(doc.querySelector('[data-node="style-node"] [data-node-shape]')
+      .getAttribute("fill"),"#8899aa",
+      "transparent token colors render as their opaque white-composited canvas representation");
+    assert.strictEqual(doc.querySelector('[data-node="style-node"] [data-node-shape]')
+      .getAttribute("rx"),"16","class corner radius reaches compatible SVG surfaces");
+    assert(T.serializedSvg(true).includes("#8899aa"),
+      "SVG export resolves class/token appearance even though the target has no style references");
+    assert.strictEqual(T.nodeTextSize(styled),18,"class font-size tokens participate in text layout");
+
+    const tokenId=translucent.id;
+    const impactPreview=T.styleUpdateToken(tokenId,{name:"Brand surface",value:"#abcdef"},{preview:true});
+    assert.strictEqual(impactPreview.after.id,tokenId,"renaming a token preserves its stable identity");
+    assert.strictEqual(impactPreview.impact.count,1,"token edits preview every transitive object consumer");
+    assert.strictEqual(T.styleResolveAppearance(styled).values.fill,"#12345680",
+      "a token preview does not mutate the document");
+    T.styleUpdateToken(tokenId,{name:"Brand surface",value:"#abcdef"},{render:false});
+    assert.strictEqual(T.styleResolveAppearance(styled).values.fill,"#abcdef",
+      "editing a token updates linked non-overridden consumers");
+
+    T.state.formatting=T.normalizeConditionalFormatting({schemaVersion:1,rules:[{
+      id:"style-rule",name:"Rule layer",enabled:true,target:"node",priority:10,
+      scope:{kind:"document"},condition:{op:"predicate",field:"title",comparator:"equals",
+        value:"Styled service"},actions:[{property:"fill",value:"#007873"}]
+    }],lenses:[]});
+    T.ensureConditionalFormatting();
+    assert.strictEqual(T.formattingResolveAppearance(styled).values.fill,"#007873",
+      "conditional rules resolve above classes in the shared cascade");
+    T.formattingSetManualValue(styled,"fill","#c20029");
+    assert.strictEqual(T.formattingResolveAppearance(styled).values.fill,"#c20029",
+      "an explicit object override remains the final cascade layer");
+    assert.strictEqual(T.formattingResolveAppearance(styled).sources.fill.find(source => source.winning).source,
+      "manual","the effective source explanation names the direct override");
+    T.formattingClearManualOverride(styled,"fill");
+    assert.strictEqual(T.formattingResolveAppearance(styled).values.fill,"#007873",
+      "clearing only the direct override reveals the rule without removing its class");
+    T.formattingDeleteRule("style-rule");
+    assert.strictEqual(T.formattingResolveAppearance(styled).values.fill,"#abcdef",
+      "removing the rule reveals the updated class/token value without destructive rewriting");
+
+    const tokenA=T.styleCreateToken({name:"Cycle A",type:"color",value:"#111111"});
+    const tokenB=T.styleCreateToken({name:"Cycle B",type:"color",value:"#222222"});
+    T.styleUpdateToken(tokenB.id,{ref:tokenA.id},{render:false});
+    const tokenCycle=T.styleUpdateToken(tokenA.id,{ref:tokenB.id},{render:false});
+    assert(tokenCycle.error && /cycle/i.test(tokenCycle.error),
+      "token-reference cycles are rejected with a readable trace");
+    const baseClass=T.styleCreateClass({name:"Base",appliesTo:["node"],
+      properties:{borderColor:{value:"#2456e6"}}});
+    const childClass=T.styleCreateClass({name:"Child",appliesTo:["node"],baseClassId:baseClass.id,
+      properties:{borderWidth:{value:4}}});
+    const classCycle=T.styleUpdateClass(baseClass.id,{baseClassId:childClass.id},{render:false});
+    assert(classCycle.error && /cycle/i.test(classCycle.error),
+      "single-inheritance class cycles are rejected");
+    const incompatible=T.styleUpdateClass(serviceClass.id,{
+      properties:{lineWidth:{tokenId:translucent.id}}
+    },{render:false});
+    assert(incompatible.error,"typed property contracts reject a color token assigned to link width");
+
+    const protectedDelete=T.styleDeleteToken(tokenId);
+    assert(protectedDelete.needsResolution,
+      "a consumed token cannot be deleted without replacement or localization");
+    const replacement=T.styleTokenById("token-color-primary");
+    T.styleDeleteToken(tokenId,{replacementId:replacement.id});
+    assert.strictEqual(T.styleClassById(serviceClass.id).properties.fill.tokenId,replacement.id,
+      "token replacement updates every definition reference without leaving a broken ID");
+    const beforeDetach=T.styleResolveAppearance(styled).values.fill;
+    T.styleDeleteClass(serviceClass.id,{detach:true});
+    assert(!styled.styleClassId && styled.color,
+      "detaching a consumed class converts its resolved appearance into an ordinary fallback");
+    assert.strictEqual(T.styleResolveAppearance(styled).values.fill,beforeDetach,
+      "class detachment preserves the visible appearance");
+    T.styleApplyClass([sibling],"class-primary-system");
+
+    const deterministicA=JSON.stringify(T.styleExportLibraryPackage());
+    const deterministicB=JSON.stringify(T.styleExportLibraryPackage());
+    assert.strictEqual(deterministicA,deterministicB,
+      "unchanged library packages serialize deterministically with stable checksums");
+    const libraryPackage=JSON.parse(deterministicA);
+    const primaryIncoming=libraryPackage.tokens.find(token => token.id === "token-color-primary");
+    primaryIncoming.value="#112233";
+    libraryPackage.manifest.version="1.1.0";
+    delete libraryPackage.manifest.checksum;
+    const importPreview=T.styleImportLibraryPackage(libraryPackage,{preview:true});
+    assert(importPreview.items.some(item => item.id === "token-color-primary" &&
+      ["compatible-update","divergent"].includes(item.conflict)),
+      "library update preview classifies stable-ID changes before import");
+    assert(importPreview.items.find(item => item.id === "token-color-primary").impact.count >= 1,
+      "library conflict previews include affected-object counts");
+    const importResult=T.styleImportLibraryPackage(libraryPackage,{
+      preview:false,strategy:"fork"
+    });
+    assert(importResult.forked.length > 0,
+      "divergent imported definitions can be forked without overwriting local definitions");
+    assert(T.state.styles.importedLibraries.some(item => item.manifest.version === "1.1.0" &&
+      item.embedded),"imported libraries are pinned and cached inside the offline document");
+
+    T.clearSelection();
+    T.state.nodes=[
+      {id:"component-a",type:"concept",x:0,y:0,title:"Input",color:"#CFE8FF"},
+      {id:"component-b",type:"concept",x:250,y:0,title:"Output",color:"#D8F3DC"},
+      {id:"component-outside",type:"concept",x:900,y:0,title:"Outside",color:"#FFE9A8"}
+    ];
+    T.state.edges=[{id:"component-link",from:"component-a",to:"component-b",
+      kind:"link",label:"Produces"}];
+    const component=T.styleCreateComponentFromSelection("Service pair",{
+      nodes:T.state.nodes.slice(0,2),edges:T.state.edges
+    });
+    assert.strictEqual(component.nodes.length,2,
+      "a node selection becomes one canonical component definition");
+    const inserted=T.styleInsertComponent(component.id,{x:400,y:300});
+    assert(inserted.nodeIds.length === 2 && inserted.edgeIds.length === 1,
+      "inserting a component creates a version-linked structural instance");
+    const instanceNode=T.state.nodes.find(node => node.id === inserted.nodeIds[0]);
+    T.state.edges.push({id:"component-external",from:instanceNode.id,to:"component-outside",
+      kind:"link",label:"References"});
+    T.state.nodes[0].title="Renamed input";
+    const definitionPreview=T.styleUpdateComponentFromSelection(component.id,{
+      nodes:T.state.nodes.slice(0,2),preview:true
+    });
+    assert(definitionPreview.impacts.some(impact => impact.changed.length > 0),
+      "component definition edits preview per-instance structural/property changes");
+    T.styleUpdateComponentFromSelection(component.id,{
+      nodes:T.state.nodes.slice(0,2),preview:false
+    });
+    const syncPreview=T.styleApplyComponentUpdate(component.id,{preview:true});
+    assert.strictEqual(syncPreview.summary.instances,2,
+      "component synchronization previews every linked instance");
+    T.formattingSetManualValue(instanceNode,"fill","#c20029");
+    T.styleApplyComponentUpdate(component.id,{preview:false});
+    assert.strictEqual(instanceNode.color,"#c20029",
+      "component synchronization preserves declared per-instance overrides");
+    assert(T.state.edges.some(item => item.id === "component-external"),
+      "component updates preserve links that connect outside the instance");
+    T.styleDetachComponentInstance(inserted.instanceId);
+    assert(!T.state.nodes.find(node => node.id === instanceNode.id).componentDefinitionId,
+      "detaching one component instance produces ordinary independent objects");
+    assert(T.styleComponentById(component.id),
+      "detaching one instance leaves the canonical definition available to other instances");
+
+    T.clearSelection();
+    T.state.nodes=[
+      {id:"component-table-a",type:"table",x:0,y:0,title:"source_table",color:"#2456E6",
+        fields:[{id:"source-field",name:"source_id",type:"INT",pk:true,nullable:false}]},
+      {id:"component-table-b",type:"table",x:360,y:0,title:"target_table",color:"#007873",
+        fields:[{id:"target-field",name:"target_id",type:"INT",pk:true,nullable:false}]}
+    ];
+    T.state.edges=[{id:"component-table-link",from:"component-table-a",to:"component-table-b",
+      fromField:"source-field",toField:"target-field",kind:"1:N",label:"Produces"}];
+    const tableComponent=T.styleCreateComponentFromSelection("Linked tables",{
+      nodes:T.state.nodes,edges:T.state.edges
+    });
+    const firstTableInstance=T.styleInsertComponent(tableComponent.id,{x:0,y:400});
+    const secondTableInstance=T.styleInsertComponent(tableComponent.id,{x:900,y:400});
+    const firstTable=T.state.nodes.find(node => node.id === firstTableInstance.nodeIds[0]);
+    const secondTable=T.state.nodes.find(node => node.id === secondTableInstance.nodeIds[0]);
+    const firstTableEdge=T.state.edges.find(edge => edge.id === firstTableInstance.edgeIds[0]);
+    const originalRuntimeFieldId=firstTable.fields[0].id;
+    assert.notStrictEqual(firstTable.fields[0].id,secondTable.fields[0].id,
+      "table component instances receive unique runtime row IDs");
+    assert.strictEqual(firstTableEdge.fromField,firstTable.fields[0].id,
+      "component row bindings are remapped to each instance's runtime IDs");
+    assert.strictEqual(T.styleComponentDiff(tableComponent,firstTableInstance.instanceId).changed.length,0,
+      "runtime row IDs do not create false component-update differences");
+    T.state.nodes[0].fields[0].name="renamed_source_id";
+    T.state.nodes[0].fields.push({id:"source-added",name:"created_at",type:"TIMESTAMP",nullable:false});
+    T.styleUpdateComponentFromSelection(tableComponent.id,{
+      nodes:T.state.nodes.slice(0,2),preview:false
+    });
+    T.styleApplyComponentUpdate(tableComponent.id,{preview:false});
+    assert.strictEqual(firstTable.fields[0].id,originalRuntimeFieldId,
+      "component updates preserve stable instance row IDs");
+    assert.strictEqual(firstTableEdge.fromField,originalRuntimeFieldId,
+      "component updates preserve links bound to an existing table row");
+    assert.notStrictEqual(firstTable.fields[1].id,T.state.nodes[0].fields[1].id,
+      "new definition rows receive fresh runtime IDs in linked instances");
+    assert.notStrictEqual(firstTable.fields[1].id,secondTable.fields[1].id,
+      "new definition rows remain unique across multiple instances");
+    firstTable.fields[0].name="local_source_id";
+    T.styleMarkComponentOverride(firstTable,"fields",true);
+    T.state.nodes[0].fields[0].name="canonical_source_id";
+    T.styleUpdateComponentFromSelection(tableComponent.id,{
+      nodes:T.state.nodes.slice(0,2),preview:false
+    });
+    const tableSyncPreview=T.styleApplyComponentUpdate(tableComponent.id,{preview:true});
+    assert(tableSyncPreview.diffs.find(diff => diff.instanceId === firstTableInstance.instanceId)
+      .overrideConflicts.some(conflict => conflict.fields.includes("fields")),
+      "component update preview reports table-content override conflicts");
+    T.styleApplyComponentUpdate(tableComponent.id,{preview:false});
+    assert.strictEqual(firstTable.fields[0].name,"local_source_id",
+      "component synchronization preserves deliberate per-instance table edits");
+    assert.strictEqual(firstTableEdge.fromField,originalRuntimeFieldId,
+      "preserved table overrides keep their internal link binding");
+
+    const template=T.styleTemplateById("template-project-kickoff");
+    const invalidTemplate=T.stylePreviewTemplate(template.id,{project:""});
+    assert(!invalidTemplate.valid && invalidTemplate.errors[0].id === "project",
+      "typed template variables block invalid required input with a field-level explanation");
+    const beforeTemplateCount=T.state.nodes.length;
+    const templateResult=T.styleInstantiateTemplate(template.id,{
+      project:"Atlas",environment:"Pilot",owner:"Platform"
+    },{x:0,y:700});
+    assert(templateResult.valid && templateResult.nodeIds.length === 4 &&
+      T.state.nodes.length === beforeTemplateCount+4,
+      "valid template input creates ordinary editable nodes and links");
+    assert(T.state.nodes.find(node => node.id === templateResult.nodeIds[0])
+      .templateOrigin.version === template.version,
+      "template instances retain non-destructive source/version provenance");
+
+    const serializedOne=T.serializeDocument();
+    const serializedTwo=T.serializeDocument();
+    assert.strictEqual(serializedOne,serializedTwo,
+      "style definitions and references retain deterministic document ordering");
+    const parsed=JSON.parse(serializedOne);
+    assert.strictEqual(parsed.styles.schemaVersion,1,
+      "document serialization stores definitions once at the document level");
+    const future=T.normalizeStyleSystem({schemaVersion:99,tokens:[{id:"future"}]});
+    assert.strictEqual(future.futurePayload.schemaVersion,99,
+      "newer style payloads remain recoverable rather than executing or discarding them");
+
+    T.openStyleManager("classes",{id:baseClass.id});
+    assert.strictEqual(T.styleManagerOpen,true,"the dedicated style manager opens from the model surface");
+    assert(doc.getElementById("styleManager").classList.contains("open") &&
+      doc.getElementById("styleManager").hidden === false,
+      "the style manager enters the shared visible modal state");
+    assert.strictEqual(doc.querySelectorAll("#styleManager [data-style-manager-mode]").length,5,
+      "the manager separates tokens, classes, components, templates, and libraries");
+    assert(doc.querySelector(".style-manager-editor-pane .style-manager-editor"),
+      "the style manager provides an editable keyboard-native definition surface");
+    T.closeStyleManager();
+    T.openStyleManager("libraries");
+    assert.match(doc.getElementById("styleManagerStatus").textContent,/document library/,
+      "library mode reports library status rather than stale definition counts");
+    T.closeStyleManager();
+
+    T.importDocText(JSON.stringify({version:1,nextId:2,edges:[],nodes:[
+      {id:"legacy-style",type:"concept",x:0,y:0,title:"Legacy",color:"#f4d8f0",
+        fontColor:"#33475c",fontSize:21}
+    ]}));
+    const legacy=T.state.nodes[0];
+    assert.strictEqual(legacy.color,"#f4d8f0","legacy direct fill survives style-system migration exactly");
+    assert.strictEqual(legacy.fontColor,"#33475c","legacy direct text color survives migration exactly");
+    assert(!legacy.styleClassId && !legacy.styleTokenRefs,
+      "legacy objects are not silently converted into reusable definitions");
+    window.close();
+  }
+
+  /* SCH-120 scale fixture: 10k consumers, 100 tokens, and 100 classes. */
+  {
+    const { window } = makeDom();
+    const T=window.__T;
+    const tokens=Array.from({length:100},(_,index) => ({
+      id:`scale-token-${index}`,name:`Scale token ${index}`,type:"color",
+      value:`#${(0x100000+index*997).toString(16).slice(-6)}`
+    }));
+    const classes=Array.from({length:100},(_,index) => ({
+      id:`scale-class-${index}`,name:`Scale class ${index}`,appliesTo:["concept"],
+      properties:{fill:{tokenId:`scale-token-${index}`},borderWidth:{value:index%4+1}}
+    }));
+    T.state.styles=T.normalizeStyleSystem({schemaVersion:1,
+      library:{id:"scale-library",name:"Scale",version:"1.0.0"},
+      tokens,classes,components:[],templates:[],importedLibraries:[]});
+    T.state.nodes=Array.from({length:10000},(_,index) => ({
+      id:`style-scale-${index}`,type:"concept",x:0,y:0,title:`Object ${index}`,
+      color:"#CFE8FF",styleClassId:`scale-class-${index%100}`
+    }));
+    T.state.edges=[]; T.ensureStyleSystem();
+    const impactStart=performance.now();
+    const impact=T.styleDefinitionImpact("token","scale-token-7");
+    const impactMs=performance.now()-impactStart;
+    assert.strictEqual(impact.count,100,
+      "dependency indexing finds exactly the consumers of one token at 10k-object scale");
+    assert(impactMs < 1000,`10k style impact analysis stays bounded (${impactMs.toFixed(1)}ms)`);
+    const resolveStart=performance.now();
+    for (const node of T.state.nodes) T.styleResolveAppearance(node);
+    const resolveMs=performance.now()-resolveStart;
+    assert(resolveMs < 5000,
+      `10k class/token resolutions remain interactive (${resolveMs.toFixed(1)}ms)`);
+    const warmStart=performance.now();
+    for (const node of T.state.nodes) T.styleResolveAppearance(node);
+    const warmMs=performance.now()-warmStart;
+    assert(warmMs < 500,
+      `warm style resolution reuses runtime caches (${warmMs.toFixed(1)}ms)`);
+    const cachedBefore=T.styleStats.cacheHits;
+    const updateStart=performance.now();
+    T.styleUpdateToken("scale-token-7",{value:"#c20029"},{render:false});
+    const updateMs=performance.now()-updateStart;
+    assert(updateMs < 1000,`one token edit invalidates only linked consumers (${updateMs.toFixed(1)}ms)`);
+    assert(T.styleStats.targetedInvalidations > 0 && T.styleStats.cacheHits >= cachedBefore,
+      "token edits use targeted runtime invalidation without serializing caches");
+    assert.strictEqual(T.styleResolveAppearance(T.state.nodes[7]).values.fill,"#c20029",
+      "a targeted token edit updates an affected object");
+    assert.strictEqual(T.styleResolveAppearance(T.state.nodes[8]).values.fill,
+      tokens[8].value.toLowerCase(),"a targeted token edit leaves unrelated consumers unchanged");
+    T.state.nodes=[]; window.close();
   }
 
   /* SCH-119 — typed conditional formatting, lenses, semantic zoom, and explainability */

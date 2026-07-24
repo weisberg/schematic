@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.43.2";
+const APP_VERSION = "v1.44.0";
 const DEFAULT_GRID_SIZE = 24;
 const GRID_SNAP = DEFAULT_GRID_SIZE;   // legacy/default spacing; editing settings may override it
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
@@ -533,6 +533,7 @@ function applyTheme(next, opts = {}){
   const changed = docTheme !== normalized;
   docTheme = normalized;
   updateThemeControls();
+  if (changed && typeof styleInvalidateAll === "function") styleInvalidateAll("theme");
   if (opts.render) render();
   if (opts.dirty && changed) setDocDirty(true);
 }
@@ -714,6 +715,8 @@ function snapshot(){ return JSON.stringify({
     ? cleanOrganizationForDocument(state.organization) : state.organization,
   metadata:typeof cleanMetadataForDocument === "function"
     ? cleanMetadataForDocument(state.metadata) : state.metadata,
+  styles:typeof cleanStyleSystemForDocument === "function"
+    ? cleanStyleSystemForDocument(state.styles) : state.styles,
   formatting:typeof cleanConditionalFormattingForDocument === "function"
     ? cleanConditionalFormattingForDocument(state.formatting) : state.formatting,
   meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}
@@ -745,6 +748,8 @@ function restore(json){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = s.metadata;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  state.styles = s.styles;
+  if (typeof ensureStyleSystem === "function") ensureStyleSystem();
   state.formatting = s.formatting;
   if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
   setCustomStatuses(s.meta ? s.meta.customStatuses : []);
@@ -830,7 +835,9 @@ function cleanEdgeForDocument(e){
     const color = normalizeColorValue(out[key]);
     if (color) out[key] = color; else delete out[key];
   }
-  const lineWidth = edgeLineWidth(out);
+  const rawLineWidth=Number(out.lineWidth);
+  const lineWidth=Number.isFinite(rawLineWidth)
+    ? Math.min(8,Math.max(1,rawLineWidth)) : 1.7;
   if (lineWidth === 1.7) delete out.lineWidth; else out.lineWidth = lineWidth;
   if (!["solid","dash","dot"].includes(out.lineStyle) ||
       out.lineStyle === (out.kind === "link" ? "dash" : "solid")) delete out.lineStyle;
@@ -876,7 +883,7 @@ function cleanNodeForDocument(n){
     out.color = normalizeColorValue(out.color) || CONCEPT_COLORS[1];
     const fontColor = normalizeColorValue(out.fontColor);
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
-    out.fontSize = textBoxFont(out);
+    out.fontSize = typeof rawTextBoxFont === "function" ? rawTextBoxFont(out) : textBoxFont(out);
     out.w = out.manualWidth === true
       ? clampSize(out.w, TEXT_W_MIN, 4000)
       : clampSize(out.w || TEXT_W_DEFAULT, 80, 720);
@@ -895,7 +902,8 @@ function cleanNodeForDocument(n){
     out.color = normalizeColorValue(out.color) || CONCEPT_COLORS[1];
     const fontColor = normalizeColorValue(out.fontColor);
     if (fontColor) out.fontColor = fontColor; else delete out.fontColor;
-    out.fontSize = statusNodeFont(out);
+    out.fontSize = typeof rawStatusNodeFont === "function"
+      ? rawStatusNodeFont(out) : statusNodeFont(out);
     out.w = out.manualWidth === true
       ? clampSize(out.w, 80, 4000)
       : clampSize(out.w || STATUS_W_DEFAULT, 180, 720);
@@ -943,6 +951,8 @@ function documentObject(opts = {}){
     const editing = cleanEditingForDocument(state.editing);
     if (editing) d.editing = editing;
   }
+  if (typeof cleanStyleSystemForDocument === "function")
+    d.styles = cleanStyleSystemForDocument(state.styles);
   if (typeof cleanConditionalFormattingForDocument === "function"){
     const formatting = cleanConditionalFormattingForDocument(state.formatting);
     if (formatting) d.formatting = formatting;
@@ -989,6 +999,7 @@ function migrateDocument(d){
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
   if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
   if (out.editing && typeof out.editing === "object") result.editing = out.editing;
+  if (out.styles && typeof out.styles === "object") result.styles = out.styles;
   if (out.formatting && typeof out.formatting === "object") result.formatting = out.formatting;
   if (out.history && typeof out.history === "object") result.history = out.history;
   return result;
@@ -1006,6 +1017,8 @@ function applyDocument(d, opts = {}){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = migrated.metadata;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  state.styles = migrated.styles;
+  if (typeof ensureStyleSystem === "function") ensureStyleSystem();
   state.formatting = migrated.formatting;
   if (typeof ensureConditionalFormatting === "function") ensureConditionalFormatting();
   setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
@@ -1051,7 +1064,7 @@ function applyDocument(d, opts = {}){
       n.color = normalizeColorValue(n.color) || CONCEPT_COLORS[1];
       const fontColor = normalizeColorValue(n.fontColor);
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
-      n.fontSize = textBoxFont(n);
+      n.fontSize = typeof rawTextBoxFont === "function" ? rawTextBoxFont(n) : textBoxFont(n);
       n.w = n.manualWidth === true
         ? clampSize(n.w, TEXT_W_MIN, 4000)
         : clampSize(Number(n.w) || TEXT_W_DEFAULT, 80, 720);
@@ -1066,7 +1079,8 @@ function applyDocument(d, opts = {}){
       n.color = normalizeColorValue(n.color) || CONCEPT_COLORS[1];
       const fontColor = normalizeColorValue(n.fontColor);
       if (fontColor) n.fontColor = fontColor; else delete n.fontColor;
-      n.fontSize = statusNodeFont(n);
+      n.fontSize = typeof rawStatusNodeFont === "function"
+        ? rawStatusNodeFont(n) : statusNodeFont(n);
       n.w = n.manualWidth === true
         ? clampSize(n.w, 80, 4000)
         : clampSize(Number(n.w) || STATUS_W_DEFAULT, 180, 720);

@@ -51,6 +51,8 @@ const FORMATTING_ZOOM_TIERS = [
 const FORMATTING_MANUAL_FIELDS = {
   fill:"color", textColor:"fontColor", borderColor:"borderColor", borderWidth:"borderWidth",
   borderStyle:"borderStyle", fontWeight:"fontWeight", opacity:"opacity",
+  fontFamily:"fontFamily", fontSize:"fontSize", lineHeight:"lineHeight",
+  cornerRadius:"cornerRadius", spacing:"spacing", iconSize:"iconSize",
   strikeThrough:"strikeThrough", icon:"icon", badge:"badge", badgeColor:"badgeColor",
   lineColor:"lineColor", lineWidth:"lineWidth", lineStyle:"lineStyle",
   labelTextColor:"labelTextColor", labelBackgroundColor:"labelBackgroundColor",
@@ -573,6 +575,7 @@ function formattingRuleEvaluation(rule,object){
     reason:evaluation.result === true ? "Matched" : evaluation.result == null ? "Unknown" : "Did not match"};
 }
 function formattingBaseValues(object){
+  if (typeof styleRawBaseValues === "function") return styleRawBaseValues(object);
   const kind = formattingObjectKind(object);
   const t = themeColors();
   if (kind === "edge") return {
@@ -611,7 +614,9 @@ function formattingValueFromObject(object,property,base){
 }
 function formattingResolveAppearance(object,opts = {}){
   ensureConditionalFormatting();
-  const base = formattingBaseValues(object);
+  const styleAppearance = typeof styleResolveAppearance === "function"
+    ? styleResolveAppearance(object) : null;
+  const base = styleAppearance ? {...styleAppearance.values} : formattingBaseValues(object);
   const manual = formattingManualOverrides(object);
   const lens = !opts.rules ? formattingLensById(formattingActiveLensId) : null;
   const sourceRules = opts.rules || (lens && lens.ruleIds.length
@@ -624,8 +629,9 @@ function formattingResolveAppearance(object,opts = {}){
     return formattingCache.get(cacheKey);
   }
   const values = {...base};
-  const sources = Object.fromEntries(Object.entries(base).map(([property,value]) =>
-    [property,[{source:"base",label:"Object or product default",value:formattingClone(value),winning:true}]]));
+  const sources = styleAppearance ? formattingClone(styleAppearance.sources) :
+    Object.fromEntries(Object.entries(base).map(([property,value]) =>
+      [property,[{source:"base",label:"Object or product default",value:formattingClone(value),winning:true}]]));
   const matches = [];
   const assigned = new Map();
   const conflicts = [];
@@ -710,6 +716,8 @@ function formattingSetManualValue(object,property,value){
   const field = FORMATTING_MANUAL_FIELDS[property];
   if (!object || !field) return false;
   object[field] = value;
+  if (typeof styleMarkComponentOverride === "function")
+    styleMarkComponentOverride(object,field,true);
   formattingMarkManualOverride(object,property,true);
   return true;
 }
@@ -728,6 +736,15 @@ function formattingInvalidateObject(id,reason = ""){
   formattingLensCache = {key:"",matches:new Set()};
   formattingStats.incrementalInvalidations++;
   return {id,reason};
+}
+function formattingInvalidateAppearanceIds(ids){
+  const wanted=new Set(Array.isArray(ids) ? ids : [ids]);
+  for (const key of formattingCache.keys()){
+    const objectId=key.slice(0,key.indexOf(":"));
+    if (wanted.has(objectId)) formattingCache.delete(key);
+  }
+  formattingStats.incrementalInvalidations++;
+  return wanted.size;
 }
 function formattingInvalidateAll(){
   formattingRuleRevision++;
@@ -1001,9 +1018,23 @@ function formattingDecorateGroup(group,object,appearance = formattingResolveAppe
     group.classList.add("formatting-preview-match");
     group.dataset.formattingPreview = "match";
   }
+  const hasResolvedSource = property => appearance.sources[property]?.some(source =>
+    source.source !== "base" && source.winning);
+  if (hasResolvedSource("fontFamily"))
+    for (const text of group.querySelectorAll("text"))
+      text.setAttribute("font-family",values.fontFamily);
+  if (hasResolvedSource("fontWeight"))
+    for (const text of group.querySelectorAll("text"))
+      text.setAttribute("font-weight",values.fontWeight);
+  if (formattingObjectKind(object) === "edge" && hasResolvedSource("fontSize"))
+    for (const text of group.querySelectorAll("text"))
+      text.setAttribute("font-size",values.fontSize);
+  if (values.lineHeight != null) group.dataset.styleLineHeight=String(values.lineHeight);
+  if (values.spacing != null) group.dataset.styleSpacing=String(values.spacing);
   if (formattingObjectKind(object) === "node"){
     const fillTargets = group.querySelectorAll("[data-node-fill],[data-node-shape]," +
-      "[data-text-shape-surface],[data-status-surface],[data-note-surface]");
+      "[data-text-shape-surface],[data-status-surface],[data-note-surface]," +
+      "[data-frame-surface],[data-swimlane-body]");
     if (appearance.sources.fill?.some(source => source.source !== "base" && source.winning))
       for (const surface of fillTargets)
         surface.setAttribute("fill",formattingCanvasColor(values.fill));
@@ -1025,8 +1056,13 @@ function formattingDecorateGroup(group,object,appearance = formattingResolveAppe
     if (appearance.sources.textColor?.some(source => source.source !== "base" && source.winning))
       for (const text of group.querySelectorAll("text"))
         text.setAttribute("fill",formattingCanvasColor(values.textColor));
-    if (appearance.sources.fontWeight?.some(source => source.source !== "base" && source.winning))
-      for (const text of group.querySelectorAll("text")) text.setAttribute("font-weight",values.fontWeight);
+    if (hasResolvedSource("cornerRadius"))
+      for (const surface of group.querySelectorAll("rect[data-node-shape],rect[data-node-outline]," +
+        "rect[data-text-shape-surface],rect[data-status-surface],rect[data-note-surface]," +
+        "rect[data-frame-surface],rect[data-swimlane-body]")){
+        surface.setAttribute("rx",Math.max(0,Number(values.cornerRadius)||0));
+        surface.setAttribute("ry",Math.max(0,Number(values.cornerRadius)||0));
+      }
     if (values.strikeThrough)
       for (const text of group.querySelectorAll("text")) text.setAttribute("text-decoration","line-through");
     const hasConditionalBadge = ["badge","icon"].some(property =>

@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.43.2">
+<link rel="stylesheet" href="styles.css?v=1.44.0">
 </head>
 <body>
 <noscript>
@@ -415,6 +415,39 @@
   </div>
 </div>
 
+<div class="modal style-manager-modal" id="styleManager" hidden role="dialog" aria-modal="true"
+     aria-labelledby="styleManagerTitle">
+  <div class="card style-manager-card">
+    <header class="style-manager-head">
+      <div>
+        <span class="object-explorer-kicker">Reusable visual language</span>
+        <h3 id="styleManagerTitle">Styles and libraries</h3>
+      </div>
+      <div class="style-manager-tabs" role="tablist" aria-label="Style tools">
+        <button type="button" role="tab" data-style-manager-mode="tokens"
+                aria-controls="styleManagerBody" aria-selected="true">Tokens</button>
+        <button type="button" role="tab" data-style-manager-mode="classes"
+                aria-controls="styleManagerBody" aria-selected="false">Classes</button>
+        <button type="button" role="tab" data-style-manager-mode="components"
+                aria-controls="styleManagerBody" aria-selected="false">Components</button>
+        <button type="button" role="tab" data-style-manager-mode="templates"
+                aria-controls="styleManagerBody" aria-selected="false">Templates</button>
+        <button type="button" role="tab" data-style-manager-mode="libraries"
+                aria-controls="styleManagerBody" aria-selected="false">Libraries</button>
+      </div>
+      <div class="style-manager-head-actions">
+        <button id="btnStyleManagerCreate" type="button" class="primary">New token</button>
+        <button id="btnCloseStyleManager" type="button" aria-label="Close style manager">×</button>
+      </div>
+    </header>
+    <div id="styleManagerBody" class="style-manager-body" role="tabpanel" tabindex="0"></div>
+    <footer class="style-manager-footer">
+      <span id="styleManagerStatus" role="status"></span>
+      <span>Default → token → class → conditional rule → direct override</span>
+    </footer>
+  </div>
+</div>
+
 <div class="modal history-modal" id="historyPanel" hidden role="dialog" aria-modal="true"
      aria-labelledby="historyPanelTitle">
   <div class="card history-card">
@@ -539,22 +572,23 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.43.2"></script>
-<script src="js/icon-catalog.js?v=1.43.2"></script>
-<script src="js/geometry.js?v=1.43.2"></script>
-<script src="js/render.js?v=1.43.2"></script>
-<script src="js/model.js?v=1.43.2"></script>
-<script src="js/interactions.js?v=1.43.2"></script>
-<script src="js/inspector.js?v=1.43.2"></script>
-<script src="js/io.js?v=1.43.2"></script>
-<script src="js/search.js?v=1.43.2"></script>
-<script src="js/organization.js?v=1.43.2"></script>
-<script src="js/metadata.js?v=1.43.2"></script>
-<script src="js/conditional-formatting.js?v=1.43.2"></script>
-<script src="js/editing.js?v=1.43.2"></script>
-<script src="js/history.js?v=1.43.2"></script>
-<script src="js/commands.js?v=1.43.2"></script>
-<script src="js/context-menu.js?v=1.43.2"></script>
-<script src="js/bootstrap.js?v=1.43.2"></script>
+<script src="js/core.js?v=1.44.0"></script>
+<script src="js/icon-catalog.js?v=1.44.0"></script>
+<script src="js/geometry.js?v=1.44.0"></script>
+<script src="js/render.js?v=1.44.0"></script>
+<script src="js/model.js?v=1.44.0"></script>
+<script src="js/interactions.js?v=1.44.0"></script>
+<script src="js/inspector.js?v=1.44.0"></script>
+<script src="js/io.js?v=1.44.0"></script>
+<script src="js/search.js?v=1.44.0"></script>
+<script src="js/organization.js?v=1.44.0"></script>
+<script src="js/metadata.js?v=1.44.0"></script>
+<script src="js/style-system.js?v=1.44.0"></script>
+<script src="js/conditional-formatting.js?v=1.44.0"></script>
+<script src="js/editing.js?v=1.44.0"></script>
+<script src="js/history.js?v=1.44.0"></script>
+<script src="js/commands.js?v=1.44.0"></script>
+<script src="js/context-menu.js?v=1.44.0"></script>
+<script src="js/bootstrap.js?v=1.44.0"></script>
 </body>
 </html>
