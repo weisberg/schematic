@@ -36,7 +36,18 @@ function makeDom({ fsa = false, storageThrows = false, storageSeed = null } = {}
   window.HTMLCanvasElement.prototype.getContext = () => ({
     measureText: text => ({ width: String(text).length * 7 }),
     fillRect(){},
-    drawImage(){}
+    clearRect(){},
+    drawImage(){},
+    setTransform(){},
+    beginPath(){},
+    moveTo(){},
+    lineTo(){},
+    fillText(){},
+    save(){},
+    translate(){},
+    rotate(){},
+    restore(){},
+    stroke(){}
   });
   window.SVGElement.prototype.getBoundingClientRect = function getBoundingClientRect(){
     if (this.id === "minimap") return { left: 0, top: 0, width: 120, height: 90, right: 120, bottom: 90 };
@@ -145,7 +156,7 @@ if (process.argv.includes("--api-surface")){
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
     "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
-    "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
+    "js/editing.js", "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -1217,9 +1228,9 @@ if (process.argv.includes("--api-surface")){
     group = doc.querySelector('[data-node="moving"]');
     firePointer(window, group, "pointerdown", {clientX:45, clientY:305});
     firePointer(window, board, "pointermove", {clientX:251, clientY:139});
-    assert.strictEqual(movingNode.x, 240, "persistent grid snapping takes precedence over object guides");
-    assert(!doc.querySelector("[data-align-guide-x], [data-align-guide-y]"),
-      "persistent grid mode suppresses object guides");
+    assert.strictEqual(movingNode.x, 250, "smart object guides take precedence over persistent grid snapping");
+    assert(doc.querySelector("[data-align-guide-x]"),
+      "persistent grid mode still surfaces the higher-priority winning object guide");
     firePointer(window, board, "pointerup", {clientX:251, clientY:139});
   }
 
@@ -2045,7 +2056,8 @@ if (process.argv.includes("--api-surface")){
     T.openShortcutModal();
     const text = window.document.querySelector(".shortcut-modal").textContent;
     for (const s of T.SHORTCUTS)
-      assert(text.includes(s.keys), `shortcut modal includes ${s.keys}`);
+      assert(text.includes(T.editingDisplayShortcut(s.keys)),
+        `shortcut modal includes the platform display for ${s.keys}`);
     window.dispatchEvent(new window.KeyboardEvent("keydown", { key:"?", bubbles:true }));
     assert(window.document.querySelector(".shortcut-modal"), "? opens the shortcut modal");
   }
@@ -3396,8 +3408,8 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Create", "Layout", "View", "Organize", "Model data"],
-      "canvas menu groups creation, layout, view, organization, and model-data actions");
+      ["Create", "Layout", "Selection", "View", "Organize", "Model data"],
+      "canvas menu groups creation, layout, selection, view, organization, and model-data actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
     assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
@@ -3429,7 +3441,8 @@ if (process.argv.includes("--api-surface")){
       "add-horizontal-lane", "add-vertical-lane"], "canvas menu exposes every primitive");
     sameList([...menu.querySelectorAll('[data-ctx-group="canvas:layout"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action")),
-      ["layout-tree", "layout-schema", "cleanup-grid", "toggle-snap"],
+      ["layout-tree", "layout-schema", "cleanup-grid", "toggle-snap", "layout-preview",
+       "guide-manager", "toggle-rulers", "clear-guides"],
       "canvas menu reuses every layout action");
     sameList([...menu.querySelectorAll('[data-ctx-group="canvas:view"] [data-ctx-action]')]
       .map(button => button.getAttribute("data-ctx-action")),
@@ -5075,6 +5088,7 @@ if (process.argv.includes("--api-surface")){
 
     // Future domain packs can contribute a command without editing ribbon markup.
     let extensionRuns = 0;
+    let extensionEnabled = false;
     T.registerCommand({
       id:"test.inspect",
       label:"Inspect extension",
@@ -5083,11 +5097,18 @@ if (process.argv.includes("--api-surface")){
       owner:"test-extension",
       scope:"application",
       ribbon:{tab:"model", group:"Extension tools"},
+      enabled:() => extensionEnabled,
       action:() => { extensionRuns++; }
     });
     const extensionButton = doc.querySelector('[data-command="test.inspect"]');
     assert(extensionButton && extensionButton.closest('[data-command-contribution-group="Extension tools"]'),
       "registered extensions create their declared ribbon group dynamically");
+    assert.strictEqual(extensionButton.getAttribute("aria-disabled"), "true",
+      "a contributed ribbon command reflects its initial disabled state");
+    extensionEnabled = true;
+    T.updateCommandStates();
+    assert.strictEqual(extensionButton.getAttribute("aria-disabled"), "false",
+      "shared command-state refreshes include dynamically contributed ribbon controls");
     extensionButton.click();
     assert.strictEqual(extensionRuns, 1, "a contributed ribbon command executes once");
     assert.strictEqual(T.unregisterCommandsByOwner("test-extension"), 1,
@@ -5360,11 +5381,11 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Organization","Metadata","Basics","Link ports","Appearance","Notes"],
+      ["Organization","Metadata","Transform & layout","Basics","Link ports","Appearance","Notes"],
       "concept inspector groups controls by task");
-    assert(!sections[0].open && !sections[1].open && sections[2].open && !sections[3].open &&
-      sections[4].open && !sections[5].open,
-      "primary inspector sections start open while organization, metadata, link ports, and notes stay compact");
+    assert(!sections[0].open && !sections[1].open && !sections[2].open && sections[3].open &&
+      !sections[4].open && sections[5].open && !sections[6].open,
+      "primary inspector sections start open while organization, metadata, transforms, link ports, and notes stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
     appearance.dispatchEvent(new window.Event("toggle"));
@@ -5415,7 +5436,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Actions"],
+      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Style transfer","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5439,7 +5460,7 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Actions"],
+      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Style transfer","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -5490,10 +5511,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Organization","Metadata","Basics","Appearance","Size"],
-      n1:["Organization","Metadata","Basics","Content","Appearance"],
-      d1:["Organization","Metadata","Basics","Appearance","Notes","Items"],
-      t1:["Organization","Metadata","Basics","Appearance","Notes","Fields"]
+      f1:["Organization","Metadata","Transform & layout","Basics","Appearance","Size"],
+      n1:["Organization","Metadata","Transform & layout","Basics","Content","Appearance"],
+      d1:["Organization","Metadata","Transform & layout","Basics","Appearance","Notes","Items"],
+      t1:["Organization","Metadata","Transform & layout","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -5843,6 +5864,463 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(T.searchPanelOpen(), false, "Escape closes the search panel");
     assert.deepStrictEqual(T.selectionIds("node"), selectionBeforeClose,
       "closing search with Escape preserves the result selection");
+  }
+
+  /* SCH-117 / issue #83 — editing fundamentals: geometry, transforms, and style transfer. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1,nextId:30,nodes:[
+      {id:"text-a",type:"text",x:40,y:40,title:"A long title that must continue to wrap without losing any source text",
+       color:"#CFE8FF",fontColor:"#16232F",fontSize:18,shape:"rectangle",
+       manualWidth:true,w:280,manualHeight:true,h:80,properties:{risk:"high"}},
+      {id:"text-b",type:"text",x:380,y:40,title:"Second wrapped title",color:"#FFE9A8",
+       fontSize:14,manualWidth:true,w:180,manualHeight:true,h:120},
+      {id:"locked-frame",type:"frame",x:900,y:700,title:"Locked reference",color:"#DDE6EF",w:260,h:180,locked:true},
+      {id:"ports",type:"concept",x:80,y:300,title:"Port-aware transform",subtitle:"Readable subtitle",
+       icon:"emoji:⚙️",color:"#007873",fontColor:"#FFFFFF",fontSize:17,shape:"process",
+       manualWidth:true,w:260,manualHeight:true,h:150,portsEnabled:true,
+       inputPorts:[{id:"events",label:"Events"},{id:"policy",label:"Policy"}],
+       outputPorts:[{id:"result",label:"Result"}]},
+      {id:"sink",type:"concept",x:520,y:320,title:"Sink",notes:"",color:"#CFE8FF"},
+      {id:"status",type:"status",x:80,y:520,title:"A very long status title that remains intact",
+       subtitle:"Secondary status explanation",status:"Blocked",statusSide:"right",
+       color:"#FFE9A8",fontSize:18,manualWidth:true,w:250,manualHeight:true,h:60},
+      {id:"note",type:"note",x:420,y:520,title:"Evidence",content:"# Heading\\n\\nParagraph one\\n\\n- item one\\n- item two",
+       color:"#FFE9A8",fontSize:13,manualWidth:true,w:240,manualHeight:true,h:70}
+    ],edges:[
+      {id:"port-edge",from:"ports",to:"sink",fromPort:"result",kind:"link",label:"Produces"},
+      {id:"default-edge",from:"text-a",to:"sink",kind:"link",label:""},
+      {id:"styled-edge",from:"text-b",to:"sink",kind:"link",label:"Styled",
+       lineColor:"#C20029",lineWidth:5,lineStyle:"dot",startArrow:true,endArrow:true,
+       labelTextColor:"#FFFFFF",labelBackgroundColor:"#16232F"}
+    ]}));
+    T.invalidateOrganizationEvaluation();
+
+    T.setSelection("node",["text-a","text-b","locked-frame"]);
+    const beforeHeightUndo = T.undoDepth;
+    const frameBefore = {...T.nodeVisualRect(T.state.nodes.find(node => node.id === "locked-frame"))};
+    assert(T.executeCommand("heightAverage"),
+      "mixed selections apply height matching to the unlocked compatible subset");
+    assert.strictEqual(T.undoDepth,beforeHeightUndo+1,
+      "height matching creates exactly one history entry");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-a").h,100,
+      "average height uses immutable pre-operation measurements and documented rounding");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-b").h,100,
+      "average height applies the same target to every compatible object");
+    sameList(T.nodeVisualRect(T.state.nodes.find(node => node.id === "locked-frame")),frameBefore,
+      "locked unsupported objects remain untouched");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-a").title,
+      "A long title that must continue to wrap without losing any source text",
+      "geometry operations never truncate source text");
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-a").h,80,
+      "one undo restores every matched height");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-b").h,120,
+      "one undo restores the complete mixed selection");
+    T.redo();
+
+    T.setSelection("node",["text-a","text-b"]);
+    const beforeSizeUndo = T.undoDepth;
+    const sizeResult = T.matchSelectionSizes("average");
+    sameList(sizeResult,{width:230,height:100,changed:["text-a","text-b"],skipped:[]},
+      "complete-size matching reports its deterministic target and affected IDs");
+    assert.strictEqual(T.undoDepth,beforeSizeUndo+1,
+      "full-size matching is one transaction");
+    assert(T.textBoxLayout(T.state.nodes.find(node => node.id === "text-a")).lines.length > 1,
+      "narrower matched text boxes immediately reflow");
+    T.undo();
+    T.setSelection("node",["text-a","text-b"]);
+    const beforeResetUndo = T.undoDepth;
+    assert.strictEqual(T.executeCommand("resetSize"),2,
+      "reset size clears forced width and height for every unlocked target");
+    assert.strictEqual(T.undoDepth,beforeResetUndo+1,
+      "resetting both dimensions creates one history entry");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-a").manualWidth,undefined,
+      "reset width returns text to content-driven sizing");
+    assert.strictEqual(T.state.nodes.find(node => node.id === "text-a").manualHeight,undefined,
+      "reset height returns text to content-driven sizing");
+    T.undo();
+
+    let ports = T.state.nodes.find(node => node.id === "ports");
+    const edge = T.state.edges.find(candidate => candidate.id === "port-edge");
+    const endpointBefore = T.edgeEndpoints(edge).pa;
+    T.setSelection("node",ports.id);
+    const beforeRotateUndo = T.undoDepth;
+    assert(T.executeCommand("rotateRight"),"rotation executes through the shared command registry");
+    assert.strictEqual(T.undoDepth,beforeRotateUndo+1,"rotation is one undoable operation");
+    ports = T.state.nodes.find(node => node.id === "ports");
+    assert.strictEqual(T.nodeRotation(ports),90,"rotation persists in normalized document degrees");
+    const visual = T.nodeVisualRect(ports), local = T.nodeRect(ports);
+    closeEnough(visual.w,local.h,"90-degree rotation swaps the visual width");
+    closeEnough(visual.h,local.w,"90-degree rotation swaps the visual height");
+    const endpointAfter = T.edgeEndpoints(edge).pa;
+    assert(Math.hypot(endpointAfter.x-endpointBefore.x,endpointAfter.y-endpointBefore.y) > 20,
+      "attached named-port endpoints follow the transformed boundary");
+    assert(doc.querySelector('[data-node="ports"]').getAttribute("transform").includes("rotate(90"),
+      "the rendered node carries the persisted transform");
+    T.undo();
+    assert.strictEqual(T.nodeRotation(T.state.nodes.find(node => node.id === "ports")),0,
+      "one undo removes the rotation");
+    T.redo();
+    T.setSelection("node","ports");
+    const beforeFlipUndo = T.undoDepth;
+    assert(T.executeCommand("flipHorizontal"),"horizontal flip executes on a supported node");
+    assert.strictEqual(T.undoDepth,beforeFlipUndo+1,"flip creates one history entry");
+    ports = T.state.nodes.find(node => node.id === "ports");
+    assert.strictEqual(T.nodeFlipX(ports),true,"horizontal flip persists");
+    const renderedPorts = doc.querySelector('[data-node="ports"]');
+    assert(renderedPorts.querySelector("[data-concept-wrapped]").getAttribute("transform").includes("scale(-1,1)"),
+      "flipped text is counter-transformed instead of mirrored");
+    assert(renderedPorts.querySelector("[data-node-icon]").getAttribute("transform").includes("scale(-1,1)"),
+      "icons that should remain upright are counter-transformed");
+    const transformedOutput = T.nodePortAnchor(ports,"output","result");
+    assert.strictEqual(transformedOutput.side,"n",
+      "flipping updates named-port side semantics after rotation");
+    const serializedTransform = T.serializeDocument();
+    T.importDocText(serializedTransform);
+    ports = T.state.nodes.find(node => node.id === "ports");
+    assert.strictEqual(T.nodeRotation(ports),90,"rotation survives save and reload");
+    assert.strictEqual(T.nodeFlipX(ports),true,"flip survives save and reload");
+    assert.strictEqual(T.state.edges.find(candidate => candidate.id === "port-edge").fromPort,"result",
+      "save and reload preserve the stable named-port binding");
+
+    const status = T.state.nodes.find(node => node.id === "status");
+    const statusLayout = T.statusNodeLayout(status);
+    assert(statusLayout.manualHeight && statusLayout.h === 60,
+      "status nodes honor forced heights");
+    assert.strictEqual(status.title,"A very long status title that remains intact",
+      "forced status height never mutates source text");
+    const note = T.state.nodes.find(node => node.id === "note");
+    assert(T.richNoteLayout(note).lines.length < 6,
+      "forced rich-note height bounds rendered content");
+    assert(note.content.includes("item two"),"rich-note truncation is display-only");
+    const compactConcept = {...ports,manualHeight:true,h:70,
+      title:"A long transformed concept title that needs display truncation"};
+    assert(T.conceptWrappedLayout(compactConcept).manualHeight,
+      "concept nodes participate in exact height sizing");
+    assert.strictEqual(compactConcept.title,
+      "A long transformed concept title that needs display truncation",
+      "concept height fitting preserves the complete source title");
+
+    const source = T.state.nodes.find(node => node.id === "text-a");
+    const target = T.state.nodes.find(node => node.id === "text-b");
+    source.color = "#007873";
+    source.fontColor = "#FFFFFF";
+    source.shape = "rectangle";
+    source.icon = "emoji:⭐";
+    target.title = "Semantic content";
+    target.properties = {owner:"team"};
+    target.icon = "emoji:📌";
+    const targetX = target.x;
+    const targetSize = {...T.nodeSize(target)};
+    T.setSelection("node",source.id);
+    const payload = T.editingCopyStyle();
+    assert(payload.entries.every(entry => ["direct","default"].includes(entry.origin)),
+      "copy style creates a typed payload with source provenance");
+    assert(payload.excluded.includes("metadata") && payload.excluded.includes("geometry"),
+      "the style payload declares protected semantic and geometry scopes");
+    T.setSelection("node",target.id);
+    const beforePasteUndo = T.undoDepth;
+    const paste = T.editingPasteStyle();
+    sameList(paste.changed,[target.id],"paste style reports the changed target");
+    assert.strictEqual(T.undoDepth,beforePasteUndo+1,"paste style is one transaction");
+    assert.strictEqual(target.color,"#007873","compatible fill transfers");
+    assert.strictEqual(target.fontColor,"#FFFFFF","compatible text appearance transfers");
+    assert.strictEqual(target.shape,"rectangle","same-type shape treatment transfers");
+    assert.strictEqual(target.title,"Semantic content","style transfer preserves content");
+    sameList(target.properties,{owner:"team"},"style transfer preserves custom metadata");
+    assert.strictEqual(target.x,targetX,"style transfer preserves geometry");
+    sameList(T.nodeSize(target),targetSize,
+      "style transfer preserves the target's resolved width and height");
+    assert.strictEqual(target.icon,"emoji:📌","style transfer excludes icon identity");
+    T.undo();
+    assert.notStrictEqual(T.state.nodes.find(node => node.id === target.id).color,"#007873",
+      "one undo restores the complete style target");
+
+    const conceptSource = T.state.nodes.find(node => node.id === "ports");
+    const conceptTarget = T.state.nodes.find(node => node.id === "sink");
+    const autoSizeBeforeStyle = {...T.nodeSize(conceptTarget)};
+    T.setSelection("node",conceptSource.id);
+    T.editingCopyStyle();
+    T.setSelection("node",conceptTarget.id);
+    T.editingPasteStyle();
+    sameList(T.nodeSize(conceptTarget),autoSizeBeforeStyle,
+      "shape and font transfer materialize the target's resolved size instead of resizing it");
+    assert.strictEqual(conceptTarget.title,"Sink",
+      "auto-sized style targets retain their content");
+    assert.strictEqual(conceptTarget.icon,undefined,
+      "auto-sized style targets still exclude icon identity");
+    T.undo();
+
+    const defaultEdge = T.state.edges.find(candidate => candidate.id === "default-edge");
+    const styledEdge = T.state.edges.find(candidate => candidate.id === "styled-edge");
+    const inheritedPayload = T.editingStylePayload(defaultEdge);
+    assert(inheritedPayload.entries.some(entry => entry.field === "lineColor" &&
+      entry.origin === "default" && entry.operation === "clear"),
+    "derived defaults remain provenance-aware instead of becoming silent local overrides");
+    const edgePlan = T.editingStylePlan(inheritedPayload,[styledEdge]);
+    assert.strictEqual(edgePlan.plan.length,1,"edge style compatibility is planned before mutation");
+    T.editingApplyStylePayload(inheritedPayload,[styledEdge]);
+    assert.strictEqual(styledEdge.lineColor,undefined,
+      "pasting a derived line color clears the target override");
+    assert.strictEqual(styledEdge.startArrow,undefined,
+      "pasting a derived false arrow state clears the target override");
+    assert.strictEqual(styledEdge.labelTextColor,undefined,
+      "derived label appearance remains inherited");
+  }
+
+  /* SCH-117 / issue #83 — selection, precision, shortcuts, and safe layout preview. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({version:1,nextId:40,nodes:[
+      {id:"frame",type:"frame",x:0,y:0,title:"Delivery frame",color:"#DDE6EF",w:520,h:360},
+      {id:"a",type:"concept",x:40,y:60,title:"A",status:"Blocked",color:"#C20029"},
+      {id:"b",type:"concept",x:220,y:60,title:"B",status:"In progress",color:"#007873",pinned:true},
+      {id:"c",type:"concept",x:380,y:230,title:"C",status:"Completed",color:"#CFE8FF"},
+      {id:"outside",type:"concept",x:700,y:80,title:"Outside",status:"Blocked",color:"#C20029"},
+      {id:"hidden",type:"concept",x:60,y:220,title:"Hidden",status:"Blocked",color:"#C20029",hidden:true},
+      {id:"locked",type:"concept",x:700,y:260,title:"Locked",status:"Blocked",color:"#C20029",locked:true}
+    ],edges:[
+      {id:"ab",from:"a",to:"b",kind:"link",label:"Depends on"},
+      {id:"bc",from:"b",to:"c",kind:"link",label:"Supports"},
+      {id:"co",from:"c",to:"outside",kind:"link",label:"Depends on"}
+    ]}));
+    T.invalidateOrganizationEvaluation();
+    const aRect = T.nodeVisualRect(T.state.nodes.find(node => node.id === "a"));
+    const partial = {x:aRect.x+aRect.w/2,y:aRect.y,w:aRect.w,h:aRect.h};
+    assert(!T.editingSpatialSelectionIds("contain",partial).includes("a"),
+      "full-containment marquee excludes a partially overlapped object");
+    assert(T.editingSpatialSelectionIds("intersect",partial).includes("a"),
+      "intersection marquee includes the same partial overlap");
+    const lasso = [
+      {x:aRect.cx-20,y:aRect.cy-20},{x:aRect.cx+20,y:aRect.cy-20},
+      {x:aRect.cx+20,y:aRect.cy+20},{x:aRect.cx-20,y:aRect.cy+20}
+    ];
+    assert(T.editingSpatialSelectionIds("lasso",aRect,lasso).includes("a"),
+      "freeform lasso selects by model geometry");
+    assert(!T.editingSpatialSelectionIds("contain",{x:0,y:0,w:1000,h:500}).includes("hidden"),
+      "spatial selection excludes hidden objects");
+    T.setSelection("node","a");
+    sameList(T.editingApplyNodeSelection(["b"],"add"),["a","b"],
+      "add selection preserves existing IDs");
+    sameList(T.editingApplyNodeSelection(["a"],"subtract"),["b"],
+      "subtract selection removes matching IDs");
+    sameList(T.editingApplyNodeSelection(["b","c"],"toggle"),["c"],
+      "toggle selection behaves consistently");
+    assert.strictEqual(T.editingSelectionOperation({shiftKey:true,altKey:true}),"subtract",
+      "Shift+Alt is the documented subtract modifier");
+    assert.strictEqual(T.editingSelectionOperation({ctrlKey:true}),"toggle",
+      "Ctrl/Cmd is the documented toggle modifier");
+    T.setEditingSelectionMode("lasso");
+    assert.strictEqual(T.editingSelectionMode,"lasso","the active gesture is explicit");
+    assert.strictEqual(window.localStorage.getItem("schematic.selectionGesture"),"lasso",
+      "selection gesture is an application preference");
+
+    sameList(T.editingSelectByQuery({scope:"visible",propertyId:"status",value:"blocked",
+      render:false,announce:false}),["a","locked","outside"],
+      "select-by status uses visible model scope and stable-ID ordering");
+    T.setSelection("node","frame");
+    sameList(T.editingSelectByQuery({scope:"container",objectType:"concept",
+      render:false,announce:false}),["a","b","c"],
+      "container scope selects visible contents without scanning SVG");
+    sameList(T.editingSelectByQuery({scope:"all",propertyId:"frame",value:"delivery",
+      render:false,announce:false}),["a","b","c","hidden"],
+      "frame queries can deliberately include hidden contents in entire-document scope");
+    T.setSelection("node","a");
+    sameList(T.editingSelectByQuery({scope:"visible",connectivity:"successors",depth:2,
+      relationshipTypes:["link"],render:false,announce:false}),["b","c"],
+      "connectivity queries support direction, depth, and relationship filtering");
+    T.setSelection("node","b");
+    sameList(T.editingConnectivityNodes("predecessors"),["a"],
+      "direct predecessor selection reuses the structured graph query");
+    sameList(T.editingSelectAttachedLinks(),["ab","bc"],
+      "attached-link selection includes every incident relationship");
+
+    const gridUndo = T.undoDepth;
+    assert(T.setEditingGridSize(32),"grid size is document configurable");
+    assert.strictEqual(T.undoDepth,gridUndo+1,"grid-size change is undoable");
+    const vertical = T.editingAddGuide("x",100,{name:"Locked axis",locked:true});
+    const horizontal = T.editingAddGuide("y",208,{name:"Hidden axis"});
+    T.editingUpdateGuide(horizontal.id,{hidden:true});
+    assert.strictEqual(T.editingGuides().length,1,"hidden guides are excluded from snapping");
+    assert.strictEqual(T.editingGuides(true).length,2,"guide manager retains hidden guides");
+    const serializedPrecision = JSON.parse(T.serializeDocument());
+    assert.strictEqual(serializedPrecision.editing.gridSize,32,
+      "grid size serializes as document state");
+    assert(serializedPrecision.editing.guides.some(guide => guide.id === vertical.id &&
+      guide.locked === true && guide.name === "Locked axis"),
+    "manual guide identity, coordinate, lock, and name serialize");
+    assert(!T.serializedSvg(true).includes("data-manual-guide"),
+      "print/export SVG excludes manual guides");
+    T.importDocText(JSON.stringify(serializedPrecision));
+    assert.strictEqual(doc.querySelector("#dots").getAttribute("width"),"32",
+      "document reload applies the persisted grid size to the live SVG pattern");
+    assert.strictEqual(doc.querySelectorAll("[data-manual-guide]").length,1,
+      "document reload redraws visible persisted manual guides");
+    assert.strictEqual(T.editingGuides(true).length,2,
+      "document reload retains hidden guides in the model");
+
+    doc.getElementById("btnSnap").click();
+    const snap = T.editingResolveNodeSnap(
+      {x:97,y:51,w:40,h:40,cx:117,cy:71},{x:97,y:51},
+      [{x:104,y:50,w:40,h:40,cx:124,cy:70}],10,{shiftKey:false});
+    assert.strictEqual(snap.xSource.strength,"locked",
+      "locked manual guides outrank smart alignment and persistent grid on their axis");
+    assert.strictEqual(snap.xSource.label,"Locked axis",
+      "snap feedback names the winning guide");
+    assert.strictEqual(snap.ySource.type,"alignment",
+      "the other axis may independently choose a smart alignment");
+    const explicit = T.editingResolveNodeSnap(
+      {x:97,y:51,w:40,h:40,cx:117,cy:71},{x:97,y:51},[],10,{shiftKey:true});
+    sameList({dx:explicit.dx,dy:explicit.dy},{dx:-1,dy:13},
+      "Shift uses the configured 32-pixel grid before every other constraint");
+    assert.strictEqual(explicit.xSource.strength,"explicit",
+      "explicit modifier snapping identifies its source");
+    const ortho = T.editingSnapOrthoPoint({x:23,y:39},10,true);
+    sameList({x:ortho.x,y:ortho.y,step:ortho.gridStep},{x:16,y:32,step:16},
+      "orthogonal link corners snap at half-grid resolution");
+
+    const movable = T.state.nodes.find(node => node.id === "outside");
+    movable.x = 713; movable.y = 87;
+    T.setSelection("node",["outside","locked"]);
+    const beforeSnapUndo = T.undoDepth;
+    const snappedSelection = T.executeCommand("snapSelectionGrid");
+    sameList(snappedSelection.changed,["outside"],
+      "snap-selection skips locked objects and reports the changed IDs");
+    assert.strictEqual(movable.x,704,"snap-selection uses the configured grid in document coordinates");
+    assert.strictEqual(T.undoDepth,beforeSnapUndo+1,"snap-selection creates one undo entry");
+    T.undo();
+    assert.strictEqual(T.state.nodes.find(node => node.id === "outside").x,713,
+      "one undo restores every snapped coordinate");
+
+    assert.strictEqual(T.editingSetShortcut("rotateRight","Alt+Shift+R").ok,true,
+      "shortcut preferences accept an unused chord");
+    assert.strictEqual(T.editingSetShortcut("rotateLeft","Mod+Y").ok,false,
+      "shortcut conflict detection includes built-in aliases");
+    assert.strictEqual(T.editingSetShortcut("rotateLeft","Mod+L").ok,false,
+      "reserved browser shortcuts are protected");
+    T.setSelection("node","a");
+    window.dispatchEvent(new window.KeyboardEvent("keydown",
+      {key:"r",altKey:true,shiftKey:true,bubbles:true,cancelable:true}));
+    assert.strictEqual(T.nodeRotation(T.state.nodes.find(node => node.id === "a")),90,
+      "a customized shortcut invokes the same shared command");
+    const importedShortcuts = T.editingImportShortcutOverrides({shortcuts:{
+      rotateLeft:"Alt+Shift+U",rotateRight:"Alt+Shift+U",fit:"Mod+L"
+    }});
+    sameList(importedShortcuts,{ok:true,applied:1,skipped:2},
+      "shortcut import applies only conflict-free, non-reserved assignments");
+    assert(!JSON.parse(T.serializeDocument()).shortcuts,
+      "shortcut preferences never enter document state");
+    T.editingResetShortcut("rotateLeft");
+    assert.strictEqual(T.editingShortcutForCommand(T.commandDefinition("rotateLeft")),
+      T.commandDefinition("rotateLeft").shortcut,
+      "per-command reset restores the default chord");
+    T.editingResetAllShortcuts();
+    assert.strictEqual(window.localStorage.getItem("schematic.shortcutOverrides"),"{}",
+      "global reset restores every default");
+
+    const a = T.state.nodes.find(node => node.id === "a");
+    const b = T.state.nodes.find(node => node.id === "b");
+    const c = T.state.nodes.find(node => node.id === "c");
+    T.setSelection("node",["a","b","c"]);
+    T.setView({x:73,y:-41,k:.75});
+    const beforePreviewDoc = T.serializeDocument();
+    const beforePreviewSelection = T.selection;
+    const beforePreviewView = {...T.view};
+    const beforePreviewUndo = T.undoDepth;
+    assert(T.executeCommand("layoutPreview"),"layout preview opens through the command registry");
+    assert(T.editingLayoutProposal,"layout preview records a transient proposal");
+    assert.strictEqual(T.serializeDocument(),beforePreviewDoc,
+      "creating a preview does not mutate serialized document state");
+    assert.strictEqual(T.undoDepth,beforePreviewUndo,
+      "creating a preview does not create history");
+    assert(!T.editingLayoutProposal.positions.has("b"),
+      "pinned objects are excluded from proposed movement");
+    T.editingCancelLayoutPreview();
+    sameList(T.selection,beforePreviewSelection,
+      "cancel restores the exact original selection");
+    sameList(T.view,beforePreviewView,"cancel restores the exact camera");
+    assert.strictEqual(T.serializeDocument(),beforePreviewDoc,
+      "cancel is byte-equivalent at the document boundary");
+
+    assert(T.executeCommand("layoutPreview"),"a layout proposal can be recomputed");
+    const maxMovement = doc.querySelector('.layout-preview-modal input[title*="unrestricted"]');
+    maxMovement.value = "20";
+    maxMovement.dispatchEvent(new window.Event("input",{bubbles:true}));
+    assert(T.editingLayoutProposal.movement.maximum <= 20.001,
+      "maximum-movement constraints are applied to the transient proposal");
+    const bPosition = {x:b.x,y:b.y};
+    const aPosition = {x:a.x,y:a.y};
+    const beforeApplyUndo = T.undoDepth;
+    assert(T.editingApplyLayoutPreview(),"a current proposal applies");
+    assert.strictEqual(T.undoDepth,beforeApplyUndo+1,
+      "layout Apply produces one history transaction");
+    sameList({x:b.x,y:b.y},bPosition,"pinned geometry remains fixed on Apply");
+    T.undo();
+    sameList({x:T.state.nodes.find(node => node.id === "a").x,
+      y:T.state.nodes.find(node => node.id === "a").y},aPosition,
+      "one undo restores applied layout geometry");
+    doc.querySelector(".layout-preview-modal [data-close]").click();
+
+    T.setSelection("node",["a","b","c"]);
+    T.executeCommand("layoutPreview");
+    T.state.nodes.find(node => node.id === "c").title = "Intervening edit";
+    assert.strictEqual(T.editingApplyLayoutPreview(),false,
+      "stale layout proposals refuse to apply after a document generation change");
+    T.editingCancelLayoutPreview();
+    doc.querySelector(".layout-preview-modal [data-close]").click();
+
+    const editingCommands = new Map(T.COMMANDS.map(command => [command.id,command]));
+    sameList(editingCommands.get("rotateRight").requiredCapabilities,["rotatable"],
+      "the authoritative command catalog declares capability requirements");
+    assert.strictEqual(editingCommands.get("layoutPreview").preview,true,
+      "the command catalog declares transient preview semantics");
+    assert(doc.querySelector(".editing-toolbar [data-editing-selection-mode]"),
+      "the active selection gesture is visible on the canvas");
+    assert(doc.querySelectorAll(".editing-ruler").length === 2,
+      "horizontal and vertical rulers are present as precision surfaces");
+
+    T.setSelection("node","a");
+    T.executeCommand("formatPainter");
+    assert(T.editingFormatPainter && !T.editingFormatPainter.persistent,
+      "one-shot format painter exposes an active session state");
+    assert(!doc.querySelector("[data-editing-painter-status]").hidden,
+      "format-painter scope is visibly announced before a target is chosen");
+    window.dispatchEvent(new window.KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}));
+    assert.strictEqual(T.editingFormatPainter,null,"Escape cancels the painter");
+
+    const rotated = T.state.nodes.find(node => node.id === "a");
+    T.setNodeRotation(rotated,90);
+    T.render();
+    T.startInlineEditor("node","a");
+    const inline = doc.querySelector(".inline-editor");
+    assert(inline && parseFloat(inline.style.width) >= 120 && parseFloat(inline.style.height) >= 60,
+      "inline editing uses the rotated visual bounds instead of the stale local rectangle");
+    inline.dispatchEvent(new window.KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+  }
+
+  /* SCH-117 scale fixture: select-by is model-backed at 10k objects. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.state.nodes = Array.from({length:10000},(_,index) => ({
+      id:`edit-bench-${String(index).padStart(5,"0")}`,type:"concept",
+      x:(index%100)*160,y:Math.floor(index/100)*80,title:`Service ${index}`,
+      status:index%20===0 ? "Blocked" : "In progress",color:"#CFE8FF"
+    }));
+    T.state.edges = [];
+    T.invalidateOrganizationEvaluation();
+    const start = performance.now();
+    const ids = T.editingSelectByQuery({scope:"all",propertyId:"status",value:"blocked",
+      render:false,announce:false});
+    const elapsed = performance.now()-start;
+    assert.strictEqual(ids.length,500,
+      "10k-object property queries return the complete deterministic result set");
+    assert.strictEqual(ids[0],"edit-bench-00000","large query results are stable-ID ordered");
+    assert(elapsed < 1500,
+      `10k-object select-by stays on the model path (${elapsed.toFixed(1)}ms)`);
   }
 
   /* Search performance fixture: 10k objects and 20k relationships. */

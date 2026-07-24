@@ -12,13 +12,14 @@ function el(tag, attrs, parent){
   return e;
 }
 
-let world, frameLayer, edgeLayer, nodeLayer, draftLayer, minimap, minimapDrag = false;
+let world, frameLayer, edgeLayer, nodeLayer, guideLayer, draftLayer, minimap, minimapDrag = false;
 const renderStats = { full:0, fast:0 };
 
 function buildScaffold(){
   board.innerHTML = "";
   const defs = el("defs", {}, board);
-  const pat = el("pattern", {id:"dots", width:24, height:24, patternUnits:"userSpaceOnUse"}, defs);
+  const gridSize = typeof editingGridSize === "function" ? editingGridSize() : GRID_SNAP;
+  const pat = el("pattern", {id:"dots", width:gridSize, height:gridSize, patternUnits:"userSpaceOnUse"}, defs);
   el("circle", {cx:1.2, cy:1.2, r:1.2, fill:themeColors().grid}, pat);
 
   world = el("g", {id:"world"}, board);
@@ -27,6 +28,7 @@ function buildScaffold(){
   frameLayer = el("g", {id:"frameLayer"}, world);
   edgeLayer  = el("g", {id:"edgeLayer"}, world);
   nodeLayer  = el("g", {id:"nodeLayer"}, world);
+  guideLayer = el("g", {id:"guideLayer"}, world);
   draftLayer = el("g", {id:"draftLayer"}, world);
   ensureMinimap();
   applyView();
@@ -37,6 +39,7 @@ function applyView(){
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`);
   document.getElementById("zoomLabel").textContent = Math.round(view.k*100) + "%";
   renderMinimap();
+  if (typeof renderEditingRulers === "function") renderEditingRulers();
   if (typeof searchPanelOpen === "function" && searchPanelOpen() &&
       typeof scheduleSearchRun === "function") scheduleSearchRun();
 }
@@ -48,6 +51,7 @@ function render(){
   frameLayer.innerHTML = "";
   edgeLayer.innerHTML = "";
   nodeLayer.innerHTML = "";
+  guideLayer.innerHTML = "";
   draftLayer.innerHTML = "";
   const hidden = collapsedFrameHiddenNodeIds();
   const organizationHidden = typeof organizationalHiddenNodeIds === "function"
@@ -82,6 +86,9 @@ function render(){
   const contentNodes = state.nodes.filter(n => !allHidden.has(n.id) && !isStructuralNode(n));
   for (const n of typeof organizationSortRecords === "function"
     ? organizationSortRecords(contentNodes) : contentNodes) drawNode(n);
+  if (typeof drawManualGuides === "function") drawManualGuides();
+  if (typeof editingRenderLayoutProposal === "function" && editingLayoutProposal)
+    editingRenderLayoutProposal();
   for (const n of state.nodes)
     if (!allHidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();
@@ -105,7 +112,7 @@ function fastDragRender(ids){
   for (const id of moved){
     const n = nodeById(id);
     const g = n && document.querySelector(`[data-node="${id}"]`);
-    if (n && g) g.setAttribute("transform", `translate(${n.x},${n.y})`);
+    if (n && g) g.setAttribute("transform", nodeSvgTransform(n, nodeRect(n)));
     const overlay = n && document.querySelector(`[data-frame-collapse-overlay="${id}"]`);
     if (n && overlay) overlay.setAttribute("transform", `translate(${n.x},${n.y})`);
   }
@@ -192,7 +199,7 @@ function renderMinimap(){
   minimap.innerHTML = "";
   el("rect", {x:0, y:0, width:120, height:90, rx:6, fill:t.panel}, minimap);
   for (const n of visibleCanvasNodes()){
-    const r = nodeRect(n);
+    const r = nodeVisualRect(n);
     const p = tx.toMini({x:r.x, y:r.y});
     const structural = isStructuralNode(n);
     const cleanText = n.type === "text" && textBoxShape(n) === "none";
@@ -216,7 +223,9 @@ function fieldRowCenterY(n, idx){ const m = tableMetrics(n); return nodeRect(n).
 function fieldAnchor(n, idx, towardX){
   const r = nodeRect(n);
   const side = towardX >= r.cx ? "e" : "w";
-  return { x: side === "e" ? r.x + r.w : r.x, y: fieldRowCenterY(n, idx), side };
+  const raw = { x: side === "e" ? r.x + r.w : r.x, y: fieldRowCenterY(n, idx) };
+  const point = transformNodePoint(n, raw);
+  return { ...point, side:transformNodeSide(n, side) };
 }
 function edgeFieldPairs(e){
   if (Array.isArray(e.pairs) && e.pairs.length)
@@ -253,8 +262,10 @@ function edgeEndpoints(e, hidden = null, proxies = null){
   const ia = (fromField && rowsA) ? rowsA.findIndex(f => f.id === fromField) : -1;
   const ib = (toField   && rowsB) ? rowsB.findIndex(f => f.id === toField)   : -1;
   /* reference points: bound field row centers, else node centers */
-  const refA = ia >= 0 ? { x: ra.cx, y: fieldRowCenterY(a, ia) } : { x: ra.cx, y: ra.cy };
-  const refB = ib >= 0 ? { x: rb.cx, y: fieldRowCenterY(b, ib) } : { x: rb.cx, y: rb.cy };
+  const refA = ia >= 0 ? transformNodePoint(a, { x:ra.cx, y:fieldRowCenterY(a, ia) })
+    : { x:ra.cx, y:ra.cy };
+  const refB = ib >= 0 ? transformNodePoint(b, { x:rb.cx, y:fieldRowCenterY(b, ib) })
+    : { x:rb.cx, y:rb.cy };
   const fromPort = !proxyA && ia < 0 && !e.fromAnchor && nodePortsEnabled(a)
     ? nodePortAnchor(a, "output", e.fromPort || nodeOutputPorts(a)[0]?.id) : null;
   const toPort = !proxyB && ib < 0 && !e.toAnchor && nodePortsEnabled(b)
@@ -609,6 +620,10 @@ function nearestSnap(value, candidates, threshold){
   return best;
 }
 function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k, gridSnap = false){
+  const precision = typeof editingSnapOrthoPoint === "function"
+    ? editingSnapOrthoPoint(point, threshold, gridSnap) : null;
+  if (precision && precision.grid)
+    return {...precision, xCandidates:[], yCandidates:[]};
   if (gridSnap){
     const step = GRID_SNAP / 2;
     const x = Math.round(point.x / step) * step;
@@ -619,15 +634,27 @@ function snapOrthoBend(e, point, ep = edgeEndpoints(e), threshold = 10 / view.k,
   const route = orthoEdgeRoute(null, ep.pa, ep.pb);
   const xs = [...new Set([route.pa.x, route.a.x, route.auto.x, route.b.x, route.pb.x])];
   const ys = [...new Set([route.pa.y, route.a.y, route.auto.y, route.b.y, route.pb.y])];
-  const snapX = nearestSnap(point.x, xs, threshold);
-  const snapY = nearestSnap(point.y, ys, threshold);
+  const routeX = nearestSnap(point.x, xs, threshold);
+  const routeY = nearestSnap(point.y, ys, threshold);
+  const lockedX = precision?.xGuide?.locked === true;
+  const lockedY = precision?.yGuide?.locked === true;
+  const snapX = lockedX ? precision.snapX
+    : routeX != null ? routeX : precision && precision.snapX;
+  const snapY = lockedY ? precision.snapY
+    : routeY != null ? routeY : precision && precision.snapY;
   return {
     x:snapX == null ? Math.round(point.x) : snapX,
     y:snapY == null ? Math.round(point.y) : snapY,
     snapX,
     snapY,
     xCandidates:xs,
-    yCandidates:ys
+    yCandidates:ys,
+    xGuide:precision && precision.xGuide,
+    yGuide:precision && precision.yGuide,
+    xSource:(lockedX || (routeX == null && precision && precision.snapX != null)) ? precision.xSource
+      : routeX != null ? {type:"route",label:"Orthogonal route X",axis:"x",strength:"route"} : null,
+    ySource:(lockedY || (routeY == null && precision && precision.snapY != null)) ? precision.ySource
+      : routeY != null ? {type:"route",label:"Orthogonal route Y",axis:"y",strength:"route"} : null
   };
 }
 function resetOrthoBend(e){
@@ -911,7 +938,7 @@ function drawNodeIcon(parent, icon, x, y, size, ink){
   const group = el("g", {
     transform:`translate(${x},${y})`, "pointer-events":"none",
     "data-node-icon":icon.token, "data-icon-library":icon.library,
-    "data-icon-name":icon.name
+    "data-icon-name":icon.name, "data-icon-size":size
   }, parent);
   el("rect", {width:size, height:size, rx:Math.max(6, size*.2),
               fill:ink, "fill-opacity":.10, stroke:ink, "stroke-opacity":.08}, group);
@@ -1105,11 +1132,43 @@ function drawConceptPorts(parent, n, r, layout, ink){
     text.textContent = truncate(port.label, maxWidth, layout.portFont);
   }
 }
+function nodeSvgTransform(n, r = nodeRect(n)){
+  const cx = r.w/2, cy = r.h/2;
+  const transforms = [`translate(${r.x},${r.y})`];
+  const rotation = nodeRotation(n);
+  if (rotation) transforms.push(`rotate(${rotation},${cx},${cy})`);
+  if (nodeFlipX(n) || nodeFlipY(n))
+    transforms.push(`translate(${cx},${cy}) scale(${nodeFlipX(n) ? -1 : 1},${nodeFlipY(n) ? -1 : 1}) translate(${-cx},${-cy})`);
+  return transforms.join(" ");
+}
+function preserveReadableNodeText(g, n){
+  if (!nodeFlipX(n) && !nodeFlipY(n)) return;
+  const sx = nodeFlipX(n) ? -1 : 1, sy = nodeFlipY(n) ? -1 : 1;
+  for (const icon of g.querySelectorAll("[data-node-icon]")){
+    const size = Number(icon.getAttribute("data-icon-size"));
+    if (!Number.isFinite(size)) continue;
+    const existing = icon.getAttribute("transform") || "";
+    icon.setAttribute("transform",
+      `${existing} translate(${size/2},${size/2}) scale(${sx},${sy}) translate(${-size/2},${-size/2})`.trim());
+  }
+  for (const text of g.querySelectorAll("text")){
+    if (text.closest("[data-node-icon]")) continue;
+    const coordinate = text.hasAttribute("x") && text.hasAttribute("y") ? text
+      : text.querySelector("tspan[x][y]");
+    if (!coordinate) continue;
+    const x = Number(coordinate.getAttribute("x"));
+    const y = Number(coordinate.getAttribute("y"));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const existing = text.getAttribute("transform");
+    const counter = `translate(${x},${y}) scale(${sx},${sy}) translate(${-x},${-y})`;
+    text.setAttribute("transform", existing ? `${existing} ${counter}` : counter);
+  }
+}
 function drawNode(n){
   const r = nodeRect(n);
   const selected = isSelected("node", n.id);
   const t = themeColors();
-  const g = el("g", {"data-node": n.id, transform:`translate(${r.x},${r.y})`, cursor:"grab",
+  const g = el("g", {"data-node": n.id, transform:nodeSvgTransform(n, r), cursor:"grab",
     ...(typeof organizationRenderAttributes === "function" ? organizationRenderAttributes(n) : {})}, nodeLayer);
 
   if (n.type === "concept"){
@@ -1325,6 +1384,7 @@ function drawNode(n){
                     "stroke-width":1.4}, hg);
     }
   }
+  preserveReadableNodeText(g, n);
 }
 /* per-row connect handles (left + right of each row) — tables and todos */
 function drawRowHandles(g, n, rows, r, t){

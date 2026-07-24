@@ -4,6 +4,7 @@
 function seed(){
   if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
   if (typeof defaultMetadata === "function") state.metadata = defaultMetadata();
+  delete state.editing;
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   const N = (o) => { o.id = uid(); state.nodes.push(o); return o.id; };
   const E = (from, to, kind, label, fromField, toField, options = {}) => {
@@ -276,11 +277,14 @@ buildScaffold();
 seed();
 if (typeof ensureOrganization === "function") ensureOrganization();
 if (typeof ensureMetadata === "function") ensureMetadata();
+if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
 ensureFieldIds();
 initializeCommands();
+if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
 if (typeof initializeMetadataCommands === "function") initializeMetadataCommands();
 setupRibbon();
+if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 if (typeof initializeMetadataUi === "function") initializeMetadataUi();
 render();
@@ -380,6 +384,7 @@ window.__T = {
   get EDGE_RELATIONSHIPS(){ return EDGE_RELATIONSHIPS.map(([name, meaning]) => ({name, meaning})); },
   nodeMenu,
   edgeMenu,
+  nodeSize,
   edgeRelationshipValue,
   edgeRelationshipSelect,
   nodeAnchor,
@@ -651,6 +656,60 @@ window.__T = {
   get metadataCsvPreview(){ return metadataCsvPreview; },
   invalidateMetadataEvaluation,
   defaultMetadata,
+  normalizeEditingSettings,
+  cleanEditingForDocument,
+  editingSettings,
+  ensureEditingSettings,
+  editingGridSize,
+  setEditingGridSize,
+  editingGuides,
+  editingAddGuide,
+  editingUpdateGuide,
+  editingDeleteGuide,
+  editingClearGuides,
+  editingCapabilities,
+  editingResolveNodeSnap,
+  editingSnapOrthoPoint,
+  editingSnapSelectionToGrid,
+  editingRotateSelection,
+  editingFlipSelection,
+  editingStylePayload,
+  editingStylePlan,
+  editingCopyStyle,
+  editingPasteStyle,
+  editingApplyStylePayload,
+  editingSelectByQuery,
+  editingConnectivityQuery,
+  editingConnectivityNodes,
+  editingSelectAttachedLinks,
+  editingInvertSelection,
+  editingSpatialSelectionIds,
+  editingApplyNodeSelection,
+  editingSelectionOperation,
+  setEditingSelectionMode,
+  get editingSelectionMode(){ return editingSelectionMode; },
+  editingSetShortcut,
+  editingResetShortcut,
+  editingResetAllShortcuts,
+  editingImportShortcutOverrides,
+  editingShortcutForCommand,
+  editingShortcutConflict,
+  editingDisplayShortcut,
+  editingMatchShortcut,
+  editingBuildLayoutProposal,
+  editingApplyLayoutPreview,
+  editingCancelLayoutPreview,
+  get editingLayoutProposal(){ return editingLayoutProposal; },
+  get editingStyleClipboard(){ return editingStyleClipboard; },
+  get editingFormatPainter(){ return editingFormatPainter; },
+  matchSelectionHeights,
+  matchSelectionSizes,
+  nodeRotation,
+  setNodeRotation,
+  nodeFlipX,
+  nodeFlipY,
+  nodeVisualRect,
+  transformNodePoint,
   get searchResults(){ return searchResults.map(result => ({...result})); },
   get searchProposal(){ return searchProposal ? searchProposal.map(change => ({...change})) : null; },
   get searchIndexGeneration(){ return searchIndexGeneration; },
@@ -659,10 +718,15 @@ window.__T = {
     id:command.id,
     category:command.category,
     label:commandLabel(command),
-    shortcut:command.shortcut || "",
+    shortcut:commandShortcut(command),
     icon:command.icon,
     scope:command.scope,
     mutatesDocument:command.mutatesDocument,
+    allowLockedSubset:command.allowLockedSubset,
+    requiredCapabilities:[...command.requiredCapabilities],
+    minimumSelection:command.minimumSelection,
+    mutationKind:command.mutationKind,
+    preview:command.preview,
     transaction:command.transaction,
     owner:command.owner,
     enabled:commandIsEnabled(command),

@@ -270,9 +270,14 @@ function alignSelection(mode){
   return true;
 }
 function matchSelectionWidths(mode){
-  const nodes = selectedNodes();
-  if (nodes.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
-  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
+  const selected = selectedNodes();
+  if (selected.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
+  const nodes = selected.filter(node =>
+    typeof organizationObjectLocked !== "function" || !organizationObjectLocked(node));
+  if (nodes.length < 2){
+    announce("Select at least two unlocked objects to match widths.");
+    return false;
+  }
   const widths = nodes.map(n => nodeRect(n).w);
   const rawTarget = mode === "smallest" ? Math.min(...widths)
                   : mode === "largest" ? Math.max(...widths)
@@ -281,19 +286,74 @@ function matchSelectionWidths(mode){
   pushHistory();
   for (const node of nodes) setNodeWidth(node, target);
   render();
+  const skipped = selected.length - nodes.length;
+  announce(`Matched ${nodes.length} widths to ${target} pixels${skipped ? `; skipped ${skipped} locked object${skipped === 1 ? "" : "s"}` : ""}.`);
   return target;
 }
-function resetSelectionSizes(){
-  const nodes = selectedNodes();
-  const forced = nodes.filter(hasForcedNodeSize);
-  if (!forced.length) return false;
-  if (typeof organizationMutationGuard === "function" && !organizationMutationGuard()) return false;
+function matchSelectionHeights(mode){
+  const selected = selectedNodes();
+  if (selected.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
+  const nodes = selected.filter(node => nodeSupportsManualHeight(node) &&
+    (typeof organizationObjectLocked !== "function" || !organizationObjectLocked(node)));
+  if (nodes.length < 2){
+    announce("Select at least two concepts, text boxes, status nodes, or rich notes to match heights.");
+    return false;
+  }
+  const heights = nodes.map(n => nodeRect(n).h);
+  const rawTarget = mode === "smallest" ? Math.min(...heights)
+                  : mode === "largest" ? Math.max(...heights)
+                  : heights.reduce((sum, height) => sum + height, 0) / heights.length;
+  const target = clampSize(Math.round(rawTarget), 36, TEXT_H_MAX);
   pushHistory();
-  for (const node of forced){
-    resetNodeWidth(node);
-    resetTextBoxHeight(node);
+  for (const node of nodes) setNodeHeight(node, target);
+  render();
+  const skipped = selected.length - nodes.length;
+  announce(`Matched ${nodes.length} heights to ${target} pixels${skipped ? `; skipped ${skipped} unsupported object${skipped === 1 ? "" : "s"}` : ""}.`);
+  return target;
+}
+function matchSelectionSizes(mode){
+  const selected = selectedNodes();
+  if (selected.length < 2 || !["smallest","largest","average"].includes(mode)) return false;
+  const nodes = selected.filter(node => nodeSupportsManualHeight(node) &&
+    (typeof organizationObjectLocked !== "function" || !organizationObjectLocked(node)));
+  if (nodes.length < 2){
+    announce("Select at least two compatible content nodes to match complete size.");
+    return false;
+  }
+  const rects = nodes.map(nodeRect);
+  const reduce = values => mode === "smallest" ? Math.min(...values)
+    : mode === "largest" ? Math.max(...values)
+    : values.reduce((sum, value) => sum + value, 0) / values.length;
+  const width = clampSize(Math.round(reduce(rects.map(rect => rect.w))), 80, 4000);
+  const height = clampSize(Math.round(reduce(rects.map(rect => rect.h))), 36, TEXT_H_MAX);
+  pushHistory();
+  for (const node of nodes){
+    setNodeWidth(node, width);
+    setNodeHeight(node, height);
   }
   render();
+  const skipped = selected.length - nodes.length;
+  announce(`Matched ${nodes.length} objects to ${width} by ${height} pixels${skipped ? `; skipped ${skipped} unsupported object${skipped === 1 ? "" : "s"}` : ""}.`);
+  return {width, height, changed:nodes.map(node => node.id), skipped:selected.filter(node => !nodes.includes(node)).map(node => node.id)};
+}
+function resetSelectionSizes(axis = "both"){
+  const nodes = selectedNodes();
+  const forced = nodes.filter(node =>
+    (typeof organizationObjectLocked !== "function" || !organizationObjectLocked(node)) &&
+    (axis === "width" ? manualNodeWidth(node) != null
+      : axis === "height" ? manualNodeHeight(node) != null : hasForcedNodeSize(node)));
+  if (!forced.length) return false;
+  pushHistory();
+  for (const node of forced){
+    if (axis !== "height") resetNodeWidth(node);
+    if (axis !== "width") resetNodeHeight(node);
+  }
+  render();
+  const skipped = nodes.filter(node => typeof organizationObjectLocked === "function" &&
+    organizationObjectLocked(node) &&
+    (axis === "width" ? manualNodeWidth(node) != null
+      : axis === "height" ? manualNodeHeight(node) != null : hasForcedNodeSize(node))).length;
+  announce(`Reset ${axis === "both" ? "size" : axis} for ${forced.length} object${forced.length === 1 ? "" : "s"}${skipped ? `; skipped ${skipped} locked object${skipped === 1 ? "" : "s"}` : ""}.`);
   return forced.length;
 }
 function distribute(entries, axis){

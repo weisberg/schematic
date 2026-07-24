@@ -485,6 +485,7 @@ function renderInspector(){
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
     if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(n);
+    if (typeof renderEditingInspectorForNode === "function") renderEditingInspectorForNode(n);
 
     if (n.type === "swimlane"){
       inspectorSection("swimlane:basics", "Basics", () => {
@@ -995,6 +996,7 @@ function renderMultiInspector(){
   setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
   if (typeof renderOrganizationMultiInspector === "function") renderOrganizationMultiInspector(nodes);
   if (typeof renderMetadataMultiInspector === "function") renderMetadataMultiInspector(nodes);
+  if (typeof renderEditingMultiInspector === "function") renderEditingMultiInspector(nodes);
   if (nodes.every(n => n.type === "status")){
     inspectorSection("multi:status", "Status", () => {
       frow("Status", () => {
@@ -1880,6 +1882,7 @@ function mkFlag(txt, on, set){
 function drawOnly(){
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
   frameLayer.innerHTML = ""; edgeLayer.innerHTML = ""; nodeLayer.innerHTML = "";
+  if (guideLayer) guideLayer.innerHTML = "";
   draftLayer.innerHTML = "";
   const hidden = collapsedFrameHiddenNodeIds();
   const organizationHidden = typeof organizationalHiddenNodeIds === "function"
@@ -1894,6 +1897,7 @@ function drawOnly(){
     drawEdge(e, hidden, proxies);
   const content = state.nodes.filter(n => !allHidden.has(n.id) && !isStructuralNode(n));
   for (const n of typeof organizationSortRecords === "function" ? organizationSortRecords(content) : content) drawNode(n);
+  if (typeof drawManualGuides === "function") drawManualGuides();
   for (const n of state.nodes)
     if (!allHidden.has(n.id) && n.type === "frame" && n.collapsed === true) drawCollapsedFrameControlOverlay(n);
   drawEdgeGrips();

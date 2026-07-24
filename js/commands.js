@@ -40,7 +40,8 @@ const CORE_COMMAND_DEFINITIONS = [
 
   { id:"undo", label:"Undo", shortcut:"Ctrl/Cmd+Z", description:"Undo the last change", action:undo,
     enabled:() => undoStack.length > 0 },
-  { id:"redo", label:"Redo", shortcut:"Ctrl/Cmd+Shift+Z", description:"Redo the last undone change", action:redo,
+  { id:"redo", label:"Redo", shortcut:"Ctrl/Cmd+Shift+Z", shortcutAliases:["Ctrl/Cmd+Y"],
+    description:"Redo the last undone change", action:redo,
     enabled:() => redoStack.length > 0 },
   { id:"cut", label:"Cut", shortcut:"Ctrl/Cmd+X", description:"Cut the selected nodes", action:() => copySelection(true),
     enabled:commandHasNodeSelection },
@@ -109,13 +110,17 @@ const CORE_COMMAND_DEFINITIONS = [
     description:"Distribute selected items with equal vertical gaps",
     action:() => alignSelection("distributeY"), enabled:commandHasMultipleNodes },
   { id:"resetSize", label:"Reset size", description:"Reset forced sizing on selected items",
-    action:resetSelectionSizes, enabled:commandHasForcedSize },
+    action:resetSelectionSizes, enabled:commandHasForcedSize, allowLockedSubset:true,
+    requiredCapabilities:["resizable-width"], minimumSelection:1 },
   { id:"widthSmallest", label:"Smallest width", description:"Match the smallest selected width",
-    action:() => matchSelectionWidths("smallest"), enabled:commandHasMultipleNodes },
+    action:() => matchSelectionWidths("smallest"), enabled:commandHasMultipleNodes, allowLockedSubset:true,
+    requiredCapabilities:["resizable-width"], minimumSelection:2 },
   { id:"widthLargest", label:"Largest width", description:"Match the largest selected width",
-    action:() => matchSelectionWidths("largest"), enabled:commandHasMultipleNodes },
+    action:() => matchSelectionWidths("largest"), enabled:commandHasMultipleNodes, allowLockedSubset:true,
+    requiredCapabilities:["resizable-width"], minimumSelection:2 },
   { id:"widthAverage", label:"Average width", description:"Match the average selected width",
-    action:() => matchSelectionWidths("average"), enabled:commandHasMultipleNodes },
+    action:() => matchSelectionWidths("average"), enabled:commandHasMultipleNodes, allowLockedSubset:true,
+    requiredCapabilities:["resizable-width"], minimumSelection:2 },
   { id:"bringFront", label:"Bring to front", description:"Draw the selected node in front",
     action:bringSelectionToFront, enabled:commandHasPrimaryNode },
   { id:"sendBack", label:"Send to back", description:"Draw the selected node behind other nodes",
@@ -255,6 +260,11 @@ function normalizeCommandDefinition(raw){
     shortcutAliases:Object.freeze([...(raw.shortcutAliases || [])]),
     mutatesDocument,
     scope,
+    allowLockedSubset:raw.allowLockedSubset === true,
+    requiredCapabilities:Object.freeze([...(raw.requiredCapabilities || [])]),
+    minimumSelection:Number.isInteger(raw.minimumSelection) ? Math.max(0, raw.minimumSelection) : 0,
+    mutationKind:raw.mutationKind || (mutatesDocument ? "view" : "none"),
+    preview:raw.preview === true,
     selection:raw.selection || (SELECTION_SCOPED_COMMANDS.has(raw.id) ? "current selection" : "none"),
     transaction:raw.transaction || (mutatesDocument ? raw.id : ""),
     responsivePriority:raw.responsivePriority || "normal",
@@ -295,16 +305,23 @@ function commandDisabledReason(command){
   return typeof command.disabledReason === "function"
     ? command.disabledReason() : command.disabledReason;
 }
+function commandShortcut(command){
+  return typeof editingShortcutForCommand === "function"
+    ? editingShortcutForCommand(command) : command && command.shortcut || "";
+}
 function commandAriaShortcut(command){
-  if (!command.shortcut) return "";
+  const shortcut = commandShortcut(command);
+  if (!shortcut) return "";
   const isMac = typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
-  return command.shortcut
+  return shortcut
     .replace("Ctrl/Cmd", isMac ? "Meta" : "Control")
+    .replace(/\bMod\b/g, isMac ? "Meta" : "Control")
     .replace(/\//g, " ");
 }
 function commandTooltip(command){
-  const shortcut = command.shortcut ? ` (${command.shortcut})` : "";
+  const effectiveShortcut = commandShortcut(command);
+  const shortcut = effectiveShortcut ? ` (${effectiveShortcut})` : "";
   const unavailable = commandDisabledReason(command);
   return `${command.description || commandLabel(command)}${shortcut}${unavailable ? ` — ${unavailable}` : ""}`;
 }
@@ -312,6 +329,7 @@ function executeCommand(id, context = {}){
   const command = commandDefinition(id);
   if (!command) return false;
   if (command.mutatesDocument && command.scope === "selection" &&
+      !command.allowLockedSubset &&
       typeof organizationSelectionLocked === "function" && organizationSelectionLocked()){
     if (context.announce !== false) announce("The selection contains a locked object.");
     return false;
@@ -418,8 +436,9 @@ function updateCommandElement(element, command){
   element.classList.toggle("command-unavailable", !enabled);
   const reason = enabled ? "" : commandDisabledReason(command);
   const accessibleLabel = command.accessibilityLabel || label;
-  element.setAttribute("aria-label", command.shortcut
-    ? `${accessibleLabel}, ${command.shortcut}${reason ? `. ${reason}` : ""}`
+  const shortcut = commandShortcut(command);
+  element.setAttribute("aria-label", shortcut
+    ? `${accessibleLabel}, ${shortcut}${reason ? `. ${reason}` : ""}`
     : `${accessibleLabel}${reason ? `. ${reason}` : ""}`);
   const ariaShortcut = commandAriaShortcut(command);
   if (ariaShortcut) element.setAttribute("aria-keyshortcuts", ariaShortcut);
@@ -437,12 +456,10 @@ function updateCommandStates(){
 }
 function bindCommandSurfaces(root = document){
   for (const element of root.querySelectorAll("[data-command]")){
-    if (root === document){
-      const id = element.dataset.command;
-      const elements = commandElementCache.get(id) || [];
-      if (!elements.includes(element)) elements.push(element);
-      commandElementCache.set(id, elements);
-    }
+    const id = element.dataset.command;
+    const elements = commandElementCache.get(id) || [];
+    if (!elements.includes(element)) elements.push(element);
+    commandElementCache.set(id, elements);
     if (element.dataset.commandBound === "true") continue;
     element.dataset.commandBound = "true";
     element.addEventListener("click", event => {
@@ -463,7 +480,7 @@ function commandPaletteItems(){
       command:command.id,
       label:command.paletteLabel || commandLabel(command),
       description:command.description,
-      shortcut:command.shortcut,
+      shortcut:commandShortcut(command),
       enabled:commandIsEnabled(command),
       disabledReason:commandDisabledReason(command)
     }));
@@ -476,7 +493,7 @@ function shortcutCatalog(){
     "addChild","delete","fit","toggleInspector"];
   const rows = order.map(id => {
     const command = commandDefinition(id);
-    return {id, command:id, keys:command.shortcut,
+    return {id, command:id, keys:commandShortcut(command),
       title:command.paletteLabel || commandLabel(command)};
   });
   rows.splice(5, 0, {id:"redoAlt", command:"redo", keys:"Ctrl/Cmd+Y", title:"Redo"});

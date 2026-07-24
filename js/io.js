@@ -5,7 +5,8 @@ const EDITING_ARTIFACT_SELECTOR = [
   "[data-edgebend]", "[data-ortho-snap-x]", "[data-ortho-snap-y]",
   "[data-align-guide-x]", "[data-align-guide-y]", "[data-distribute-guide-x]",
   "[data-distribute-guide-y]", "[data-text-selection]",
-  "[data-frame-selection]"
+  "[data-frame-selection]", "[data-manual-guide]", "[data-layout-preview]",
+  "[data-lasso-preview]"
 ].join(", ");
 function removeEditingArtifacts(root){
   root.querySelectorAll(EDITING_ARTIFACT_SELECTOR).forEach(element => element.remove());
@@ -93,6 +94,9 @@ function newDoc(){
   if (typeof ensureOrganization === "function") ensureOrganization();
   state.metadata = typeof defaultMetadata === "function" ? defaultMetadata() : undefined;
   if (typeof ensureMetadata === "function") ensureMetadata();
+  delete state.editing;
+  if (typeof editingCancelFormatPainter === "function") editingCancelFormatPainter();
+  if (typeof editingLayoutProposal !== "undefined") editingLayoutProposal = null;
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   if (typeof metadataCsvPreview !== "undefined") metadataCsvPreview = null;
   clearSelection();
@@ -149,6 +153,7 @@ function clearCanvas(){
     state.organization = typeof defaultOrganization === "function" ? defaultOrganization() : state.organization;
     if (typeof ensureOrganization === "function") ensureOrganization();
     if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
+    delete state.editing;
     clearSelection(); render();
   }
 }

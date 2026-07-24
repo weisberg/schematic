@@ -97,7 +97,7 @@ function drawEdgeGrips(){
         if (typeof organizationCanMutateObject === "function" && !organizationCanMutateObject(e)) return;
         ev.preventDefault();
         ev.stopPropagation();
-        const step = ev.shiftKey ? GRID_SNAP : 4;
+        const step = ev.shiftKey ? (typeof editingGridSize === "function" ? editingGridSize() : GRID_SNAP) : 4;
         pushHistory(`ortho-corner:${e.id}:${key}`);
         const next = {...point, [delta.axis]:point[delta.axis] + delta.amount*step};
         setOrthoCornerPosition(e, route, corner, next);
@@ -121,7 +121,7 @@ function looseHit(w, tol = 16){
   for (let i = state.nodes.length - 1; i >= 0; i--){
     const n = state.nodes[i];
     if (isStructuralNode(n) || hidden.has(n.id)) continue;
-    const r = nodeRect(n);
+    const r = typeof nodeVisualRect === "function" ? nodeVisualRect(n) : nodeRect(n);
     if (w.x >= r.x - tol && w.x <= r.x + r.w + tol && w.y >= r.y - tol && w.y <= r.y + r.h + tol)
       return { node: n, field: null };
   }
@@ -130,14 +130,15 @@ function looseHit(w, tol = 16){
 /* shared drop-target preview for connect and reattach drags */
 function drawDropPreview(hit, w){
   const r = nodeRect(hit.node);
+  const group = el("g", {transform:nodeSvgTransform(hit.node,r)}, draftLayer);
   if (hit.field){
     const idx = (nodeRows(hit.node) || []).indexOf(hit.field);
     const mm = tableMetrics(hit.node);
-    el("rect", {x:r.x+2, y:r.y + mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
-                fill:"#2456E6", opacity:.16}, draftLayer);
+    el("rect", {x:2, y:mm.headerH + idx*mm.rowH + 1, width:r.w-4, height:mm.rowH-2, rx:4,
+                fill:"#2456E6", opacity:.16}, group);
   } else {
-    el("rect", {x:r.x-3, y:r.y-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
-                stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, draftLayer);
+    el("rect", {x:-3, y:-3, width:r.w+6, height:r.h+6, rx:10, fill:"none",
+                stroke:"#2456E6", "stroke-width":1.5, "stroke-dasharray":"4 3"}, group);
     const na = nearestAnchorWithin(hit.node, w);
     if (na) el("circle", {cx:na.x, cy:na.y, r:5, fill:"#2456E6"}, draftLayer);
   }
@@ -199,7 +200,8 @@ function reattachEdgeEnd(e, end, hit, w){
 /* Grid snapping (issue #40): the toolbar toggle is persistent, while Shift is a
    temporary override. Without either, drags retain the fine 4px positioning grid. */
 function dragSnap(v, shiftHeld = false){
-  const step = snapToGrid || shiftHeld ? GRID_SNAP : 4;
+  const step = snapToGrid || shiftHeld
+    ? (typeof editingGridSize === "function" ? editingGridSize() : GRID_SNAP) : 4;
   return Math.round(v/step)*step;
 }
 function offsetRect(r, dx, dy){
@@ -405,6 +407,7 @@ function updateSnapControl(){
 }
 function toggleSnapToGrid(){
   snapToGrid = !snapToGrid;
+  if (typeof editingPersistSnapPreference === "function") editingPersistSnapPreference();
   updateSnapControl();
 }
 /* "Clean Up": snap every node to the dot grid without dragging */
@@ -414,10 +417,11 @@ function cleanUpToGrid(){
     return false;
   }
   if (!state.nodes.length) return;
+  const grid = typeof editingGridSize === "function" ? editingGridSize() : GRID_SNAP;
   pushHistory();
   for (const n of state.nodes){
-    n.x = Math.round(n.x/GRID_SNAP)*GRID_SNAP;
-    n.y = Math.round(n.y/GRID_SNAP)*GRID_SNAP;
+    n.x = Math.round(n.x/grid)*grid;
+    n.y = Math.round(n.y/grid)*grid;
   }
   render();
 }
@@ -438,6 +442,7 @@ board.addEventListener("pointerdown", ev => {
   const edgeBendEl = ev.target.closest("[data-edgebend]");
   const edgeLabelEl = ev.target.closest("[data-edge-label-handle]");
   const statusBandHitEl = ev.target.closest("[data-status-band-hit]");
+  const manualGuideEl = ev.target.closest("[data-manual-guide]");
   const nodeEl   = ev.target.closest("[data-node]");
   const edgeEl   = ev.target.closest("[data-edge]");
   if (board.setPointerCapture) board.setPointerCapture(ev.pointerId);
@@ -452,6 +457,34 @@ board.addEventListener("pointerdown", ev => {
       board.classList.remove("panning","connecting");
       return;
     }
+  }
+
+  if (manualGuideEl){
+    const id = manualGuideEl.getAttribute("data-manual-guide");
+    const guide = typeof editingGuideById === "function" ? editingGuideById(id) : null;
+    if (!guide) return;
+    if (guide.locked){
+      announce("Unlock this guide before moving it.");
+      drag = null;
+      return;
+    }
+    pushHistory();
+    drag = {mode:"guide", guideId:id, axis:guide.axis, moved:false};
+    return;
+  }
+
+  if (typeof editingHandleFormatPainter === "function" && editingFormatPainter &&
+      (nodeEl || edgeEl)){
+    const target = nodeEl ? nodeById(nodeEl.getAttribute("data-node"))
+      : edgeById(edgeEl.getAttribute("data-edge"));
+    if (typeof organizationObjectLocked === "function" && organizationObjectLocked(target)){
+      announce("This object is locked; unlock it before applying a style.");
+      drag = null;
+      return;
+    }
+    editingHandleFormatPainter(target);
+    drag = null;
+    return;
   }
 
   if (todoCheckEl){
@@ -638,8 +671,9 @@ board.addEventListener("pointerdown", ev => {
         const bend = ep ? orthoEdgeRoute(e, ep.pa, ep.pb).bend : {x:e.orthoX, y:e.orthoY};
         return {id:e.id, x:bend.x, y:bend.y};
       }).filter(bend => Number.isFinite(bend.x) && Number.isFinite(bend.y)),
-      primaryRect:nodeRect(n),
-      targetRects:visibleCanvasNodes().filter(other => !moving.has(other.id)).map(other => nodeRect(other)),
+      primaryRect:typeof nodeVisualRect === "function" ? nodeVisualRect(n) : nodeRect(n),
+      targetRects:visibleCanvasNodes().filter(other => !moving.has(other.id))
+        .map(other => typeof nodeVisualRect === "function" ? nodeVisualRect(other) : nodeRect(other)),
       selectionIds:[...selectedIds], shiftToggle:!!ev.shiftKey, wasSelected, moved:false, guides:null };
     render();
     return;
@@ -651,12 +685,15 @@ board.addEventListener("pointerdown", ev => {
     return;
   }
   // empty canvas: drag marquee; Alt/middle-drag pans.
-  if (ev.altKey || ev.button === 1){
+  if ((ev.altKey && !ev.shiftKey) || ev.button === 1){
     drag = { mode:"pan", sx: ev.clientX, sy: ev.clientY, vx: view.x, vy: view.y, moved:false };
     board.classList.add("panning");
   } else {
     const w = clientToWorld(ev.clientX, ev.clientY);
-    drag = { mode:"marquee", sx: ev.clientX, sy: ev.clientY, start:w, current:w, moved:false };
+    drag = { mode:"marquee", sx: ev.clientX, sy: ev.clientY, start:w, current:w,
+      points:[w], selectionMode:typeof editingSelectionMode === "string" ? editingSelectionMode : "contain",
+      operation:typeof editingSelectionOperation === "function" ? editingSelectionOperation(ev) : "replace",
+      moved:false };
   }
 });
 
@@ -687,19 +724,21 @@ board.addEventListener("pointermove", ev => {
       drag.moved = true;
     }
     const dx = w.x - drag.start.x, dy = w.y - drag.start.y;
-    const useGrid = snapToGrid || ev.shiftKey;
-    const alignment = useGrid ? null : smartObjectSnap(
-      offsetRect(drag.primaryRect, dx, dy), drag.targetRects,
-      ALIGN_GUIDE_SCREEN_THRESHOLD / view.k);
-    const alignedDx = dx + (alignment ? alignment.dx : 0);
-    const alignedDy = dy + (alignment ? alignment.dy : 0);
+    const primaryStart = drag.starts.find(start => start.id === drag.id);
+    const desiredRect = offsetRect(drag.primaryRect, dx, dy);
+    const snap = typeof editingResolveNodeSnap === "function" && primaryStart
+      ? editingResolveNodeSnap(desiredRect,
+        {x:primaryStart.x + dx, y:primaryStart.y + dy}, drag.targetRects,
+        ALIGN_GUIDE_SCREEN_THRESHOLD / view.k, {shiftKey:ev.shiftKey})
+      : null;
+    const alignedDx = dx + (snap ? snap.dx : 0);
+    const alignedDy = dy + (snap ? snap.dy : 0);
     for (const start of drag.starts){
       const n = nodeById(start.id);
       if (!n) continue;
-      n.x = alignment && alignment.xSnapped ? start.x + alignedDx : dragSnap(start.x + dx, ev.shiftKey);
-      n.y = alignment && alignment.ySnapped ? start.y + alignedDy : dragSnap(start.y + dy, ev.shiftKey);
+      n.x = start.x + alignedDx;
+      n.y = start.y + alignedDy;
     }
-    const primaryStart = drag.starts.find(start => start.id === drag.id);
     const primaryNode = primaryStart && nodeById(drag.id);
     if (primaryStart && primaryNode){
       const routeDx = primaryNode.x - primaryStart.x;
@@ -711,11 +750,28 @@ board.addEventListener("pointermove", ev => {
         e.orthoY = bendStart.y + routeDy;
       }
     }
-    drag.guides = alignment && primaryNode ? alignmentGuideGeometry(
-      alignment, nodeRect(primaryNode), ALIGN_GUIDE_SCREEN_OVERSHOOT / view.k) : null;
+    const smart = snap && snap.smart ? {...snap.smart} : null;
+    if (smart && snap.xSource && !["alignment","distribution"].includes(snap.xSource.type)){
+      smart.xMatch = null; smart.distributeX = null; smart.xSnapped = false;
+    }
+    if (smart && snap.ySource && !["alignment","distribution"].includes(snap.ySource.type)){
+      smart.yMatch = null; smart.distributeY = null; smart.ySnapped = false;
+    }
+    drag.guides = smart && primaryNode ? alignmentGuideGeometry(
+      smart, typeof nodeVisualRect === "function" ? nodeVisualRect(primaryNode) : nodeRect(primaryNode),
+      ALIGN_GUIDE_SCREEN_OVERSHOOT / view.k) : null;
     if (state.nodes.length > 150) fastDragRender(drag.starts.map(s => s.id));
     else render();
     drawAlignmentGuides(drag.guides);
+    if (typeof editingShowSnapFeedback === "function") editingShowSnapFeedback(snap);
+  } else if (drag.mode === "guide"){
+    const point = clientToWorld(ev.clientX, ev.clientY);
+    if (typeof editingUpdateGuide === "function")
+      editingUpdateGuide(drag.guideId, {
+        position:drag.axis === "x" ? point.x : point.y
+      }, {history:false,render:false});
+    drag.moved = true;
+    render();
   } else if (drag.mode === "frame-resize"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     const n = nodeById(drag.id);
@@ -737,12 +793,13 @@ board.addEventListener("pointermove", ev => {
     const allowedDy = drag.axes.includes("y") ? target.y - drag.original.y : 0;
     if (!drag.moved && Math.hypot(allowedDx, allowedDy) <= 1 / view.k) return;
     if (!drag.moved){ pushHistory(); drag.moved = true; }
-    const snapped = snapOrthoBend(e, target, ep, 10 / view.k, ev.shiftKey);
+    const snapped = snapOrthoBend(e, target, ep, 10 / view.k, ev.shiftKey || snapToGrid);
     setOrthoCornerPosition(e, orthoEdgeRoute(e, ep.pa, ep.pb),
       {key:drag.cornerKey, axes:drag.axes}, snapped);
     if (!drag.axes.includes("x")) snapped.snapX = null;
     if (!drag.axes.includes("y")) snapped.snapY = null;
     drag.snap = snapped;
+    if (typeof editingShowSnapFeedback === "function") editingShowSnapFeedback(snapped);
     drawOnly();
   } else if (drag.mode === "edge-label"){
     const e = edgeById(drag.edgeId);
@@ -764,8 +821,16 @@ board.addEventListener("pointermove", ev => {
     if (Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) > 3) drag.moved = true;
     draftLayer.innerHTML = "";
     const r = rectFromPoints(drag.start, drag.current);
-    el("rect", {x:r.x, y:r.y, width:r.w, height:r.h, fill:"#2456E6", opacity:.10,
-                stroke:"#2456E6", "stroke-width":1.3, "stroke-dasharray":"5 4"}, draftLayer);
+    if (drag.selectionMode === "lasso"){
+      const last = drag.points[drag.points.length - 1];
+      if (!last || Math.hypot(last.x-w.x,last.y-w.y) > 3/view.k) drag.points.push(w);
+      el("polygon", {points:drag.points.map(point => `${point.x},${point.y}`).join(" "),
+        fill:"#2456E6", opacity:.10, stroke:"#2456E6", "stroke-width":1.3,
+        "stroke-dasharray":"5 4", "data-lasso-preview":"1"}, draftLayer);
+    } else {
+      el("rect", {x:r.x, y:r.y, width:r.w, height:r.h, fill:"#2456E6", opacity:.10,
+                  stroke:"#2456E6", "stroke-width":1.3, "stroke-dasharray":"5 4"}, draftLayer);
+    }
   } else if (drag.mode === "connect"){
     const w = clientToWorld(ev.clientX, ev.clientY);
     draftLayer.innerHTML = "";
@@ -817,14 +882,21 @@ board.addEventListener("pointerup", ev => {
       toggleNodeSelection(drag.id);
       render();
     } else if (drag.moved && (state.nodes.length > 150 || hadGuides)) render();
+    if (typeof editingClearSnapFeedback === "function") editingClearSnapFeedback();
+  } else if (drag.mode === "guide"){
+    render();
   } else if (drag.mode === "marquee"){
     draftLayer.innerHTML = "";
     if (drag.moved){
       const r = rectFromPoints(drag.start, drag.current);
-      const ids = visibleCanvasNodes().filter(n => rectFullyContains(r, nodeRect(n))).map(n => n.id);
-      setSelection("node", ids);
+      const ids = typeof editingSpatialSelectionIds === "function"
+        ? editingSpatialSelectionIds(drag.selectionMode,r,drag.points)
+        : visibleCanvasNodes().filter(n => rectFullyContains(r,nodeRect(n))).map(n => n.id);
+      if (typeof editingApplyNodeSelection === "function")
+        editingApplyNodeSelection(ids,drag.operation);
+      else setSelection("node",ids);
     } else {
-      clearSelection();
+      if (drag.operation === "replace") clearSelection();
     }
     render();
   } else if (drag.mode === "connect"){
@@ -848,6 +920,7 @@ board.addEventListener("pointerup", ev => {
     else render();   // dropped on empty canvas: no change, redraw grips
   } else if (drag.mode === "ortho-bend"){
     drag.snap = null;
+    if (typeof editingClearSnapFeedback === "function") editingClearSnapFeedback();
     render();
   } else if (drag.mode === "edge-label"){
     render();
@@ -860,10 +933,11 @@ board.addEventListener("pointercancel", ev => {
   clearLongPress();
   if (activePointers.size < 2) touchGesture = null;
   const redrawDraft = drag && (drag.mode === "ortho-bend" || drag.mode === "edge-label" ||
-    (drag.mode === "node" && drag.guides));
+    (drag.mode === "node" && drag.guides) || drag.mode === "guide");
   drag = null;
   board.classList.remove("panning","connecting");
   if (redrawDraft) render();
+  if (typeof editingClearSnapFeedback === "function") editingClearSnapFeedback();
 });
 
 board.addEventListener("wheel", ev => {
@@ -880,6 +954,14 @@ board.addEventListener("wheel", ev => {
 
 /* -------------------------- Keyboard ------------------------------ */
 function matchShortcut(ev, typing){
+  if (typeof editingMatchShortcut === "function"){
+    const command = editingMatchShortcut(ev, typing);
+    if (command) return command;
+    if (typing) return null;
+    if (ev.key === "Escape") return "escape";
+    if (ev.key.startsWith("Arrow")) return "nudge";
+    return null;
+  }
   const key = ev.key.toLowerCase();
   const mod = ev.ctrlKey || ev.metaKey;
   // Search shortcuts remain application-level even when focus is already in
@@ -917,9 +999,16 @@ function matchShortcut(ev, typing){
 function runShortcut(id, ev){
   if (id === "escape"){
     if (typeof searchPanelOpen === "function" && searchPanelOpen()){ closeSearchPanel(); return; }
+    if (typeof editingCancelFormatPainter === "function" && editingCancelFormatPainter()) return;
+    if (typeof editingLayoutProposal !== "undefined" && editingLayoutProposal){
+      editingCancelLayoutPreview();
+      if (typeof editingCloseDialog === "function") editingCloseDialog();
+      return;
+    }
     closeInlineEditor(false); closeCommandPalette(); closeShortcutModal(); hideCtx(); clearSelection(); render(); return;
   }
-  if (id === "nudge" && ev) return nudgeSelection(ev.key, ev.shiftKey ? 24 : 4);
+  if (id === "nudge" && ev) return nudgeSelection(ev.key,
+    ev.shiftKey ? (typeof editingGridSize === "function" ? editingGridSize() : GRID_SNAP) : 4);
   if (typeof executeCommand === "function")
     return executeCommand(id, {source:"shortcut", event:ev});
 }
@@ -1024,6 +1113,17 @@ function worldToWrap(x, y){
   const wr = wrap.getBoundingClientRect();
   return { x: br.left - wr.left + view.x + x*view.k, y: br.top - wr.top + view.y + y*view.k };
 }
+function inlineNodeOverlayBox(n, x, y, w, h, fontSize, minWidth = 0, minHeight = 0){
+  const corners = [
+    {x,y},{x:x+w,y},{x:x+w,y:y+h},{x,y:y+h}
+  ].map(point => nodeTransformActive(n) ? transformNodePoint(n,point) : point)
+    .map(point => worldToWrap(point.x,point.y));
+  const left = Math.min(...corners.map(point => point.x));
+  const top = Math.min(...corners.map(point => point.y));
+  const right = Math.max(...corners.map(point => point.x));
+  const bottom = Math.max(...corners.map(point => point.y));
+  return {x:left,y:top,w:Math.max(minWidth,right-left),h:Math.max(minHeight,bottom-top),fontSize};
+}
 function inlineEditorBox(kind, id, rowId){
   if (kind === "row"){
     const n = nodeById(id);
@@ -1032,9 +1132,8 @@ function inlineEditorBox(kind, id, rowId){
     if (idx < 0) return null;
     const m = tableMetrics(n);
     const r = nodeRect(n);
-    const p = worldToWrap(r.x + m.nameX - 4, r.y + m.headerH + idx*m.rowH + 1);
-    return { x:p.x, y:p.y, w:Math.max(100, (r.w - m.nameX - 8)*view.k),
-             h:Math.max(20, (m.rowH - 2)*view.k), fontSize:Math.max(11, m.nameSize*view.k) };
+    return inlineNodeOverlayBox(n,r.x+m.nameX-4,r.y+m.headerH+idx*m.rowH+1,
+      r.w-m.nameX-8,m.rowH-2,Math.max(11,m.nameSize*view.k),100,20);
   }
   if (kind === "node"){
     const n = nodeById(id);
@@ -1056,31 +1155,26 @@ function inlineEditorBox(kind, id, rowId){
                h:Math.max(28, (Math.min(titleSize, r.h*.45) - 16)*view.k), fontSize:13 };
     }
     if (n.type === "text"){
-      const p = worldToWrap(r.x + 4, r.y + 4);
-      return {x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 8), h:Math.max(36, r.h*view.k - 8),
-              fontSize:Math.max(12, textBoxFont(n)*view.k)};
+      return inlineNodeOverlayBox(n,r.x+4,r.y+4,r.w-8,r.h-8,
+        Math.max(12,textBoxFont(n)*view.k),120,36);
     }
     if (n.type === "status"){
       const layout = statusNodeLayout(n);
       const mainX = layout.side === "left" ? r.x + layout.bandW : r.x;
-      const p = worldToWrap(mainX + 6, r.y + 5);
-      return {x:p.x, y:p.y, w:Math.max(80, layout.mainW*view.k - 12),
-              h:Math.max(36, r.h*view.k - 10), fontSize:Math.max(12, statusNodeFont(n)*view.k)};
+      return inlineNodeOverlayBox(n,mainX+6,r.y+5,layout.mainW-12,r.h-10,
+        Math.max(12,statusNodeFont(n)*view.k),80,36);
     }
     if (n.type === "concept"){
-      const p = worldToWrap(r.x + 12, r.y + 8);
-      return { x:p.x, y:p.y, w:Math.max(120, r.w*view.k - 24),
-               h:Math.max(32, r.h*view.k - 16), fontSize:Math.max(12, conceptFont(n)*view.k) };
+      return inlineNodeOverlayBox(n,r.x+12,r.y+8,r.w-24,r.h-16,
+        Math.max(12,conceptFont(n)*view.k),120,32);
     }
     if (n.type === "note"){
       const layout = richNoteLayout(n);
-      const p = worldToWrap(r.x + 8, r.y + 4);
-      return { x:p.x, y:p.y, w:Math.max(140, (r.w - 16)*view.k),
-               h:Math.max(28, (layout.titleH - 8)*view.k), fontSize:Math.max(12, (layout.base + 1.5)*view.k) };
+      return inlineNodeOverlayBox(n,r.x+8,r.y+4,r.w-16,layout.titleH-8,
+        Math.max(12,(layout.base+1.5)*view.k),140,28);
     }
-    const p = worldToWrap(r.x + 8, r.y + 4);
-    return { x:p.x, y:p.y, w:Math.max(140, r.w*view.k - 16), h:Math.max(28, tableMetrics(n).headerH*view.k - 8),
-             fontSize:Math.max(12, tableMetrics(n).headerSize*view.k) };
+    return inlineNodeOverlayBox(n,r.x+8,r.y+4,r.w-16,tableMetrics(n).headerH-8,
+      Math.max(12,tableMetrics(n).headerSize*view.k),140,28);
   }
   const e = edgeById(id), ep = e && edgeEndpoints(e);
   if (!e || !ep) return null;
@@ -1098,15 +1192,11 @@ function inlineStatusPickerBox(n){
   const r = nodeRect(n);
   const layout = statusNodeLayout(n);
   const bandX = layout.side === "left" ? r.x : r.x + layout.mainW;
-  const band = worldToWrap(bandX, r.y);
   const width = Math.max(150, Math.min(220, layout.bandW * view.k + 64));
-  return {
-    x:band.x + (layout.bandW * view.k - width) / 2,
-    y:band.y + Math.max(2, (r.h * view.k - 34) / 2),
-    w:width,
-    h:34,
-    fontSize:Math.max(11, layout.statusFs * view.k)
-  };
+  const box = inlineNodeOverlayBox(n,bandX,r.y,layout.bandW,r.h,
+    Math.max(11,layout.statusFs*view.k),width,34);
+  return {x:box.x+(box.w-width)/2,y:box.y+(box.h-34)/2,w:width,h:34,
+    fontSize:box.fontSize};
 }
 function closeInlineStatusPicker(){
   if (!inlineStatusPicker) return;
@@ -1345,6 +1435,7 @@ function closeCommandPalette(){
   paletteModal = null;
 }
 function openShortcutModal(){
+  if (typeof openShortcutPreferences === "function") return openShortcutPreferences();
   closeShortcutModal();
   const modal = document.createElement("div");
   modal.className = "modal open shortcut-modal";
