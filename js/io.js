@@ -110,12 +110,18 @@ function newDoc(){
   applyDialect("ansi", { render:false });
   setPngAsShown(false);
   render();
+  if (typeof historyResetForNewDocument === "function") historyResetForNewDocument();
   syncHistoryButtons();
   updateDocLabel();
   clearRecoverySave();
 }
 function exportJsonDocument(){
   download(doc.name || "schematic-diagram.json", serializeDocument(), "application/json");
+}
+function exportJsonWithoutHistory(){
+  const source = doc.name || "schematic-diagram.json";
+  const name = source.replace(/(\.schematic)?\.json$/i, "") + "-without-history.schematic.json";
+  download(name, serializeDocument({includeHistory:false}), "application/json");
 }
 function importJsonDocument(){ fallbackOpen(); }
 

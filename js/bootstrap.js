@@ -279,6 +279,7 @@ if (typeof ensureOrganization === "function") ensureOrganization();
 if (typeof ensureMetadata === "function") ensureMetadata();
 if (typeof ensureEditingSettings === "function") ensureEditingSettings({write:false});
 ensureFieldIds();
+if (typeof initializeHistory === "function") initializeHistory();
 initializeCommands();
 if (typeof initializeEditingCommands === "function") initializeEditingCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
@@ -287,6 +288,7 @@ setupRibbon();
 if (typeof initializeEditingUi === "function") initializeEditingUi();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
 if (typeof initializeMetadataUi === "function") initializeMetadataUi();
+if (typeof initializeHistoryUi === "function") initializeHistoryUi();
 render();
 syncHistoryButtons();
 updateDocLabel();
@@ -702,6 +704,43 @@ window.__T = {
   get editingLayoutProposal(){ return editingLayoutProposal; },
   get editingStyleClipboard(){ return editingStyleClipboard; },
   get editingFormatPainter(){ return editingFormatPainter; },
+  HISTORY_SCHEMA_VERSION,
+  HISTORY_CURRENT_ID,
+  historyStableStringify,
+  historyChecksum,
+  historyModelSnapshot,
+  historyDiffSnapshots,
+  historySummaryText,
+  historyAllVersions,
+  historyVersion,
+  historyCreateCheckpoint,
+  historyTogglePin,
+  historyCompareVersions,
+  historyBeginTransaction,
+  historySetPendingMeta,
+  historyFinalizePendingTransaction,
+  historyRecordImmediateTransaction,
+  historyDocumentPayload,
+  historyAdoptDocument,
+  historyResetForNewDocument,
+  historyApplyRetention,
+  historyPlanPartialRestore,
+  historyApplyPartialRestore,
+  historyRestoreWhole,
+  historyDuplicateVersion,
+  historyImportArchiveText,
+  exportHistoryArchive,
+  openHistoryPanel,
+  closeHistoryPanel,
+  renderHistoryPanel,
+  openCheckpointComposer,
+  get historyState(){ return historyClone(historyState); },
+  get historyLocal(){ return historyClone(historyLocal); },
+  get historyPreferences(){ return {...historyPreferences}; },
+  get historyStorageStatus(){ return {...historyStorageStatus}; },
+  get historyPanelOpen(){ return historyPanelOpen; },
+  get historyCompare(){ return historyClone(historyCompare); },
+  get historyRestorePlan(){ return historyClone(historyRestorePlan); },
   matchSelectionHeights,
   matchSelectionSizes,
   nodeRotation,

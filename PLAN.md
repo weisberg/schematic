@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, fifteen ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, sixteen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,8 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `organization` → `metadata` → `editing` → `commands` → `context-menu` → `bootstrap`.
+`search` → `organization` → `metadata` → `editing` → `history` → `commands` → `context-menu` →
+`bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -108,6 +109,24 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
         "propertyIds": ["p-owner", "p-degree"], "requiredPropertyIds": ["p-owner"] }
     ],
     "relationshipTypes": []
+  },
+  "history": {
+    "schemaVersion": 1,
+    "storage": "hybrid",
+    "documentId": "doc-…",
+    "sequence": 12,
+    "checkpoints": [
+      { "id": "checkpoint-…", "type": "named", "name": "Review baseline",
+        "description": "Before schema migration", "timestamp": 1784900000000,
+        "sequence": 8, "author": "", "pinned": true,
+        "summary": { "added": 2, "removed": 0, "changed": 4, "moved": 1, "relinked": 0 },
+        "checksum": "fnv1a-…", "snapshot": { "version": 1, "nodes": [], "edges": [] } }
+    ],
+    "transactions": [
+      { "id": "txn-…", "sequence": 9, "commandId": "layoutTree",
+        "label": "Tree layout", "origin": "user", "affectedIds": ["n1", "n2"],
+        "operations": [], "beforeChecksum": "fnv1a-…", "afterChecksum": "fnv1a-…" }
+    ]
   },
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
@@ -234,6 +253,12 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   use ISO `YYYY-MM-DD`; references store object IDs; formulas are parsed by a bounded, non-executable
   expression engine. Unknown registry fields and orphan values are preserved. Sensitive definitions
   are excluded from search and default CSV export. Missing metadata migrates to an empty registry.
+- `history` (v1.42, additive) is the portable portion of a hybrid durable-history model.
+  It stores a stable document identity, named/pinned checkpoints with checksummed model snapshots,
+  and bounded structured transaction summaries. Frequent automatic versions stay in guarded
+  `localStorage` under `schematic.history.{documentId}` with visible age/count retention; they are
+  not embedded in every save. Session undo and crash recovery remain separate. Native save/export
+  includes portable history by default, while “JSON without history” deliberately omits it.
 - `meta.customStatuses` (v1.17, additive) is the shared, case-insensitively deduplicated list
   of custom status labels in the diagram. Built-in labels are never written there.
   Imports also recover custom labels already used by status nodes when older JSON lacks this key.
@@ -254,7 +279,7 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
 
 | Area | Functions |
 |---|---|
-| State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `pushHistoryOnce`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument` |
+| State/history | `snapshot`, `restore`, `pushHistory(coalesceKey?)`, `undo`, `redo`, `serializeDocument`, `importDocText`, `migrateDocument`, `historyCreateCheckpoint`, `historyDiffSnapshots`, `historyRestoreWhole`, `historyPlanPartialRestore`, `historyApplyPartialRestore` |
 | Geometry | `nodeSize`, `nodeRect`, `nodeRows(n)` ← shared row accessor (table fields / todo items), `tableMetrics(n)` ← single source of truth for row math, `conceptFont`, `noteFont`, `richNoteLayout`, `textBoxLayout`, `textBoxMargins`, `manualNodeHeight`, `fieldRowCenterY`, `fieldAnchor`, `nodeAnchor`, `clientToWorld`, `hitTest(worldPt)` |
 | Icons | `nodeIcon`, `nodeSubtitle`, `nodeIconOptions`, `setNodeIcon`, `setNodeSubtitle`, `normalizeNodeDecoration` |
 | Render | `render()` (full), `drawOnly()` (canvas only, preserves inspector DOM/focus), `drawNode`, `drawRichNote`, `drawStatusNode`, `drawEdge`, `edgeEndpoints`, `edgePath`, `orthoCornerStyle`, `roundedPolylinePath`, `drawNotation`, `el(tag, attrs, parent)` |
@@ -494,6 +519,16 @@ Harness quirks you must respect:
 - Dark theme: status-bar toggle persisted in `meta.theme`; SVG draw code reads a `THEME`
   lookup so document colors and dark chrome render/export consistently.
 - Undo/redo: 100-step snapshot stack with time+key coalescing for continuous edits.
+- Durable version history (v1.42): automatic local snapshots and portable named/pinned
+  checkpoints in a chronological, searchable timeline; optional local author and checkpoint
+  descriptions; arbitrary-version comparison with explicit added/removed/moved/resized/relinked
+  classifications, before/after values, a non-color-only SVG overlay, accessible object outline,
+  and step-through navigation. Whole-document restore creates a pinned pre-restore checkpoint and
+  keeps earlier history; partial restore previews dependencies and identity/type/port/source-control
+  conflicts, supports copy/replace/skip resolution, preserves unrelated work, and applies as one
+  undoable transaction. Hybrid retention is offline, atomic, checksum-validated, quota/corruption
+  tolerant, and exposes storage use. JSON can be exported with or without portable history, and a
+  separate history archive supports deterministic round-tripping.
 
 **I/O (all local, no server)**
 - Document lifecycle: Open / Save / Save As via File System Access API when available;
