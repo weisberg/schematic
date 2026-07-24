@@ -484,6 +484,7 @@ function renderInspector(){
                : n.type === "text" ? "Plain text" : n.type === "status" ? "Status node" : "Table node";
     setInspectorHeader(kind, n.title, {kind:"node", color:n.color || themeColors().ink});
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(n);
+    if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(n);
 
     if (n.type === "swimlane"){
       inspectorSection("swimlane:basics", "Basics", () => {
@@ -827,6 +828,7 @@ function renderInspector(){
     const a = nodeById(e.from), b = nodeById(e.to);
     setInspectorHeader("Edge", `${a.title} → ${b.title}`, {kind:"edge"});
     if (typeof renderOrganizationInspectorForObject === "function") renderOrganizationInspectorForObject(e);
+    if (typeof renderMetadataInspectorForObject === "function") renderMetadataInspectorForObject(e);
     const touchesLinkOnlyNode = linkOnlyNode(a) || linkOnlyNode(b);
     const endName = (n, fid) => {
       const rows = fid ? nodeRows(n) : null;
@@ -992,6 +994,7 @@ function renderMultiInspector(){
   const nonStructural = nodes.filter(n => !isStructuralNode(n));
   setInspectorHeader("Multi-selection", `${nodes.length} nodes`);
   if (typeof renderOrganizationMultiInspector === "function") renderOrganizationMultiInspector(nodes);
+  if (typeof renderMetadataMultiInspector === "function") renderMetadataMultiInspector(nodes);
   if (nodes.every(n => n.type === "status")){
     inspectorSection("multi:status", "Status", () => {
       frow("Status", () => {

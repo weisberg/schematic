@@ -290,7 +290,9 @@ function searchNodeRecords(node, context){
 
   for (const [property, value] of [
     ["Owner", node.owner],
-    ["User-defined type", node.customType || node.userType || node.semanticType],
+    ["User-defined type", typeof metadataTypeForObject === "function"
+      ? metadataTypeForObject(node)?.name || node.semanticTypeId
+      : node.customType || node.userType || node.semanticType],
     ["Layer", node.layerName || node.layer || node.layerId],
     ["Group", node.groupName || node.group || node.groupId],
     ["Page", node.pageName || node.page || node.pageId],
@@ -315,12 +317,17 @@ function searchNodeRecords(node, context){
     if (!node[root] || typeof node[root] !== "object") continue;
     for (const entry of searchMetadataEntries(node[root])){
       const labelPath = [root, ...entry.path];
-      const label = searchPathLabel(labelPath);
+      const definition = root === "properties" && typeof metadataPropertyById === "function"
+        ? metadataPropertyById(entry.path[0]) : null;
+      if (definition?.sensitive) continue;
+      const label = definition
+        ? [definition.name, ...entry.path.slice(1)].join(".") : searchPathLabel(labelPath);
       const unsafe = /(?:^|\.)(?:id|key|formula|reference|source)(?:\.|$)/i.test(label);
       searchAddRecord(records, base, label, "metadata", entry.value, {
         qualifier:label,
-        replaceable:typeof entry.value === "string" && !unsafe && node.sourceControlled !== true,
-        path:typeof entry.value === "string" && !unsafe
+        replaceable:typeof entry.value === "string" && !unsafe && !definition?.readOnly &&
+          node.sourceControlled !== true,
+        path:typeof entry.value === "string" && !unsafe && !definition?.readOnly
           ? {kind:"metadata", root, segments:entry.path} : null,
         semantic:unsafe
       });
@@ -375,7 +382,9 @@ function searchEdgeRecords(edge, context, nodesById){
 
   for (const [property, value] of [
     ["Owner", edge.owner],
-    ["User-defined type", edge.customType || edge.userType || edge.semanticType],
+    ["User-defined type", typeof metadataTypeForObject === "function"
+      ? metadataTypeForObject(edge)?.name || edge.semanticTypeId
+      : edge.customType || edge.userType || edge.semanticType],
     ["Layer", edge.layerName || edge.layer || edge.layerId],
     ["Group", edge.groupName || edge.group || edge.groupId],
     ["Page", edge.pageName || edge.page || edge.pageId],
@@ -400,12 +409,17 @@ function searchEdgeRecords(edge, context, nodesById){
     if (!edge[root] || typeof edge[root] !== "object") continue;
     for (const entry of searchMetadataEntries(edge[root])){
       const labelPath = [root, ...entry.path];
-      const label = searchPathLabel(labelPath);
+      const definition = root === "properties" && typeof metadataPropertyById === "function"
+        ? metadataPropertyById(entry.path[0]) : null;
+      if (definition?.sensitive) continue;
+      const label = definition
+        ? [definition.name, ...entry.path.slice(1)].join(".") : searchPathLabel(labelPath);
       const unsafe = /(?:^|\.)(?:id|key|formula|reference|source)(?:\.|$)/i.test(label);
       searchAddRecord(records, base, label, "metadata", entry.value, {
         qualifier:label,
-        replaceable:typeof entry.value === "string" && !unsafe && edge.sourceControlled !== true,
-        path:typeof entry.value === "string" && !unsafe
+        replaceable:typeof entry.value === "string" && !unsafe && !definition?.readOnly &&
+          edge.sourceControlled !== true,
+        path:typeof entry.value === "string" && !unsafe && !definition?.readOnly
           ? {kind:"metadata", root, segments:entry.path} : null,
         semantic:unsafe
       });

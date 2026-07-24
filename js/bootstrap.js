@@ -3,6 +3,7 @@
 /* --------------------------- Seed data ---------------------------- */
 function seed(){
   if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
+  if (typeof defaultMetadata === "function") state.metadata = defaultMetadata();
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   const N = (o) => { o.id = uid(); state.nodes.push(o); return o.id; };
   const E = (from, to, kind, label, fromField, toField, options = {}) => {
@@ -180,12 +181,84 @@ function seed(){
   });
   N({type:"swimlane", orientation:"vertical", x:780, y:555, title:"Delivery & links",
      color:"#FBE8EC", titleColor:"#C20029", w:840, h:415});
+
+  /* Typed metadata is represented independently from shape and color. The
+     starter uses enough schema to make the Model tools discoverable without
+     turning the canvas into a schema tutorial. */
+  if (typeof normalizeMetadata === "function"){
+    state.metadata = normalizeMetadata({
+      schemaVersion:1,
+      properties:[
+        {id:"p-owner",name:"Owner",description:"Accountable person or team",type:"person",
+         scope:"canonical",appliesTo:["node"],order:0},
+        {id:"p-environment",name:"Environment",type:"enum",scope:"canonical",appliesTo:["node"],
+         options:[{id:"production",label:"Production"},{id:"sandbox",label:"Sandbox"}],order:1},
+        {id:"p-criticality",name:"Criticality",type:"enum",scope:"canonical",appliesTo:["node"],
+         options:[{id:"low",label:"Low"},{id:"medium",label:"Medium"},{id:"high",label:"High"}],order:2},
+        {id:"p-reviewed",name:"Last reviewed",type:"date",scope:"canonical",appliesTo:["node"],order:3},
+        {id:"p-degree",name:"Relationship count",description:"Inbound plus outbound links",
+         type:"formula",scope:"derived",appliesTo:["node"],formula:"countIn() + countOut()",order:4},
+        {id:"p-confidence",name:"Confidence",type:"number",scope:"canonical",appliesTo:["edge"],
+         min:0,max:100,precision:0,unit:"percent",order:5},
+        {id:"p-source",name:"Source repository",type:"url",scope:"external",appliesTo:["node"],
+         readOnly:true,sourceAuthority:"external",syncDirection:"inbound",order:6},
+        {id:"p-classification",name:"Data classification",type:"enum",scope:"canonical",
+         appliesTo:["node"],sensitive:true,
+         options:[{id:"internal",label:"Internal"},{id:"restricted",label:"Restricted"}],order:7}
+      ],
+      objectTypes:[
+        {id:"ot-service",name:"Service",description:"Deployed product or platform capability",
+         propertyIds:["p-owner","p-environment","p-criticality","p-reviewed","p-degree","p-source"],
+         requiredPropertyIds:["p-owner","p-environment"],defaultIcon:"lucide:server"},
+        {id:"ot-experiment",name:"Experiment",propertyIds:["p-owner","p-reviewed","p-degree"],
+         requiredPropertyIds:["p-owner"]},
+        {id:"ot-metric",name:"Metric",propertyIds:["p-owner","p-criticality","p-degree"],
+         requiredPropertyIds:["p-owner"],defaultShape:"circle"},
+        {id:"ot-dataset",name:"Dataset",propertyIds:["p-owner","p-classification","p-degree"],
+         requiredPropertyIds:["p-owner"]}
+      ],
+      relationshipTypes:[
+        {id:"rt-depends",name:"Depends on",description:"Execution dependency",
+         propertyIds:["p-confidence"],allowedSourceTypeIds:["ot-service"],
+         allowedTargetTypeIds:["ot-experiment"]}
+      ]
+    });
+    const assign = (id, semanticTypeId, properties) => {
+      const object = state.nodes.find(node => node.id === id);
+      if (!object) return;
+      object.semanticTypeId = semanticTypeId;
+      object.properties = properties;
+      object.propertyProvenance = Object.fromEntries(
+        Object.keys(properties).map(propertyId => [propertyId,{origin:"manual"}])
+      );
+    };
+    assign(strategy,"ot-service",{
+      "p-owner":{id:"growth",label:"Growth team"},"p-environment":"production",
+      "p-criticality":"high","p-reviewed":"2026-07-24"
+    });
+    assign(measure,"ot-experiment",{
+      "p-owner":{id:"measurement",label:"Measurement team"},"p-reviewed":"2026-07-22"
+    });
+    assign(kpi,"ot-metric",{
+      "p-owner":{id:"analytics",label:"Analytics"},"p-criticality":"high"
+    });
+    for (const id of [customers,orders,rewards,audit,orderRewards])
+      assign(id,"ot-dataset",{"p-owner":{id:"data-platform",label:"Data platform"},
+        "p-classification":"internal"});
+    const dependency = state.edges.find(edge => edge.from === strategy && edge.to === measure);
+    if (dependency){
+      dependency.semanticTypeId = "rt-depends";
+      dependency.properties = {"p-confidence":85};
+      dependency.propertyProvenance = {"p-confidence":{origin:"manual"}};
+    }
+  }
 }
 function perfSeed(n = 500){
   state.nodes = [];
   state.edges = [];
   state.nextId = 1;
   if (typeof defaultOrganization === "function") state.organization = defaultOrganization();
+  if (typeof defaultMetadata === "function") state.metadata = defaultMetadata();
   if (typeof organizationIsolation !== "undefined") organizationIsolation = null;
   clearSelection();
   for (let i = 0; i < n; i++){
@@ -202,11 +275,14 @@ function perfSeed(n = 500){
 buildScaffold();
 seed();
 if (typeof ensureOrganization === "function") ensureOrganization();
+if (typeof ensureMetadata === "function") ensureMetadata();
 ensureFieldIds();
 initializeCommands();
 if (typeof initializeOrganizationCommands === "function") initializeOrganizationCommands();
+if (typeof initializeMetadataCommands === "function") initializeMetadataCommands();
 setupRibbon();
 if (typeof initializeOrganizationUi === "function") initializeOrganizationUi();
+if (typeof initializeMetadataUi === "function") initializeMetadataUi();
 render();
 syncHistoryButtons();
 updateDocLabel();
@@ -520,6 +596,61 @@ window.__T = {
   get organizationIsolation(){ return organizationIsolation ? {...organizationIsolation} : null; },
   get organizationExplorerTarget(){ return organizationExplorerTarget ? {...organizationExplorerTarget} : null; },
   get organizationFlatRows(){ return organizationFlatCache.map(row => ({...row})); },
+  ensureMetadata,
+  normalizeMetadata,
+  cleanMetadataForDocument,
+  cleanMetadataObjectForDocument,
+  metadataPropertyDefinitions,
+  metadataObjectTypes,
+  metadataRelationshipTypes,
+  metadataPropertyById,
+  metadataObjectTypeById,
+  metadataRelationshipTypeById,
+  metadataDefinitionsForObject,
+  metadataNormalizeValue,
+  metadataRawValue,
+  metadataValueProvenance,
+  metadataValue,
+  metadataDisplayValue,
+  metadataFormulaTokens,
+  metadataParseFormula,
+  metadataValidateFormulaAst,
+  metadataFormulaDependencies,
+  metadataFormulaResult,
+  metadataFormulaExplanation,
+  metadataSetValue,
+  metadataSetValueMany,
+  metadataCreateProperty,
+  metadataCreateType,
+  metadataUpdateDefinition,
+  metadataDefinitionImpact,
+  metadataPropertyTypeConversionPreview,
+  metadataTypeAssignmentPreview,
+  metadataReorderProperty,
+  metadataDeleteDefinition,
+  metadataAssignType,
+  metadataValidateObject,
+  metadataValidateRelationship,
+  metadataValidationFindings,
+  metadataLegacyDefinitions,
+  metadataAdoptLegacyProperties,
+  metadataTypeForObject,
+  metadataObjectName,
+  metadataDefinitionApplies,
+  metadataRequiredForObject,
+  metadataExportCsv,
+  metadataBuildCsvPreview,
+  metadataBuildGridPastePreview,
+  metadataApplyCsvPreview,
+  metadataTableObjects,
+  openMetadataPanel,
+  closeMetadataPanel,
+  renderMetadataPanel,
+  get metadataPanelOpen(){ return metadataPanelOpen; },
+  get metadataPanelMode(){ return metadataPanelMode; },
+  get metadataCsvPreview(){ return metadataCsvPreview; },
+  invalidateMetadataEvaluation,
+  defaultMetadata,
   get searchResults(){ return searchResults.map(result => ({...result})); },
   get searchProposal(){ return searchProposal ? searchProposal.map(change => ({...change})) : null; },
   get searchIndexGeneration(){ return searchIndexGeneration; },

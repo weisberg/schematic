@@ -99,7 +99,7 @@ const SWIMLANE_DEFAULT = {
   vertical:{ w:220, h:480, titleSize:48 }
 };
 const TODO_COLOR_DEFAULT = "#E9E2F8";
-const APP_VERSION = "v1.39.0";
+const APP_VERSION = "v1.40.0";
 const GRID_SNAP = 24;   // matches the dot-grid pattern spacing
 const ALIGN_GUIDE_SCREEN_THRESHOLD = 6;
 const ALIGN_GUIDE_SCREEN_OVERSHOOT = 24;
@@ -681,11 +681,14 @@ function snapshot(){ return JSON.stringify({
   nextId:state.nextId,
   organization:typeof cleanOrganizationForDocument === "function"
     ? cleanOrganizationForDocument(state.organization) : state.organization,
+  metadata:typeof cleanMetadataForDocument === "function"
+    ? cleanMetadataForDocument(state.metadata) : state.metadata,
   meta:{theme:docTheme, dialect:docDialect, colorScheme, customStatuses}
 }); }
 let coalesce = { key:null, t:0 };
 function pushHistory(coalesceKey){
   if (typeof invalidateOrganizationEvaluation === "function") invalidateOrganizationEvaluation();
+  if (typeof invalidateMetadataEvaluation === "function") invalidateMetadataEvaluation();
   if (coalesceKey != null){
     const now = Date.now();
     if (coalesce.key === coalesceKey && now - coalesce.t < 1000){ coalesce.t = now; return; }
@@ -704,6 +707,8 @@ function restore(json){
   state.nodes = s.nodes; state.edges = s.edges; state.nextId = s.nextId;
   state.organization = s.organization;
   if (typeof ensureOrganization === "function") ensureOrganization();
+  state.metadata = s.metadata;
+  if (typeof ensureMetadata === "function") ensureMetadata();
   setCustomStatuses(s.meta ? s.meta.customStatuses : []);
   for (const n of state.nodes) if (n && n.type === "status") normalizeNodeStatus(n);
   applyColorScheme(s.meta ? s.meta.colorScheme : null);
@@ -841,14 +846,24 @@ function cleanNodeForDocument(n){
   return out;
 }
 function documentObject(){
+  const cleanNode = typeof cleanMetadataObjectForDocument === "function"
+    ? node => cleanMetadataObjectForDocument(cleanNodeForDocument(node))
+    : cleanNodeForDocument;
+  const cleanEdge = typeof cleanMetadataObjectForDocument === "function"
+    ? edge => cleanMetadataObjectForDocument(cleanEdgeForDocument(edge))
+    : cleanEdgeForDocument;
   const d = {
     version:DOC_VERSION,
-    nodes:state.nodes.map(cleanNodeForDocument),
-    edges:state.edges.map(cleanEdgeForDocument),
+    nodes:state.nodes.map(cleanNode),
+    edges:state.edges.map(cleanEdge),
     nextId:state.nextId
   };
   if (typeof cleanOrganizationForDocument === "function")
     d.organization = cleanOrganizationForDocument(state.organization);
+  if (typeof cleanMetadataForDocument === "function"){
+    const metadata = cleanMetadataForDocument(state.metadata);
+    if (metadata) d.metadata = metadata;
+  }
   const meta = { theme:docTheme, dialect:docDialect };
   if (recentColors.length) meta.recentColors = recentColors.slice();
   if (colorScheme) meta.colorScheme = cloneColorScheme(colorScheme);
@@ -863,7 +878,11 @@ function nextIdFromDocument(d){
   const organizationRecords = d.organization && typeof d.organization === "object"
     ? [...(Array.isArray(d.organization.layers) ? d.organization.layers : []),
        ...(Array.isArray(d.organization.groups) ? d.organization.groups : [])] : [];
-  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges, organizationRecords)
+  const metadataRecords = d.metadata && typeof d.metadata === "object"
+    ? [...(Array.isArray(d.metadata.properties) ? d.metadata.properties : []),
+       ...(Array.isArray(d.metadata.objectTypes) ? d.metadata.objectTypes : []),
+       ...(Array.isArray(d.metadata.relationshipTypes) ? d.metadata.relationshipTypes : [])] : [];
+  return d.nextId || (Math.max(0, ...d.nodes.concat(d.edges, organizationRecords, metadataRecords)
     .map(x => parseInt(String(x.id).replace(/\D/g,"")) || 0)) + 1);
 }
 function migrateDocument(d){
@@ -881,6 +900,7 @@ function migrateDocument(d){
   const result = { version:DOC_VERSION, nodes:out.nodes, edges:out.edges, nextId:nextIdFromDocument(out) };
   if (out.meta && typeof out.meta === "object") result.meta = out.meta;
   if (out.organization && typeof out.organization === "object") result.organization = out.organization;
+  if (out.metadata && typeof out.metadata === "object") result.metadata = out.metadata;
   return result;
 }
 function applyDocument(d, opts = {}){
@@ -889,6 +909,8 @@ function applyDocument(d, opts = {}){
   state.edges = migrated.edges;
   state.organization = migrated.organization;
   if (typeof ensureOrganization === "function") ensureOrganization();
+  state.metadata = migrated.metadata;
+  if (typeof ensureMetadata === "function") ensureMetadata();
   setCustomStatuses(migrated.meta ? migrated.meta.customStatuses : []);
   for (const n of state.nodes){
     if (!n) continue;

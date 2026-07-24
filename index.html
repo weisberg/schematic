@@ -13,7 +13,7 @@
 <title>Schematic — Mind Map + Data Model Canvas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=1.39.0">
+<link rel="stylesheet" href="styles.css?v=1.40.0">
 </head>
 <body>
 <noscript>
@@ -355,18 +355,41 @@
   </div>
 </div>
 
-<script src="js/core.js?v=1.39.0"></script>
-<script src="js/icon-catalog.js?v=1.39.0"></script>
-<script src="js/geometry.js?v=1.39.0"></script>
-<script src="js/render.js?v=1.39.0"></script>
-<script src="js/model.js?v=1.39.0"></script>
-<script src="js/interactions.js?v=1.39.0"></script>
-<script src="js/inspector.js?v=1.39.0"></script>
-<script src="js/io.js?v=1.39.0"></script>
-<script src="js/search.js?v=1.39.0"></script>
-<script src="js/organization.js?v=1.39.0"></script>
-<script src="js/commands.js?v=1.39.0"></script>
-<script src="js/context-menu.js?v=1.39.0"></script>
-<script src="js/bootstrap.js?v=1.39.0"></script>
+<div class="modal metadata-modal" id="metadataPanel" hidden role="dialog" aria-modal="true"
+     aria-labelledby="metadataPanelTitle">
+  <div class="card metadata-card">
+    <div class="metadata-head">
+      <div>
+        <span class="object-explorer-kicker">Semantic model</span>
+        <h3 id="metadataPanelTitle">Object table</h3>
+      </div>
+      <div class="metadata-tabs" role="tablist" aria-label="Metadata tools">
+        <button id="metadataTabTable" type="button" role="tab" aria-controls="metadataPanelBody"
+                data-metadata-mode="table">Object table</button>
+        <button id="metadataTabSchema" type="button" role="tab" aria-controls="metadataPanelBody"
+                data-metadata-mode="schema">Schema</button>
+        <button id="metadataTabValidation" type="button" role="tab" aria-controls="metadataPanelBody"
+                data-metadata-mode="validation">Validation</button>
+      </div>
+      <button id="btnCloseMetadataPanel" type="button" aria-label="Close metadata tools">×</button>
+    </div>
+    <div id="metadataPanelBody" class="metadata-body" role="tabpanel" tabindex="0"></div>
+  </div>
+</div>
+
+<script src="js/core.js?v=1.40.0"></script>
+<script src="js/icon-catalog.js?v=1.40.0"></script>
+<script src="js/geometry.js?v=1.40.0"></script>
+<script src="js/render.js?v=1.40.0"></script>
+<script src="js/model.js?v=1.40.0"></script>
+<script src="js/interactions.js?v=1.40.0"></script>
+<script src="js/inspector.js?v=1.40.0"></script>
+<script src="js/io.js?v=1.40.0"></script>
+<script src="js/search.js?v=1.40.0"></script>
+<script src="js/organization.js?v=1.40.0"></script>
+<script src="js/metadata.js?v=1.40.0"></script>
+<script src="js/commands.js?v=1.40.0"></script>
+<script src="js/context-menu.js?v=1.40.0"></script>
+<script src="js/bootstrap.js?v=1.40.0"></script>
 </body>
 </html>

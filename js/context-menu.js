@@ -719,6 +719,8 @@ function nodeMenu(n, x, y){
     });
     if (typeof buildOrganizationNodeContext === "function")
       buildOrganizationNodeContext(m, n, targets);
+    if (typeof buildMetadataNodeContext === "function")
+      buildMetadataNodeContext(m, n, targets);
     ctxGroup(m, "node:actions", "Actions", panel => {
       ctxItem(panel, "Duplicate", duplicateSelection, {kbd:"Ctrl+D"});
       ctxItem(panel, targets.length > 1 ? "Delete selected nodes" : "Delete node",
@@ -879,6 +881,8 @@ function edgeMenu(e, x, y){
     });
     if (typeof buildOrganizationEdgeContext === "function")
       buildOrganizationEdgeContext(m, e);
+    if (typeof buildMetadataEdgeContext === "function")
+      buildMetadataEdgeContext(m, e);
     ctxGroup(m, "edge:actions", "Actions", panel => {
       ctxItem(panel, "Swap direction", () => {
         pushHistory();
@@ -932,6 +936,8 @@ function canvasMenu(w, x, y){
     });
     if (typeof buildOrganizationCanvasContext === "function")
       buildOrganizationCanvasContext(m);
+    if (typeof buildMetadataCanvasContext === "function")
+      buildMetadataCanvasContext(m);
   });
 }
 

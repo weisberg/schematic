@@ -144,8 +144,8 @@ if (process.argv.includes("--api-surface")){
 (async () => {
   sameList(scriptSources, [
     "js/core.js", "js/icon-catalog.js", "js/geometry.js", "js/render.js", "js/model.js",
-    "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/commands.js",
-    "js/context-menu.js", "js/bootstrap.js"
+    "js/interactions.js", "js/inspector.js", "js/io.js", "js/search.js", "js/organization.js", "js/metadata.js",
+    "js/commands.js", "js/context-menu.js", "js/bootstrap.js"
   ], "HTML declares the complete runtime dependency order");
   const assetVersion = html.match(/styles\.css\?v=([^"']+)/)?.[1];
   assert(assetVersion && scriptUrls.every(src => src.endsWith(`?v=${assetVersion}`)),
@@ -3396,7 +3396,8 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.getAttribute("role"), "menu", "context surface exposes menu semantics");
     assert(menu.getAttribute("aria-label").startsWith("Canvas actions"), "canvas menu has an accessible label");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Create", "Layout", "View", "Organize"], "canvas menu groups creation, layout, view, and organization actions");
+      ["Create", "Layout", "View", "Organize", "Model data"],
+      "canvas menu groups creation, layout, view, organization, and model-data actions");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(group => !group.open),
       "canvas submenus start compact");
     assert.strictEqual(menu.querySelectorAll(":scope > .ctxitem").length, 0,
@@ -5359,10 +5360,11 @@ if (process.argv.includes("--api-surface")){
       "inspector header identifies the selected object");
     let sections = [...doc.querySelectorAll("#inspBody .inspector-section")];
     sameList(sections.map(s => s.querySelector("summary span").textContent),
-      ["Organization","Basics","Link ports","Appearance","Notes"],
+      ["Organization","Metadata","Basics","Link ports","Appearance","Notes"],
       "concept inspector groups controls by task");
-    assert(!sections[0].open && sections[1].open && !sections[2].open && sections[3].open && !sections[4].open,
-      "primary inspector sections start open while organization, link ports, and notes stay compact");
+    assert(!sections[0].open && !sections[1].open && sections[2].open && !sections[3].open &&
+      sections[4].open && !sections[5].open,
+      "primary inspector sections start open while organization, metadata, link ports, and notes stay compact");
     const appearance = doc.querySelector('[data-inspector-section="concept:appearance"]');
     appearance.open = false;
     appearance.dispatchEvent(new window.Event("toggle"));
@@ -5413,7 +5415,7 @@ if (process.argv.includes("--api-surface")){
     assert.strictEqual(menu.querySelector(".ctxhead strong").textContent, "Tiered rewards",
       "node menu starts with object context");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Content","Discover","Appearance","Arrange","Organization","Actions"],
+      ["Content","Discover","Appearance","Arrange","Organization","Metadata","Actions"],
       "node menu groups all actions into task submenus");
     assert([...menu.querySelectorAll(":scope > .ctxgroup")].every(g => !g.open),
       "context disclosures start compact");
@@ -5437,7 +5439,7 @@ if (process.argv.includes("--api-surface")){
     T.edgeMenu(edge, 20, 20);
     menu = doc.getElementById("ctxMenu");
     sameList([...menu.querySelectorAll(":scope > .ctxgroup > summary span")].map(s => s.textContent),
-      ["Relationship","Label","Line","Routing","Discover","Organization","Actions"],
+      ["Relationship","Label","Line","Routing","Discover","Organization","Metadata","Actions"],
       "edge menu groups controls by task");
     assert(menu.querySelector('[data-ctx-group="edge:line"] [aria-label="Line width"]'),
       "edge line disclosure retains line controls");
@@ -5488,10 +5490,10 @@ if (process.argv.includes("--api-surface")){
        fields:[{id:"c1",name:"id",type:"INT",pk:true,fk:false,nullable:false}]}
     ]}));
     const expectedSections = {
-      f1:["Organization","Basics","Appearance","Size"],
-      n1:["Organization","Basics","Content","Appearance"],
-      d1:["Organization","Basics","Appearance","Notes","Items"],
-      t1:["Organization","Basics","Appearance","Notes","Fields"]
+      f1:["Organization","Metadata","Basics","Appearance","Size"],
+      n1:["Organization","Metadata","Basics","Content","Appearance"],
+      d1:["Organization","Metadata","Basics","Appearance","Notes","Items"],
+      t1:["Organization","Metadata","Basics","Appearance","Notes","Fields"]
     };
     for (const [id, expected] of Object.entries(expectedSections)){
       T.setSelection("node", id);
@@ -6260,6 +6262,247 @@ if (process.argv.includes("--api-surface")){
       `10k-row explorer filter stays responsive (${elapsed.toFixed(1)}ms)`);
   }
 
+  /* SCH-082 — typed metadata schema, values, formulas, validation, and deterministic migration. */
+  {
+    const { window } = makeDom();
+    const T = window.__T;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:40,
+      metadata:{
+        futureRegistryFlag:"preserve-me",
+        properties:[
+          {id:"p-owner",name:"Owner",type:"person",scope:"canonical",appliesTo:["node"]},
+          {id:"p-risk",name:"Risk",type:"enum",scope:"canonical",appliesTo:["node","edge"],
+            options:[{id:"low",label:"Low"},{id:"high",label:"High"}]},
+          {id:"p-score",name:"Score",type:"number",scope:"canonical",appliesTo:["node"],min:0,max:10},
+          {id:"p-ref",name:"Reference",type:"reference",scope:"canonical",appliesTo:["node"]},
+          {id:"p-degree",name:"Relationship count",type:"formula",scope:"derived",appliesTo:["node"],
+            formula:"countIn() + countOut()"},
+          {id:"p-cycle-a",name:"Cycle A",type:"formula",appliesTo:["node"],formula:'prop("p-cycle-b")'},
+          {id:"p-cycle-b",name:"Cycle B",type:"formula",appliesTo:["node"],formula:'prop("p-cycle-a")'}
+        ],
+        objectTypes:[{id:"ot-service",name:"Service",propertyIds:["p-owner","p-risk","p-score"],
+          requiredPropertyIds:["p-owner"]}],
+        relationshipTypes:[{id:"rt-depends",name:"Depends on",propertyIds:["p-risk"],
+          allowedSourceTypeIds:["ot-service"],allowedTargetTypeIds:["ot-service"]}]
+      },
+      nodes:[
+        {id:"a",type:"concept",x:0,y:0,title:"Alpha",notes:"",color:"#CFE8FF",
+          semanticTypeId:"ot-service",properties:{"p-owner":{id:"alex",label:"Alex"},"p-risk":"high","p-score":7}},
+        {id:"b",type:"concept",x:220,y:0,title:"Beta",notes:"",color:"#D8F3DC"}
+      ],
+      edges:[{id:"e",from:"a",to:"b",kind:"link",label:"Depends on",semanticTypeId:"rt-depends"}]
+    }));
+    const owner = T.metadataPropertyById("p-owner");
+    const alpha = T.state.nodes.find(node => node.id === "a");
+    assert.strictEqual(T.metadataDisplayValue(owner, T.metadataRawValue(alpha, owner)), "Alex",
+      "person values retain stable local identity and readable labels");
+    assert.strictEqual(T.metadataValue(alpha, "p-degree"), 1,
+      "constrained formulas can derive relationship counts");
+    const cycle = T.metadataFormulaResult(alpha, T.metadataPropertyById("p-cycle-a"));
+    assert(cycle.error.includes("Formula cycle"),
+      "formula cycles are detected with a structured error instead of executing code");
+    const findings = T.metadataValidationFindings();
+    assert(Array.isArray(findings) && findings.length > 0,
+      "validation completes across typed and untyped objects");
+    assert(findings.some(finding => finding.objectId === "b" && finding.code === "required") === false,
+      "type-specific required properties do not apply to an untyped object");
+    assert(findings.some(finding => finding.objectId === "e" && finding.code === "target-type"),
+      "relationship types warn when the target semantic type is incompatible");
+    const bad = T.metadataSetValue(alpha, "p-score", 99, {render:false});
+    assert.strictEqual(bad.ok, false, "typed setters reject out-of-range numbers");
+    const reviewed = T.metadataCreateProperty({name:"Reviewed",type:"date",appliesTo:["node"]});
+    const nextReview = T.metadataCreateProperty({
+      name:"Next review",type:"formula",appliesTo:["node"],
+      formula:`dateAddDays(prop("${reviewed.id}"), 7)`
+    });
+    const beta = T.state.nodes.find(node => node.id === "b");
+    T.metadataSetValue(beta, reviewed, "2026-07-24", {render:false});
+    assert.strictEqual(T.metadataValue(beta, nextReview), "2026-07-31",
+      "constrained formulas support deterministic date arithmetic");
+    const explanation = T.metadataFormulaExplanation(beta, nextReview);
+    assert.strictEqual(explanation.inputs[0].name, "Reviewed",
+      "computed results expose their formula inputs for audit");
+    const unsafe = T.metadataCreateProperty({
+      name:"Unsafe",type:"formula",appliesTo:["node"],formula:"fetchData()"
+    });
+    assert(T.metadataValidationFindings().some(finding =>
+      finding.code === "formula-definition" && finding.propertyId === unsafe.id),
+      "formula validation rejects undocumented functions even before a value is rendered");
+    const beforeUndo = T.undoDepth;
+    const changed = T.metadataSetValue(alpha, "p-score", 8, {render:false});
+    assert(changed.ok && T.metadataRawValue(alpha, "p-score") === 8,
+      "typed setters normalize and store valid values");
+    assert.strictEqual(T.undoDepth, beforeUndo + 1, "one property edit creates one undo entry");
+    T.undo();
+    assert.strictEqual(T.metadataRawValue(T.state.nodes.find(node => node.id === "a"), "p-score"), 7,
+      "Undo restores typed metadata values");
+    const saved = JSON.parse(T.serializeDocument());
+    assert.strictEqual(saved.metadata.futureRegistryFlag, "preserve-me",
+      "unknown registry properties survive normalization and save");
+    assert.strictEqual(saved.nodes.find(node => node.id === "a").properties["p-owner"].label, "Alex",
+      "typed values serialize under stable definition IDs");
+    assert.strictEqual(T.serializeDocument(), T.serializeDocument(),
+      "repeated metadata serialization is deterministic");
+  }
+
+  /* SCH-082 — definition lifecycle, legacy adoption, CSV preview, inspector, and table UI. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    T.importDocText(JSON.stringify({
+      version:1,nextId:20,
+      nodes:[
+        {id:"a",type:"concept",x:0,y:0,title:"Alpha",notes:"",color:"#CFE8FF",
+          customProperties:{risk:"High"}},
+        {id:"b",type:"concept",x:220,y:0,title:"Beta",notes:"",color:"#D8F3DC"}
+      ],edges:[]
+    }));
+    assert.strictEqual(T.metadataLegacyDefinitions().length, 1,
+      "legacy scalar custom properties are discoverable without rewriting on open");
+    const adopted = T.metadataAdoptLegacyProperties();
+    assert.deepStrictEqual({...adopted}, {created:1,values:1},
+      "legacy adoption creates stable definitions and values only on command");
+    const risk = T.metadataPropertyDefinitions().find(definition => definition.name === "Risk");
+    assert(risk && T.metadataRawValue(T.state.nodes[0], risk.id) === "High",
+      "adopted legacy values remain intact while the original dictionary is preserved");
+    const owner = T.metadataCreateProperty({name:"Owner",type:"text",appliesTo:["node"]});
+    const csv = `id,${owner.id}\na,Alex\nmissing,No one\nb,Blair`;
+    const preview = T.metadataBuildCsvPreview(csv);
+    assert.strictEqual(preview.changes.length, 2,
+      "CSV preview maps typed columns by stable definition ID");
+    assert(preview.errors.some(error => error.includes("missing")),
+      "CSV preview reports unmatched rows without blocking valid rows");
+    assert(T.metadataApplyCsvPreview(preview), "CSV apply commits valid preview rows");
+    assert.strictEqual(T.metadataRawValue(T.state.nodes[1], owner.id), "Blair",
+      "CSV apply updates the intended object value");
+    const impact = T.metadataDefinitionImpact("property", owner.id);
+    assert.strictEqual(impact.objects.length, 2, "definition impact lists every stored value");
+    const deprecated = T.metadataDeleteDefinition("property", owner.id);
+    assert(deprecated.deprecated, "in-use definition deletion first deprecates safely");
+    const removed = T.metadataDeleteDefinition("property", owner.id, {force:true});
+    assert(removed.deleted, "confirmed definition deletion completes");
+    assert.strictEqual(T.state.nodes[0].orphanProperties[owner.id], "Alex",
+      "forced deletion preserves values as orphan metadata");
+
+    T.setSelection("node", "a");
+    T.render();
+    assert(doc.querySelector("#inspBody details .metadata-inspector-property"),
+      "selected objects expose typed metadata in the inspector");
+    assert(T.openMetadataPanel("table"), "object table opens from the shared metadata surface");
+    assert.strictEqual(doc.getElementById("metadataPanel").hidden, false,
+      "metadata tools render as a visible accessible dialog");
+    assert(doc.getElementById("metadataPanel").classList.contains("open"),
+      "metadata dialog opts into the shared visible modal state");
+    assert(doc.querySelectorAll(".metadata-table tbody tr").length === 2,
+      "object table exposes one live row per object");
+    T.openMetadataPanel("schema");
+    assert(doc.querySelector("[data-definition-id]"),
+      "schema manager renders stable definition records");
+    T.openMetadataPanel("validation");
+    assert(doc.querySelector(".metadata-validation-summary"),
+      "validation panel renders a navigable summary");
+    assert.strictEqual(doc.getElementById("metadataPanelBody").getAttribute("aria-labelledby"),
+      "metadataTabValidation", "metadata tabs label their shared tab panel");
+    const validationTab = doc.getElementById("metadataTabValidation");
+    validationTab.focus();
+    validationTab.dispatchEvent(new window.KeyboardEvent("keydown", {key:"Home",bubbles:true}));
+    assert.strictEqual(doc.getElementById("metadataTabTable").getAttribute("aria-selected"), "true",
+      "metadata tabs support Home/End and arrow-key navigation");
+    assert(T.COMMANDS.some(command => command.id === "metadataObjectTable" && command.owner === "custom-metadata"),
+      "object table is available through the shared command/ribbon registry");
+    T.closeMetadataPanel();
+    assert.strictEqual(doc.getElementById("metadataPanel").hidden, true,
+      "metadata dialog closes without mutating document state");
+    assert(!doc.getElementById("metadataPanel").classList.contains("open"),
+      "closing metadata removes the shared visible modal state");
+
+    const first = T.metadataCreateProperty({name:"First",type:"text",appliesTo:["node"]});
+    const second = T.metadataCreateProperty({name:"Second",type:"text",appliesTo:["node"]});
+    assert(T.metadataReorderProperty(second.id, -1), "property definitions can be reordered");
+    const orderedIds = T.metadataPropertyDefinitions().map(definition => definition.id);
+    assert(orderedIds.indexOf(second.id) < orderedIds.indexOf(first.id),
+      "reordered property order is reflected by the registry");
+    T.metadataSetValue(T.state.nodes[0], first, "17", {render:false});
+    const conversion = T.metadataPropertyTypeConversionPreview(first.id, "number");
+    assert.strictEqual(conversion.ambiguous, 1,
+      "property type conversion produces a dry-run report before changing schema");
+    assert.strictEqual(T.metadataRawValue(T.state.nodes[0], first.id), "17",
+      "conversion preview never mutates stored values");
+    const requiredType = T.metadataCreateType("node", {
+      name:"Governed service", propertyIds:[first.id,second.id], requiredPropertyIds:[second.id]
+    });
+    const typePreview = T.metadataTypeAssignmentPreview(T.state.nodes[0], requiredType.id);
+    assert(typePreview.hasWarnings && typePreview.missingRequired.includes("Second") &&
+      typePreview.preservesValues,
+      "semantic type assignment previews missing requirements while preserving data");
+    assert(T.metadataAssignType(T.state.nodes[0], requiredType.id, {render:false}),
+      "custom semantic object types are assignable");
+    const workflowProperty = T.metadataCreateProperty({
+      name:"Workflow property",type:"text",appliesTo:["node"],typeIds:[requiredType.id]
+    });
+    assert(T.metadataDefinitionsForObject(T.state.nodes[0]).some(definition =>
+      definition.id === workflowProperty.id),
+      "properties created from a typed-object workflow join that type in the same transaction");
+    const uniqueProperty = T.metadataCreateProperty({
+      name:"External key",type:"text",appliesTo:["node"],typeIds:[requiredType.id],unique:true
+    });
+    T.metadataSetValue(T.state.nodes[0], uniqueProperty, "duplicate-key", {render:false});
+    T.metadataSetValue(T.state.nodes[1], uniqueProperty, "duplicate-key", {render:false});
+    assert(T.metadataValidationFindings().some(finding =>
+      finding.code === "unique" && finding.objectId === "b"),
+      "explicit uniqueness constraints produce navigable duplicate findings");
+    assert.strictEqual(T.metadataValueProvenance(T.state.nodes[0], first).origin, "manual",
+      "stored values expose provenance independently from their display value");
+
+    const imported = T.metadataCreateProperty({
+      name:"Repository",type:"text",appliesTo:["node"],aliases:["Repo"]
+    });
+    T.metadataUpdateDefinition("objectType", requiredType.id, {
+      propertyIds:[first.id,second.id,imported.id], requiredPropertyIds:[second.id]
+    });
+    const importPreview = T.metadataBuildCsvPreview(
+      `id,name,semanticTypeId,Repo\na,Alpha renamed,${requiredType.id},schematic`
+    );
+    assert(importPreview.changes.some(change => change.field === "name") &&
+      importPreview.changes.some(change => change.definition?.id === imported.id),
+      "CSV mapping supports built-in round-trip columns and definition aliases");
+    assert(T.metadataApplyCsvPreview(importPreview), "mapped CSV changes apply as one transaction");
+    assert.strictEqual(T.state.nodes[0].title, "Alpha renamed",
+      "CSV round trips can rename objects");
+    assert.strictEqual(T.metadataValueProvenance(T.state.nodes[0], imported).origin, "imported",
+      "CSV-applied values retain imported provenance");
+    const stale = T.metadataBuildCsvPreview(`id,Repo\na,newer`);
+    T.metadataSetValue(T.state.nodes[0], imported, "intervening", {render:false});
+    assert.strictEqual(T.metadataApplyCsvPreview(stale), false,
+      "CSV previews refuse to apply after the document generation changes");
+    const gridPreview = T.metadataBuildGridPastePreview(
+      "a", imported.id, "rect-a\nrect-b", T.state.nodes, [imported]
+    );
+    assert.strictEqual(gridPreview.changes.length, 2,
+      "rectangular table paste previews every destination cell before mutation");
+    const beforeGridUndo = T.undoDepth;
+    assert(T.metadataApplyCsvPreview(gridPreview),
+      "valid rectangular paste cells apply as one transaction");
+    assert.strictEqual(T.undoDepth, beforeGridUndo + 1,
+      "rectangular paste creates one undo entry");
+    assert.strictEqual(T.metadataRawValue(T.state.nodes[1], imported), "rect-b",
+      "rectangular paste maps rows by stable object identity");
+    T.undo();
+    assert.strictEqual(T.metadataRawValue(T.state.nodes[1], imported), undefined,
+      "one undo restores every value from a rectangular paste");
+
+    const secret = T.metadataCreateProperty({
+      name:"Secret",type:"text",appliesTo:["node"],sensitive:true
+    });
+    T.metadataSetValue(T.state.nodes[0], secret, "secretneedle", {render:false});
+    assert(!T.metadataExportCsv().includes("secretneedle"),
+      "sensitive metadata is excluded from CSV exports by default");
+    T.refreshSearchIndex(true);
+    assert.strictEqual(T.querySearchIndex({text:"secretneedle"}).results.length, 0,
+      "sensitive metadata is excluded from the search index");
+  }
+
   /* Search performance fixture: 10k objects and 20k relationships. */
   {
     const { window } = makeDom();
@@ -6304,6 +6547,47 @@ if (process.argv.includes("--api-surface")){
       "large-model single-object edits do not rebuild every owner's records");
     assert(updateStats.durationMs < 100,
       `large-model single-object index update meets the 100ms budget (${updateStats.durationMs.toFixed(1)}ms)`);
+  }
+
+  /* SCH-082 — 10k objects, 50 definitions, and 100k values stay bounded in the live table. */
+  {
+    const { window } = makeDom();
+    const T = window.__T, doc = window.document;
+    const properties = Array.from({length:50}, (_, index) => ({
+      id:`bench-p-${index}`, name:`Bench property ${index}`, type:index % 7 === 0 ? "number" : "text",
+      scope:"canonical", appliesTo:["node"], order:index
+    }));
+    T.state.metadata = {properties,objectTypes:[],relationshipTypes:[]};
+    T.state.nodes = Array.from({length:10000}, (_, index) => ({
+      id:`metadata-node-${index}`, type:"concept", x:index % 100, y:Math.floor(index / 100),
+      title:`Metadata object ${index}`, notes:"", color:"#CFE8FF",
+      properties:Object.fromEntries(Array.from({length:10}, (_, propertyIndex) => [
+        `bench-p-${propertyIndex}`,
+        propertyIndex % 7 === 0 ? index + propertyIndex : `value ${index}-${propertyIndex}`
+      ]))
+    }));
+    T.state.edges = [];
+    T.state.nextId = 20000;
+    const normalizeStart = performance.now();
+    T.ensureMetadata();
+    const normalizeMs = performance.now() - normalizeStart;
+    const tableStart = performance.now();
+    T.openMetadataPanel("table");
+    const tableMs = performance.now() - tableStart;
+    assert.strictEqual(doc.querySelectorAll(".metadata-table tbody tr").length, 120,
+      "large object tables render one bounded page instead of creating 10k DOM rows");
+    assert(doc.querySelector(".metadata-table-summary").textContent.includes("10000 objects"),
+      "large-table summary retains the complete filtered object count");
+    assert(normalizeMs < 5000 && tableMs < 5000,
+      `metadata scale fixture remains interactive (normalize ${normalizeMs.toFixed(0)}ms, table ${tableMs.toFixed(0)}ms)`);
+    const filter = doc.querySelector('[aria-label="Filter object table"]');
+    const filterStart = performance.now();
+    filter.value = "Metadata object 9999";
+    filter.dispatchEvent(new window.Event("input", {bubbles:true}));
+    const filterMs = performance.now() - filterStart;
+    assert.strictEqual(doc.querySelectorAll(".metadata-table tbody tr").length, 1,
+      "large-table filtering finds the intended stable row");
+    assert(filterMs < 5000, `metadata table filtering remains interactive (${filterMs.toFixed(0)}ms)`);
   }
 
   /* scheme theme overrides follow light/dark toggling */

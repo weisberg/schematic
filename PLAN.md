@@ -51,7 +51,7 @@ The deployment story is:
 
 ## 2. Architecture snapshot (as of 2026-07-24)
 
-Files: `index.html`, `styles.css`, thirteen ordered classic scripts in `js/`, plus
+Files: `index.html`, `styles.css`, fourteen ordered classic scripts in `js/`, plus
 development-only `test.js`. See `ARCHITECTURE.md` for the dependency order and placement rules.
 SVG-based canvas; all SVG styling via **presentation attributes** (not CSS classes) so that
 PNG export via `XMLSerializer` works without a stylesheet.
@@ -59,7 +59,7 @@ PNG export via `XMLSerializer` works without a stylesheet.
 ### 2.1 Runtime scripts (load order is a contract)
 
 `core` → `icon-catalog` → `geometry` → `render` → `model` → `interactions` → `inspector` → `io` →
-`search` → `organization` → `commands` → `context-menu` → `bootstrap`.
+`search` → `organization` → `metadata` → `commands` → `context-menu` → `bootstrap`.
 
 The scripts deliberately remain classic scripts rather than native ES modules: direct `file://`
 loading is a platform requirement, and module scripts are blocked by browser CORS rules in that
@@ -86,12 +86,29 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
     ],
     "activeLayerId": "o40"
   },
+  "metadata": {
+    "schemaVersion": 1,
+    "properties": [
+      { "id": "p-owner", "name": "Owner", "type": "person", "scope": "canonical",
+        "appliesTo": ["node"], "order": 0 },
+      { "id": "p-degree", "name": "Relationship count", "type": "formula",
+        "scope": "derived", "appliesTo": ["node"],
+        "formula": "countIn() + countOut()", "order": 1 }
+    ],
+    "objectTypes": [
+      { "id": "ot-service", "name": "Service",
+        "propertyIds": ["p-owner", "p-degree"], "requiredPropertyIds": ["p-owner"] }
+    ],
+    "relationshipTypes": []
+  },
   "nodes": [
     { "id": "n1", "type": "concept", "x": 60, "y": 220,
       "title": "Loyalty program launch", "notes": "…",
       "subtitle": "Customer-facing release", "icon": "lucide:rocket",
       "color": "#FFE9A8", "fontSize": 14, "fontColor": "#16232F",
-      "shape": "decision" },
+      "shape": "decision", "semanticTypeId": "ot-service",
+      "properties": { "p-owner": { "id": "growth", "label": "Growth team" } },
+      "propertyProvenance": { "p-owner": { "origin": "manual" } } },
     { "id": "n5", "type": "table", "x": 640, "y": 60,
       "title": "customers", "notes": "", "color": "#16232F",
       "fontSize": 11.5, "fontColor": "#16232F", "collapsed": false,
@@ -191,6 +208,13 @@ Add new code to the script matching its responsibility; only `bootstrap.js` may 
   independently from effective state inherited through groups, layers, spatial frames/swimlanes,
   and external source authority. Missing organization data migrates to one visible, unlocked
   `layer-default`; no groups are inferred.
+- `metadata` (v1.40, additive) is the document-level registry for stable property, object-type,
+  and relationship-type definitions. Nodes and edges may carry `semanticTypeId`, typed `properties`
+  keyed by definition ID, and optional `propertyProvenance`. Property definitions distinguish
+  canonical, view-local, derived, and external scopes; enumeration values store option IDs; dates
+  use ISO `YYYY-MM-DD`; references store object IDs; formulas are parsed by a bounded, non-executable
+  expression engine. Unknown registry fields and orphan values are preserved. Sensitive definitions
+  are excluded from search and default CSV export. Missing metadata migrates to an empty registry.
 - `meta.customStatuses` (v1.17, additive) is the shared, case-insensitively deduplicated list
   of custom status labels in the diagram. Built-in labels are never written there.
   Imports also recover custom labels already used by status nodes when older JSON lacks this key.
@@ -1944,6 +1968,46 @@ locked-value skipping, semantic safety, one-step undo, and result-object selecti
 deterministic 10,000-node/20,000-edge fixture builds successfully and warm query time remains below
 150ms on the test machine; desktop and narrow-viewport browser interaction, visual, overlay, and
 console QA pass.
+
+---
+
+**SCH-115 · Object organization · P0 · L · Done 2026-07-24**
+
+Add a local-first Object Explorer and explicit organization model for the current canvas. Ordered
+layers and nested non-rendered groups govern effective visibility, locking, opacity, export
+inclusion, and active placement without confusing group membership with spatial frame containment.
+
+AC: object selection synchronizes between canvas and explorer; filtered virtualized rows remain
+keyboard navigable; layers and groups support create, rename, reorder, isolate, reveal, duplicate,
+and safe deletion; direct and inherited state remain distinguishable; locked content cannot mutate
+through canvas, inspector, table, command, or context-menu paths; hidden and non-exported content
+stays out of applicable exports; one undo entry restores organization plus membership; legacy
+documents receive a default layer without inferred groups; automated scale tests and browser
+interaction, visual, persistence, export, and console QA pass.
+
+---
+
+**SCH-116 · Typed custom metadata · P0 · XL · Done 2026-07-24**
+
+Add a document-level schema registry, typed values on nodes and links, flat semantic object and
+relationship types, a constrained formula engine, model-health validation, inspector editors, and
+a paged live object table. Metadata is semantic data independent from shape, color, and other view
+presentation.
+
+AC: text, number, boolean, date, URL, person, status, enum, multi-select, reference, and formula
+properties use stable IDs and deterministic storage; scope and provenance are visible; derived and
+external values are read-only; property definitions can be created, described, reordered, converted
+with a dry-run impact report, deprecated, and safely deleted; object and relationship types expose
+allowed/required properties, presentation defaults, and source/target warning rules; single and
+multi-selection editors validate compatible values; the object table supports type/scope/selection
+filters, visible columns, sorting, bounded paging, inline edits, canvas synchronization, and
+transactional CSV previews with aliases and stale-generation rejection; formulas use a parsed
+non-executable language with bounded traversal, dependency reporting, lazy recalculation, and cycle
+paths; validation navigates required, range, enum, reference, formula, and relationship findings;
+sensitive fields stay out of search and default CSV; legacy custom properties are adoptable without
+an open-time rewrite; unknown registry fields and deleted values remain recoverable; repeated save
+is deterministic; a 10,000-object, 50-definition, 100,000-value fixture, full automated suite, and
+browser interaction, visual, keyboard, persistence, undo, and console QA pass.
 
 ---
 
